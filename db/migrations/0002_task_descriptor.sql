@@ -1,0 +1,2 @@
+ALTER TABLE bounties ADD COLUMN IF NOT EXISTS task_descriptor JSONB;
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS task_descriptor JSONB;

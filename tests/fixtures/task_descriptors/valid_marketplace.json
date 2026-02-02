@@ -1,0 +1,16 @@
+{
+  "schema_version": "v1",
+  "type": "marketplace_drops",
+  "capability_tags": ["browser", "screenshot"],
+  "input_spec": { "url": "https://example.com", "query": "example", "max_price": 100 },
+  "output_spec": {
+    "required_artifacts": [
+      { "kind": "screenshot", "count": 1 },
+      { "kind": "other", "count": 1, "label_prefix": "results" }
+    ],
+    "results_json": true,
+    "screenshots": true
+  },
+  "freshness_sla_sec": 600,
+  "site_profile": { "selectors": { "items": ".item", "price": ".price", "availability": ".stock" } }
+}

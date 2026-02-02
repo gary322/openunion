@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title></title>
+  <style>
+    body { margin: 0; font-family: system-ui, sans-serif; background: #0b1220; color: #eef2ff; }
+    header { padding: 16px 20px; background: linear-gradient(135deg, #111827, #0f172a); border-bottom: 1px solid #24324d; }
+    main { max-width: 1200px; margin: 0 auto; padding: 20px; display: grid; gap: 14px; }
+    .card { background: #11172b; border: 1px solid #23304d; border-radius: 14px; padding: 14px; }
+    .row { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+    label { display:block; margin: 10px 0 4px; font-size: 12px; color: #9fb3c8; }
+    input, textarea { width: 100%; box-sizing: border-box; padding: 10px; border-radius: 10px; border: 1px solid #23304d; background: #0c1324; color: #e6edf5; }
+    textarea { min-height: 120px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    button { background: #3b82f6; border: none; padding: 10px 12px; border-radius: 10px; color: white; font-weight: 600; cursor: pointer; }
+    button.secondary { background: #1f2a41; }
+    pre { background: #0c1324; border: 1px solid #1f2a41; border-radius: 10px; padding: 12px; overflow:auto; }
+    a { color: #93c5fd; text-decoration: none; }
+    .muted { color: #9fb3c8; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <header>
+    <div style="font-weight:700" id="hdrTitle"></div>
+    <div class="muted" id="hdrDesc"></div>
+    <div class="muted"><a href="/apps/">All apps</a></div>
+  </header>
+  <main>
+    <div class="card">
+      <div class="row">
+        <div>
+          <label>Buyer token</label>
+          <input id="buyerToken" placeholder="pw_bu_..." />
+        </div>
+        <div>
+          <label>API base</label>
+          <input id="apiBase" value="http://localhost:3000" />
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <label>Title</label>
+          <input id="title" />
+        </div>
+        <div>
+          <label>Payout (cents)</label>
+          <input id="payout" type="number" value="1500" />
+        </div>
+      </div>
+      <label>Description</label>
+      <textarea id="description"></textarea>
+      <label>Allowed origins (comma)</label>
+      <input id="origins" value="https://example.com" />
+      <div class="row">
+        <div>
+          <label>Required proofs</label>
+          <input id="proofs" type="number" value="1" />
+        </div>
+        <div>
+          <label id="bytes"></label>
+        </div>
+      </div>
+      <label>taskDescriptor JSON</label>
+      <textarea id="descriptor"></textarea>
+      <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px">
+        <button id="btnCreate">Create draft</button>
+        <button id="btnCreatePublish">Create + publish</button>
+        <button class="secondary" id="btnRefresh">Refresh bounties</button>
+      </div>
+      <div class="muted" id="status" style="margin-top:10px"></div>
+    </div>
+
+    <div class="card">
+      <div class="row">
+        <div>
+          <label>Bounty ID (to load jobs)</label>
+          <input id="bountyId" placeholder="paste bounty id" />
+        </div>
+        <div style="display:flex; align-items:flex-end">
+          <button class="secondary" id="btnJobs">Load jobs</button>
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <label>Bounties</label>
+          <pre id="bounties">{}</pre>
+        </div>
+        <div>
+          <label>Jobs</label>
+          <pre id="jobs">{}</pre>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <script id="appConfig" type="application/json">{"title":"Clips","titlePrefix":"Clips","description":"VOD clipping, highlights, timestamping.","taskType":"clips_highlights","defaultCaps":["ffmpeg","llm_summarize","screenshot"],"defaultFreshnessSlaSec":3600,"defaultInputSpec":{"vod_url":"https://vod.example/test"},"defaultOutputSpec":{"required_artifacts":[{"kind":"video","count":1,"label_prefix":"clip"},{"kind":"other","count":1,"label_prefix":"timeline"},{"kind":"log","count":1,"label_prefix":"report"}],"mp4":true,"json_timeline":true}}</script>
+  <script type="module" src="/apps/app_page_bootstrap.js"></script>
+  </body>
+</html>

@@ -1,0 +1,16 @@
+{
+  "schema_version": "v1",
+  "type": "jobs_scrape",
+  "capability_tags": ["http", "llm_summarize", "screenshot"],
+  "input_spec": { "titles": ["engineer"], "location": "remote" },
+  "output_spec": {
+    "required_artifacts": [
+      { "kind": "log", "count": 1, "label_prefix": "report" },
+      { "kind": "screenshot", "count": 1 },
+      { "kind": "other", "count": 1, "label_prefix": "rows" }
+    ],
+    "rows": true,
+    "markdown": true
+  },
+  "freshness_sla_sec": 86400
+}

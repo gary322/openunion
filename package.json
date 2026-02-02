@@ -1,0 +1,61 @@
+{
+  "name": "proofwork",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "db:migrate": "tsx src/db/migrate.ts",
+    "dev": "tsx src/server.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/server.js",
+    "worker:outbox": "tsx workers/outbox-dispatcher.ts",
+    "worker:verification": "tsx workers/verification-runner.ts",
+    "worker:payout": "tsx workers/payout-runner.ts",
+    "worker:retention": "tsx workers/retention-runner.ts",
+    "worker:scanner": "tsx workers/scanner-runner.ts",
+    "worker:universal": "tsx skills/universal-worker/worker.ts",
+    "verifier:gateway": "tsx services/verifier-gateway/server.ts",
+    "test": "vitest run",
+    "test:serial": "vitest run --no-file-parallelism",
+    "test:e2e": "playwright test",
+    "test:full": "bash scripts/test_full.sh",
+    "load:jobs-next": "node scripts/load/jobs-next.js",
+    "load:uploads-presign": "node scripts/load/uploads-presign.js",
+    "load:upload-burst": "node scripts/load/upload-burst.js",
+    "load:backlog-verifier": "node scripts/load/backlog-verifier.js",
+    "test:watch": "vitest",
+    "lint": "echo 'add linter later'"
+  },
+  "dependencies": {
+    "@aws-sdk/client-kms": "^3.980.0",
+    "@aws-sdk/client-s3": "^3.888.0",
+    "@aws-sdk/s3-request-presigner": "^3.888.0",
+    "@fastify/static": "^7.0.4",
+    "dotenv": "^17.2.3",
+    "ethers": "^6.16.0",
+    "fastify": "^4.26.2",
+    "fastify-plugin": "^4.5.0",
+    "fastify-type-provider-zod": "^2.1.0",
+    "kysely": "^0.28.6",
+    "nanoid": "^5.0.7",
+    "pg": "^8.13.1",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.58.1",
+    "@types/node": "^22.1.0",
+    "@types/pg": "^8.15.0",
+    "@types/supertest": "^6.0.3",
+    "autocannon": "^8.0.0",
+    "hardhat": "^3.1.6",
+    "playwright": "^1.58.1",
+    "supertest": "^6.3.4",
+    "ts-node": "^10.9.2",
+    "tsconfig-paths": "^4.2.0",
+    "tsx": "^4.7.1",
+    "typescript": "^5.6.3",
+    "vitest": "^1.6.0"
+  },
+  "overrides": {
+    "fast-xml-parser": "5.3.4"
+  }
+}

@@ -1,0 +1,425 @@
+openapi: 3.1.0
+info:
+  title: Proofwork API
+  version: 0.3.0
+servers:
+  - url: http://localhost:3000
+paths:
+  /health:
+    get:
+      summary: Health check
+      responses:
+        '200':
+          description: ok
+  /health/metrics:
+    get:
+      summary: Prometheus metrics
+      responses:
+        '200':
+          description: Prometheus text format
+  /api/internal/reap-leases:
+    post:
+      summary: Reap expired job leases (internal)
+      responses:
+        '200':
+          description: expired job ids
+  /api/auth/login:
+    post:
+      summary: Buyer login
+      responses:
+        '200':
+          description: orgId + role
+  /api/auth/logout:
+    post:
+      summary: Buyer logout
+      responses:
+        '200':
+          description: ok
+  /api/org/api-keys:
+    post:
+      summary: Create org API key (buyer)
+      responses:
+        '200':
+          description: apiKey + token
+    get:
+      summary: List org API keys
+      responses:
+        '200':
+          description: api keys
+  /api/session/api-keys:
+    post:
+      summary: Create org API key (buyer session)
+      responses:
+        '200':
+          description: apiKey + token
+  /api/origins:
+    post:
+      summary: Add an origin (buyer)
+      responses:
+        '200':
+          description: origin record
+    get:
+      summary: List origins (buyer)
+      responses:
+        '200':
+          description: origins
+  /api/origins/{originId}/check:
+    post:
+      summary: Check/verify origin (buyer)
+      parameters:
+        - in: path
+          name: originId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: origin
+  /api/origins/{originId}/revoke:
+    post:
+      summary: Revoke origin (buyer)
+      parameters:
+        - in: path
+          name: originId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: origin
+  /api/retention/policies:
+    get:
+      summary: List retention policies (buyer)
+      responses:
+        '200':
+          description: policies
+    post:
+      summary: Upsert retention policy (buyer)
+      responses:
+        '200':
+          description: policy
+  /api/billing/account:
+    get:
+      summary: Get billing account (buyer)
+      responses:
+        '200':
+          description: account
+  /api/billing/events:
+    get:
+      summary: List billing events (buyer)
+      responses:
+        '200':
+          description: events
+  /api/billing/topups/checkout:
+    post:
+      summary: Create Stripe top-up checkout session (buyer)
+      responses:
+        '200':
+          description: checkout url
+  /api/webhooks/stripe:
+    post:
+      summary: Stripe webhook (public)
+      responses:
+        '200':
+          description: ok
+  /api/bounties:
+    get:
+      summary: List bounties (buyer)
+      parameters:
+        - in: query
+          name: page
+          schema:
+            type: integer
+        - in: query
+          name: limit
+          schema:
+            type: integer
+        - in: query
+          name: status
+          schema:
+            type: string
+        - in: query
+          name: task_type
+          schema:
+            type: string
+      responses:
+        '200':
+          description: bounties
+    post:
+      summary: Create bounty (buyer)
+      responses:
+        '200':
+          description: bounty
+  /api/bounties/{bountyId}/publish:
+    post:
+      summary: Publish bounty (buyer)
+      parameters:
+        - in: path
+          name: bountyId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: bounty
+  /api/bounties/{bountyId}/pause:
+    post:
+      summary: Pause bounty (buyer)
+      parameters:
+        - in: path
+          name: bountyId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: bounty
+  /api/bounties/{bountyId}/close:
+    post:
+      summary: Close bounty (buyer)
+      parameters:
+        - in: path
+          name: bountyId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: bounty
+  /api/bounties/{bountyId}/jobs:
+    get:
+      summary: List jobs for a bounty (buyer)
+      parameters:
+        - in: path
+          name: bountyId
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: page
+          schema:
+            type: integer
+        - in: query
+          name: limit
+          schema:
+            type: integer
+        - in: query
+          name: status
+          schema:
+            type: string
+      responses:
+        '200':
+          description: jobs
+  /api/workers/register:
+    post:
+      summary: Register worker
+      responses:
+        '200':
+          description: worker + token
+  /api/worker/me:
+    get:
+      summary: Current worker
+      responses:
+        '200':
+          description: worker
+  /api/worker/payout-address:
+    post:
+      summary: Set worker payout address (Base)
+      responses:
+        '200':
+          description: ok
+  /api/jobs/next:
+    get:
+      summary: Next job
+      parameters:
+        - in: query
+          name: capability_tag
+          schema:
+            type: string
+        - in: query
+          name: capability_tags
+          description: CSV list of worker-supported capability tags; job tags must be a subset of this set.
+          schema:
+            type: string
+        - in: query
+          name: min_payout_cents
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: envelope
+  /api/jobs/{jobId}/claim:
+    post:
+      summary: Claim job
+      responses:
+        '200':
+          description: envelope
+  /api/uploads/presign:
+    post:
+      summary: Presign uploads
+      responses:
+        '200':
+          description: urls
+  /api/uploads/complete:
+    post:
+      summary: Mark upload complete (required for S3 backends)
+      responses:
+        '200':
+          description: ok
+  /api/uploads/local/{artifactId}:
+    put:
+      summary: Local upload (STORAGE_BACKEND=local)
+      parameters:
+        - in: path
+          name: artifactId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: ok
+  /api/artifacts/{artifactId}/download:
+    get:
+      summary: Secure artifact download (redirect for S3, proxy for local)
+      parameters:
+        - in: path
+          name: artifactId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: file stream (local)
+        '302':
+          description: redirect to presigned GET (s3)
+  /api/jobs/{jobId}/submit:
+    post:
+      summary: Submit proof pack
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: queued
+  /api/jobs/{jobId}:
+    get:
+      summary: Job status
+      responses:
+        '200':
+          description: job
+  /api/verifier/claim:
+    post:
+      summary: Verifier claim
+      responses:
+        '200':
+          description: claim
+  /api/verifier/verdict:
+    post:
+      summary: Verifier verdict
+      responses:
+        '200':
+          description: verdict accepted
+  /api/admin/workers/{workerId}/ban:
+    post:
+      summary: Ban a worker (admin)
+      parameters:
+        - in: path
+          name: workerId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: ok
+  /api/admin/workers/{workerId}/rate-limit:
+    post:
+      summary: Rate-limit a worker (admin)
+      parameters:
+        - in: path
+          name: workerId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: ok
+  /api/admin/verifications/{verificationId}/requeue:
+    post:
+      summary: Requeue a verification (admin)
+      parameters:
+        - in: path
+          name: verificationId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: ok
+  /api/admin/submissions/{submissionId}/mark-duplicate:
+    post:
+      summary: Mark submission duplicate (admin)
+      parameters:
+        - in: path
+          name: submissionId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: ok
+  /api/admin/submissions/{submissionId}/override-verdict:
+    post:
+      summary: Override submission verdict (admin)
+      parameters:
+        - in: path
+          name: submissionId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: ok
+  /api/admin/billing/orgs/{orgId}/topup:
+    post:
+      summary: Top up org billing balance (admin)
+      parameters:
+        - in: path
+          name: orgId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: ok
+  /api/admin/outbox:
+    get:
+      summary: List outbox events (admin)
+      responses:
+        '200':
+          description: events
+  /api/admin/outbox/{id}/requeue:
+    post:
+      summary: Requeue an outbox event (admin)
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: ok
+  /api/admin/apps/summary:
+    get:
+      summary: App/vertical summary metrics (admin)
+      responses:
+        '200':
+          description: apps summary
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer

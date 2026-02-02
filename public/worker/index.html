@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Proofwork • Worker Portal</title>
+    <style>
+      :root {
+        --bg: #0b1220;
+        --panel: rgba(255, 255, 255, 0.06);
+        --border: rgba(255, 255, 255, 0.12);
+        --text: rgba(255, 255, 255, 0.92);
+        --muted: rgba(255, 255, 255, 0.7);
+        --accent: #7dd3fc;
+        --bad: #fb7185;
+        --good: #34d399;
+        --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+        --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+      }
+      body {
+        margin: 0;
+        font-family: var(--sans);
+        background: radial-gradient(1200px 800px at 10% 10%, rgba(125, 211, 252, 0.15), transparent 55%),
+          radial-gradient(1000px 700px at 80% 0%, rgba(52, 211, 153, 0.12), transparent 55%),
+          var(--bg);
+        color: var(--text);
+      }
+      a { color: var(--accent); }
+      .wrap { max-width: 1100px; margin: 32px auto; padding: 0 16px; }
+      .topbar { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
+      .title { font-size: 22px; font-weight: 700; letter-spacing: 0.2px; }
+      .sub { color: var(--muted); font-size: 13px; }
+      .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+      .card { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 16px; backdrop-filter: blur(8px); }
+      .card h2 { margin: 0 0 10px 0; font-size: 14px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; }
+      label { display: block; font-size: 12px; color: var(--muted); margin: 10px 0 6px; }
+      input, textarea, select {
+        width: 100%;
+        box-sizing: border-box;
+        padding: 10px 12px;
+        border-radius: 10px;
+        border: 1px solid var(--border);
+        background: rgba(0,0,0,0.25);
+        color: var(--text);
+        outline: none;
+      }
+      textarea { min-height: 96px; resize: vertical; font-family: var(--mono); font-size: 12px; }
+      .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+      .btnrow { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
+      button {
+        appearance: none;
+        border: 1px solid var(--border);
+        background: rgba(255, 255, 255, 0.08);
+        color: var(--text);
+        padding: 10px 12px;
+        border-radius: 10px;
+        cursor: pointer;
+      }
+      button.primary { border-color: rgba(125, 211, 252, 0.35); background: rgba(125, 211, 252, 0.12); }
+      button.danger { border-color: rgba(251, 113, 133, 0.35); background: rgba(251, 113, 133, 0.12); }
+      button:disabled { opacity: 0.45; cursor: not-allowed; }
+      pre {
+        margin: 0;
+        padding: 12px;
+        border-radius: 12px;
+        border: 1px solid var(--border);
+        background: rgba(0,0,0,0.35);
+        overflow: auto;
+        font-family: var(--mono);
+        font-size: 12px;
+        line-height: 1.45;
+      }
+      .status { margin-top: 12px; font-size: 12px; color: var(--muted); }
+      .status.good { color: var(--good); }
+      .status.bad { color: var(--bad); }
+      @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="topbar">
+        <div>
+          <div class="title">Worker Portal</div>
+          <div class="sub">Register → next job → claim → presign/upload → submit</div>
+        </div>
+        <div class="sub">API base: <span id="apiBase"></span></div>
+      </div>
+
+      <div class="grid">
+        <div class="card">
+          <h2>Auth</h2>
+
+          <div class="row">
+            <div>
+              <label>Display name</label>
+              <input id="regName" placeholder="e.g. Alice" value="Alice" />
+            </div>
+            <div>
+              <label>Capabilities</label>
+              <select id="regBrowser">
+                <option value="true" selected>browser: true</option>
+                <option value="false">browser: false</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="btnrow">
+            <button id="btnRegister" class="primary">Register worker</button>
+          </div>
+
+          <label>Worker token</label>
+          <input id="token" placeholder="pw_wk_..." />
+          <div class="btnrow">
+            <button id="btnSaveToken">Save token</button>
+            <button id="btnMe">/api/worker/me</button>
+          </div>
+          <div id="authStatus" class="status"></div>
+        </div>
+
+        <div class="card">
+          <h2>Job</h2>
+          <div class="btnrow">
+            <button id="btnNext" class="primary">GET /api/jobs/next</button>
+            <button id="btnClaim">POST /api/jobs/:jobId/claim</button>
+          </div>
+          <label>Current job spec / state</label>
+          <pre id="jobOut">{}</pre>
+          <div id="jobStatus" class="status"></div>
+        </div>
+
+        <div class="card">
+          <h2>Artifacts (presign + upload)</h2>
+          <label>Pick a file</label>
+          <input id="file" type="file" />
+          <div class="row">
+            <div>
+              <label>Kind</label>
+              <select id="kind">
+                <option value="screenshot">screenshot</option>
+                <option value="snapshot">snapshot</option>
+                <option value="pdf">pdf</option>
+                <option value="log">log</option>
+                <option value="video">video</option>
+                <option value="other" selected>other</option>
+              </select>
+            </div>
+            <div>
+              <label>Label</label>
+              <input id="label" placeholder="e.g. repro" value="repro" />
+            </div>
+          </div>
+          <div class="btnrow">
+            <button id="btnUpload" class="primary">Presign + upload</button>
+          </div>
+          <label>Artifact ref (auto-filled)</label>
+          <pre id="artifactOut">{}</pre>
+          <div id="uploadStatus" class="status"></div>
+        </div>
+
+        <div class="card">
+          <h2>Submit</h2>
+          <div class="row">
+            <div>
+              <label>Expected</label>
+              <input id="expected" value="Expected behavior" />
+            </div>
+            <div>
+              <label>Observed</label>
+              <input id="observed" value="Observed behavior" />
+            </div>
+          </div>
+          <label>Repro steps (one per line)</label>
+          <textarea id="steps">1. Do X
+2. Do Y
+3. Observe issue</textarea>
+          <div class="btnrow">
+            <button id="btnSubmit" class="primary">POST /api/jobs/:jobId/submit</button>
+          </div>
+          <label>Response</label>
+          <pre id="submitOut">{}</pre>
+          <div id="submitStatus" class="status"></div>
+        </div>
+      </div>
+    </div>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
+

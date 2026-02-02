@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Descriptor Builder</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 0; padding: 0; background: #0b1021; color: #f7fafc; }
+    header { padding: 16px 20px; background: linear-gradient(135deg, #182848, #1b2845); font-weight: 700; letter-spacing: .2px; }
+    main { padding: 20px; display: grid; gap: 16px; max-width: 1200px; margin: 0 auto; }
+    .card { background: #11172b; border: 1px solid #23304d; border-radius: 12px; padding: 16px; box-shadow: 0 10px 40px rgba(0,0,0,.25); }
+    label { display: block; margin: 12px 0 4px; font-size: 13px; color: #9fb3c8; }
+    input, textarea, select { width: 100%; padding: 10px; border-radius: 8px; border: 1px solid #24324d; background: #0c1324; color: #e6edf5; font-size: 14px; }
+    textarea { min-height: 120px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    button { background: #3b82f6; color: white; border: none; padding: 10px 14px; border-radius: 8px; cursor: pointer; font-weight: 600; }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    .row { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+    pre { background: #0c1324; border: 1px solid #1f2a41; border-radius: 8px; padding: 12px; overflow: auto; }
+    .error { color: #fca5a5; font-size: 13px; margin-top: 6px; }
+    .badge { display: inline-flex; gap: 6px; align-items: center; background: #1f2a41; padding: 6px 10px; border-radius: 999px; font-size: 12px; margin-right: 6px; }
+    .small { font-size: 12px; color: #9fb3c8; }
+  </style>
+</head>
+<body>
+  <header>Task Descriptor Builder</header>
+  <main>
+    <div class="card">
+      <div class="row">
+        <div>
+          <label>Buyer API Token</label>
+          <input id="token" type="password" placeholder="Bearer token" />
+        </div>
+        <div>
+          <label>API Base URL</label>
+          <input id="base" type="text" value="http://localhost:3000" />
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <label>Title</label>
+          <input id="title" />
+        </div>
+        <div>
+          <label>Payout (cents)</label>
+          <input id="payout" type="number" value="1500" />
+        </div>
+      </div>
+      <label>Description</label>
+      <textarea id="description">Describe the task</textarea>
+      <label>Allowed origins (comma)</label>
+      <input id="origins" value="https://example.com" />
+      <div class="row">
+        <div>
+          <label>Capability tags</label>
+          <select id="caps" multiple size="5">
+            <option>browser</option>
+            <option>http</option>
+            <option>ffmpeg</option>
+            <option>llm_summarize</option>
+            <option>screenshot</option>
+          </select>
+        </div>
+        <div>
+          <label>Freshness SLA (sec, optional)</label>
+          <input id="freshness" type="number" />
+          <label class="small">Required proofs</label>
+          <input id="proofs" type="number" value="1" />
+        </div>
+      </div>
+      <label>Input spec (JSON)</label>
+      <textarea id="input_spec">{"example": true}</textarea>
+      <label>Output spec (JSON)</label>
+      <textarea id="output_spec">{"artifact": true}</textarea>
+      <label>Site profile (JSON, optional)</label>
+      <textarea id="site_profile"></textarea>
+      <button id="build">Validate & Create Bounty</button>
+      <div id="error" class="error"></div>
+    </div>
+
+    <div class="card">
+      <div class="badge">schema_version v1</div>
+      <div class="badge" id="bytes">size: 0 B</div>
+      <pre id="preview">{}</pre>
+    </div>
+  </main>
+
+  <script type="module" src="/admin/descriptor-builder.js"></script>
+</body>
+</html>

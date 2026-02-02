@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Proofwork • Buyer Portal</title>
+    <style>
+      :root {
+        --bg: #0b1220;
+        --panel: rgba(255, 255, 255, 0.06);
+        --border: rgba(255, 255, 255, 0.12);
+        --text: rgba(255, 255, 255, 0.92);
+        --muted: rgba(255, 255, 255, 0.7);
+        --accent: #7dd3fc;
+        --good: #34d399;
+        --bad: #fb7185;
+        --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+        --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
+      }
+      body {
+        margin: 0;
+        font-family: var(--sans);
+        background: radial-gradient(1200px 800px at 10% 10%, rgba(125, 211, 252, 0.15), transparent 55%),
+          radial-gradient(1000px 700px at 80% 0%, rgba(99, 102, 241, 0.14), transparent 55%),
+          var(--bg);
+        color: var(--text);
+      }
+      .wrap { max-width: 1100px; margin: 32px auto; padding: 0 16px; }
+      .title { font-size: 22px; font-weight: 700; }
+      .sub { color: var(--muted); font-size: 13px; margin-top: 6px; }
+      .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; }
+      .card { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 16px; }
+      .card h2 { margin: 0 0 10px 0; font-size: 14px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; }
+      label { display: block; font-size: 12px; color: var(--muted); margin: 10px 0 6px; }
+      input, textarea {
+        width: 100%;
+        box-sizing: border-box;
+        padding: 10px 12px;
+        border-radius: 10px;
+        border: 1px solid var(--border);
+        background: rgba(0,0,0,0.25);
+        color: var(--text);
+        outline: none;
+      }
+      textarea { min-height: 90px; resize: vertical; font-family: var(--mono); font-size: 12px; }
+      .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+      .btnrow { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
+      button {
+        border: 1px solid var(--border);
+        background: rgba(255, 255, 255, 0.08);
+        color: var(--text);
+        padding: 10px 12px;
+        border-radius: 10px;
+        cursor: pointer;
+      }
+      button.primary { border-color: rgba(125, 211, 252, 0.35); background: rgba(125, 211, 252, 0.12); }
+      pre {
+        margin: 0;
+        padding: 12px;
+        border-radius: 12px;
+        border: 1px solid var(--border);
+        background: rgba(0,0,0,0.35);
+        overflow: auto;
+        font-family: var(--mono);
+        font-size: 12px;
+        line-height: 1.45;
+      }
+      .status { margin-top: 12px; font-size: 12px; color: var(--muted); }
+      .status.good { color: var(--good); }
+      .status.bad { color: var(--bad); }
+      @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="title">Buyer Portal</div>
+      <div class="sub">Login → create API key → manage origins → create/publish bounties</div>
+
+      <div class="grid">
+        <div class="card">
+          <h2>Login (demo)</h2>
+          <div class="row">
+            <div>
+              <label>Email</label>
+              <input id="email" value="buyer@example.com" />
+            </div>
+            <div>
+              <label>Password</label>
+              <input id="password" type="password" value="password" />
+            </div>
+          </div>
+          <div class="btnrow">
+            <button id="btnLogin" class="primary">POST /api/auth/login</button>
+          </div>
+          <div id="loginStatus" class="status"></div>
+          <label>Response</label>
+          <pre id="loginOut">{}</pre>
+        </div>
+
+        <div class="card">
+          <h2>API key</h2>
+          <label>Name</label>
+          <input id="keyName" value="portal" />
+          <div class="btnrow">
+            <button id="btnCreateKey" class="primary">POST /api/session/api-keys</button>
+            <button id="btnSaveToken">Save token</button>
+          </div>
+          <label>Buyer token</label>
+          <input id="buyerToken" placeholder="pw_bu_..." />
+          <div id="keyStatus" class="status"></div>
+          <label>Response</label>
+          <pre id="keyOut">{}</pre>
+        </div>
+
+        <div class="card">
+          <h2>Platform fee (your cut)</h2>
+          <div class="sub">This is your platform’s % cut from worker payouts. Proofwork takes an additional fixed fee (configured server-side).</div>
+          <div class="row">
+            <div>
+              <label>Platform fee bps</label>
+              <input id="pfBps" value="0" />
+            </div>
+            <div>
+              <label>Platform fee wallet (Base / EVM address)</label>
+              <input id="pfWallet" placeholder="0x..." />
+            </div>
+          </div>
+          <div class="btnrow">
+            <button id="btnGetPlatformFee">GET /api/org/platform-fee</button>
+            <button id="btnSetPlatformFee" class="primary">PUT /api/org/platform-fee</button>
+          </div>
+          <div id="pfStatus" class="status"></div>
+          <label>Response</label>
+          <pre id="pfOut">{}</pre>
+        </div>
+
+        <div class="card">
+          <h2>Origins</h2>
+          <label>Origin URL (must be absolute)</label>
+          <input id="originUrl" value="https://example.com" />
+          <label>Method</label>
+          <input id="originMethod" value="dns_txt" />
+          <div class="btnrow">
+            <button id="btnAddOrigin" class="primary">POST /api/origins</button>
+            <button id="btnListOrigins">GET /api/origins</button>
+          </div>
+          <label>Origin ID (for check/revoke)</label>
+          <input id="originId" placeholder="originId" />
+          <div class="btnrow">
+            <button id="btnCheckOrigin">POST /api/origins/:id/check</button>
+            <button id="btnRevokeOrigin">POST /api/origins/:id/revoke</button>
+          </div>
+          <div id="originStatus" class="status"></div>
+          <label>Response</label>
+          <pre id="originOut">{}</pre>
+        </div>
+
+        <div class="card">
+          <h2>Bounties</h2>
+          <label>Title</label>
+          <input id="bTitle" value="Portal bounty" />
+          <label>Description</label>
+          <textarea id="bDesc">Created from buyer portal</textarea>
+          <label>Allowed origins (comma separated)</label>
+          <input id="bOrigins" value="https://example.com" />
+          <div class="row">
+            <div>
+              <label>Payout cents</label>
+              <input id="bPayout" value="1200" />
+            </div>
+            <div>
+              <label>Fingerprint classes (comma separated)</label>
+              <input id="bFps" value="desktop_us" />
+            </div>
+          </div>
+          <div class="btnrow">
+            <button id="btnCreateBounty" class="primary">POST /api/bounties</button>
+            <button id="btnListBounties">GET /api/bounties</button>
+          </div>
+          <label>Bounty ID (for publish)</label>
+          <input id="bountyId" placeholder="bountyId" />
+          <div class="btnrow">
+            <button id="btnPublish">POST /api/bounties/:id/publish</button>
+          </div>
+          <div id="bountyStatus" class="status"></div>
+          <label>Response</label>
+          <pre id="bountyOut">{}</pre>
+        </div>
+      </div>
+    </div>
+
+    <script src="./app.js"></script>
+  </body>
+</html>

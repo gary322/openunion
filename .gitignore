@@ -1,0 +1,40 @@
+# Dependencies
+node_modules/
+
+# Environment variables (contains secrets)
+.env
+.env.local
+.env.*.local
+
+# Build outputs
+dist/
+build/
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test coverage
+coverage/
+.nyc_output/
+
+# Local storage
+var/
+uploads/
+
+# Terraform
+**/.terraform/
+**/*.tfstate
+**/*.tfstate.*
+
+# Playwright
+test-results/
+playwright-report/

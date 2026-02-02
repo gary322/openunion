@@ -1,0 +1,43 @@
+{
+  "_format": "hh3-sol-build-info-1",
+  "id": "solc-0_8_20-51667cf91fc6fc704315cf35e62ea165ff0c2b5a",
+  "solcVersion": "0.8.20",
+  "solcLongVersion": "0.8.20+commit.a1b79de6",
+  "userSourceNameMap": {
+    "contracts/MockUSDC.sol": "project/contracts/MockUSDC.sol",
+    "contracts/PayoutSplitter.sol": "project/contracts/PayoutSplitter.sol"
+  },
+  "input": {
+    "language": "Solidity",
+    "settings": {
+      "evmVersion": "shanghai",
+      "optimizer": {
+        "enabled": true,
+        "runs": 200
+      },
+      "outputSelection": {
+        "*": {
+          "": [
+            "ast"
+          ],
+          "*": [
+            "abi",
+            "evm.bytecode",
+            "evm.deployedBytecode",
+            "evm.methodIdentifiers",
+            "metadata"
+          ]
+        }
+      },
+      "remappings": []
+    },
+    "sources": {
+      "project/contracts/MockUSDC.sol": {
+        "content": "// SPDX-License-Identifier: MIT\npragma solidity ^0.8.20;\n\n/// @notice Minimal 6-decimal ERC20 for local-chain payout tests.\ncontract MockUSDC {\n    string public name = \"Mock USDC\";\n    string public symbol = \"mUSDC\";\n    uint8 public decimals = 6;\n\n    uint256 public totalSupply;\n\n    mapping(address => uint256) public balanceOf;\n    mapping(address => mapping(address => uint256)) public allowance;\n\n    event Transfer(address indexed from, address indexed to, uint256 amount);\n    event Approval(address indexed owner, address indexed spender, uint256 amount);\n\n    function mint(address to, uint256 amount) external {\n        balanceOf[to] += amount;\n        totalSupply += amount;\n        emit Transfer(address(0), to, amount);\n    }\n\n    function approve(address spender, uint256 amount) external returns (bool) {\n        allowance[msg.sender][spender] = amount;\n        emit Approval(msg.sender, spender, amount);\n        return true;\n    }\n\n    function transfer(address to, uint256 amount) external returns (bool) {\n        _transfer(msg.sender, to, amount);\n        return true;\n    }\n\n    function transferFrom(address from, address to, uint256 amount) external returns (bool) {\n        uint256 allowed = allowance[from][msg.sender];\n        require(allowed >= amount, \"allowance\");\n        allowance[from][msg.sender] = allowed - amount;\n        _transfer(from, to, amount);\n        return true;\n    }\n\n    function _transfer(address from, address to, uint256 amount) internal {\n        require(balanceOf[from] >= amount, \"balance\");\n        balanceOf[from] -= amount;\n        balanceOf[to] += amount;\n        emit Transfer(from, to, amount);\n    }\n}\n\n"
+      },
+      "project/contracts/PayoutSplitter.sol": {
+        "content": "// SPDX-License-Identifier: MIT\npragma solidity ^0.8.20;\n\n/// @notice Minimal payout splitter that atomically transfers net+fee in a single transaction.\n/// The payer is `msg.sender` (the off-chain signer / treasury wallet). The payer must approve\n/// this contract to spend USDC before calling `payout`.\ninterface IERC20 {\n    function transferFrom(address from, address to, uint256 amount) external returns (bool);\n}\n\ncontract PayoutSplitter {\n    event Payout(\n        address indexed token,\n        address indexed payer,\n        address indexed worker,\n        address platform,\n        uint256 netAmount,\n        uint256 feeAmount\n    );\n\n    bool public paused;\n    address public owner;\n\n    modifier onlyOwner() {\n        require(msg.sender == owner, \"not_owner\");\n        _;\n    }\n\n    constructor() {\n        owner = msg.sender;\n    }\n\n    function setPaused(bool v) external onlyOwner {\n        paused = v;\n    }\n\n    /// @notice Transfers `net` to `worker` and `fee` to `platform` from `msg.sender`.\n    function payout(address token, address worker, address platform, uint256 net, uint256 fee) external {\n        require(!paused, \"paused\");\n        require(worker != address(0) && platform != address(0), \"bad_address\");\n\n        if (net > 0) {\n            require(IERC20(token).transferFrom(msg.sender, worker, net), \"net_transfer_failed\");\n        }\n        if (fee > 0) {\n            require(IERC20(token).transferFrom(msg.sender, platform, fee), \"fee_transfer_failed\");\n        }\n\n        emit Payout(token, msg.sender, worker, platform, net, fee);\n    }\n}\n\n"
+      }
+    }
+  }
+}
