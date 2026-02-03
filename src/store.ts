@@ -10,6 +10,9 @@ import type {
   BountyBudgetReservationsTable,
   JobsTable,
   OrgsTable,
+  AppsTable,
+  DisputesTable,
+  OutboxEventsTable,
   PayoutsTable,
   ReputationTable,
   SubmissionsTable,
@@ -19,13 +22,22 @@ import type {
 import { sha256 } from './utils.js';
 import { normalizeOrigin, originAllowed } from './buyer.js';
 import { hmacSha256Hex } from './auth/tokens.js';
-import type { Bounty, Job, JobSpecResponse, Submission, Verification, Worker } from './types.js';
+import { computePayoutSplitCents, proofworkFeeBps } from './payments/crypto/baseUsdc.js';
+import type { App, Bounty, Job, JobSpecResponse, Submission, Verification, Worker } from './types.js';
 
 const TOKEN_PREFIX_LEN = 12;
 const DEMO_ORG_ID = 'org_demo';
 const WORKER_TOKEN_PEPPER = process.env.WORKER_TOKEN_PEPPER ?? 'dev_pepper_change_me';
 if (process.env.NODE_ENV === 'production' && WORKER_TOKEN_PEPPER === 'dev_pepper_change_me') {
   throw new Error('WORKER_TOKEN_PEPPER must be set in production');
+}
+
+function defaultDisputeWindowSec(): number {
+  const fallback = process.env.NODE_ENV === 'production' ? 86_400 : 0;
+  const raw = Number(process.env.DEFAULT_DISPUTE_WINDOW_SEC ?? fallback);
+  if (!Number.isFinite(raw)) return fallback;
+  // Clamp to 0..30d to avoid footguns.
+  return Math.max(0, Math.min(30 * 86_400, Math.floor(raw)));
 }
 
 function ms(d: Date | null | undefined): number | undefined {
@@ -44,6 +56,23 @@ function workerFromRow(row: Selectable<WorkersTable>): Worker {
     status: row.status as any,
     capabilities: (row.capabilities_json ?? {}) as Record<string, unknown>,
     rateLimitedUntil: ms(row.rate_limited_until as any),
+  };
+}
+
+function appFromRow(row: Selectable<AppsTable>): App {
+  return {
+    id: row.id,
+    ownerOrgId: row.owner_org_id,
+    slug: row.slug,
+    taskType: row.task_type,
+    name: row.name,
+    description: row.description ?? undefined,
+    dashboardUrl: row.dashboard_url ?? undefined,
+    public: Boolean(row.public),
+    status: (row.status as any) === 'disabled' ? 'disabled' : 'active',
+    defaultDescriptor: ((row.default_descriptor ?? {}) as any) || {},
+    createdAt: (row.created_at as any as Date).getTime(),
+    updatedAt: (row.updated_at as any as Date).getTime(),
   };
 }
 
@@ -128,6 +157,11 @@ export async function seedDemoData() {
       name: 'Demo Org',
       platform_fee_bps: 0,
       platform_fee_wallet_address: null,
+      cors_allow_origins: [],
+      daily_spend_limit_cents: null,
+      monthly_spend_limit_cents: null,
+      max_published_bounties: null,
+      max_open_jobs: null,
       created_at: new Date(),
     } satisfies Selectable<OrgsTable>)
     .onConflict((oc) => oc.column('id').doNothing())
@@ -221,6 +255,200 @@ export async function seedDemoData() {
       )
     )
     .execute();
+}
+
+export async function seedBuiltInApps() {
+  const SYSTEM_ORG_ID = 'org_system';
+  const now = new Date();
+
+  // System org is the default owner for built-in app definitions.
+  await db
+    .insertInto('orgs')
+    .values({
+      id: SYSTEM_ORG_ID,
+      name: 'Proofwork System',
+      platform_fee_bps: 0,
+      platform_fee_wallet_address: null,
+      cors_allow_origins: [],
+      daily_spend_limit_cents: null,
+      monthly_spend_limit_cents: null,
+      max_published_bounties: null,
+      max_open_jobs: null,
+      created_at: now,
+    } satisfies Selectable<OrgsTable>)
+    .onConflict((oc) => oc.column('id').doNothing())
+    .execute();
+
+  const apps = [
+    {
+      id: 'app_clips',
+      slug: 'clips',
+      task_type: 'clips_highlights',
+      name: 'Clips',
+      description: 'VOD clipping, highlights, timestamping.',
+      default_descriptor: {
+        schema_version: 'v1',
+        type: 'clips_highlights',
+        capability_tags: ['ffmpeg', 'llm_summarize', 'screenshot'],
+        input_spec: { vod_url: 'https://vod.example/test' },
+        output_spec: {
+          required_artifacts: [
+            { kind: 'video', count: 1, label_prefix: 'clip' },
+            { kind: 'other', count: 1, label_prefix: 'timeline' },
+            { kind: 'log', count: 1, label_prefix: 'report' },
+          ],
+          mp4: true,
+          json_timeline: true,
+        },
+        freshness_sla_sec: 3600,
+      },
+    },
+    {
+      id: 'app_marketplace',
+      slug: 'marketplace',
+      task_type: 'marketplace_drops',
+      name: 'Marketplace',
+      description: 'Price checks, drops, screenshots.',
+      default_descriptor: {
+        schema_version: 'v1',
+        type: 'marketplace_drops',
+        capability_tags: ['browser', 'screenshot'],
+        input_spec: { query: 'example' },
+        output_spec: {
+          required_artifacts: [
+            { kind: 'screenshot', count: 1 },
+            { kind: 'other', count: 1, label_prefix: 'results' },
+          ],
+          results_json: true,
+          screenshots: true,
+        },
+        freshness_sla_sec: 600,
+      },
+    },
+    {
+      id: 'app_jobs',
+      slug: 'jobs',
+      task_type: 'jobs_scrape',
+      name: 'Jobs',
+      description: 'Job scraping for a personal hunt.',
+      default_descriptor: {
+        schema_version: 'v1',
+        type: 'jobs_scrape',
+        capability_tags: ['http', 'llm_summarize', 'screenshot'],
+        input_spec: { titles: ['engineer'], location: 'remote' },
+        output_spec: {
+          required_artifacts: [
+            { kind: 'log', count: 1, label_prefix: 'report' },
+            { kind: 'screenshot', count: 1 },
+            { kind: 'other', count: 1, label_prefix: 'rows' },
+          ],
+          rows: true,
+          markdown: true,
+        },
+        freshness_sla_sec: 86400,
+      },
+    },
+    {
+      id: 'app_travel',
+      slug: 'travel',
+      task_type: 'travel_deals',
+      name: 'Travel',
+      description: 'Flights/hotels deal hunting.',
+      default_descriptor: {
+        schema_version: 'v1',
+        type: 'travel_deals',
+        capability_tags: ['http', 'llm_summarize', 'screenshot'],
+        input_spec: { origin: 'SFO', dest: 'JFK' },
+        output_spec: {
+          required_artifacts: [
+            { kind: 'log', count: 1, label_prefix: 'report' },
+            { kind: 'screenshot', count: 1 },
+            { kind: 'other', count: 1, label_prefix: 'deals' },
+          ],
+          deals: true,
+          screenshots: true,
+        },
+        freshness_sla_sec: 1800,
+      },
+    },
+    {
+      id: 'app_research',
+      slug: 'research',
+      task_type: 'arxiv_research_plan',
+      name: 'Research',
+      description: 'ArXiv idea to research-grade plan.',
+      default_descriptor: {
+        schema_version: 'v1',
+        type: 'arxiv_research_plan',
+        capability_tags: ['http', 'llm_summarize'],
+        input_spec: { idea: '' },
+        output_spec: {
+          required_artifacts: [
+            { kind: 'log', count: 1, label_prefix: 'report' },
+            { kind: 'other', count: 1, label_prefix: 'references' },
+          ],
+          report_md: true,
+          references: true,
+        },
+        freshness_sla_sec: 86400,
+      },
+    },
+    {
+      id: 'app_github',
+      slug: 'github',
+      task_type: 'github_scan',
+      name: 'GitHub Scan',
+      description: 'Scan GitHub for similar repos/components.',
+      default_descriptor: {
+        schema_version: 'v1',
+        type: 'github_scan',
+        capability_tags: ['http', 'llm_summarize'],
+        input_spec: { idea: '' },
+        output_spec: {
+          required_artifacts: [
+            { kind: 'log', count: 1, label_prefix: 'report' },
+            { kind: 'other', count: 1, label_prefix: 'repos' },
+          ],
+          repos: true,
+          summary_md: true,
+        },
+        freshness_sla_sec: 86400,
+      },
+    },
+  ];
+
+  for (const a of apps) {
+    await db
+      .insertInto('apps')
+      .values({
+        id: a.id,
+        owner_org_id: SYSTEM_ORG_ID,
+        slug: a.slug,
+        task_type: a.task_type,
+        name: a.name,
+        description: a.description,
+        dashboard_url: `/apps/${a.slug}/`,
+        public: true,
+        status: 'active',
+        default_descriptor: a.default_descriptor ?? {},
+        created_at: now,
+        updated_at: now,
+      } satisfies Selectable<AppsTable>)
+      .onConflict((oc) =>
+        oc.column('id').doUpdateSet({
+          slug: a.slug,
+          task_type: a.task_type,
+          name: a.name,
+          description: a.description ?? null,
+          dashboard_url: `/apps/${a.slug}/`,
+          public: true,
+          status: 'active',
+          default_descriptor: a.default_descriptor ?? {},
+          updated_at: now,
+        })
+      )
+      .execute();
+  }
 }
 
 export async function createWorker(
@@ -606,7 +834,7 @@ export async function createBounty(
     requiredProofs: input.requiredProofs ?? 3,
     fingerprintClassesRequired: input.fingerprintClassesRequired ?? ['desktop_us'],
     priority: input.priority ?? 0,
-    disputeWindowSec: input.disputeWindowSec ?? 0,
+    disputeWindowSec: input.disputeWindowSec ?? defaultDisputeWindowSec(),
     status: 'draft',
     tags: input.tags ?? [],
     taskDescriptor: input.taskDescriptor as any,
@@ -780,11 +1008,13 @@ export async function setBountyStatus(bountyId: string, status: Bounty['status']
           .innerJoin('jobs', 'jobs.id', 'submissions.job_id')
           .select(({ fn }) => fn.coalesce(fn.sum<number>('payouts.amount_cents'), sql<number>`0`).as('s'))
           .where('jobs.bounty_id', '=', bountyId)
-          .where('payouts.status', '=', 'paid')
+          // Treat any non-cancelled payout as "committed" so we don't release funds while
+          // payouts are still pending/blocked/failed (or refunded minus fee).
+          .where('payouts.status', 'in', ['paid', 'pending', 'failed', 'refunded'])
           .executeTakeFirstOrThrow();
 
-        const paid = Number((paidRow as any).s ?? 0);
-        const remaining = Math.max(0, Number(res.amount_cents ?? 0) - paid);
+        const committed = Number((paidRow as any).s ?? 0);
+        const remaining = Math.max(0, Number(res.amount_cents ?? 0) - committed);
 
         if (remaining > 0) {
           await trx
@@ -803,7 +1033,7 @@ export async function setBountyStatus(bountyId: string, status: Bounty['status']
               account_id: res.account_id,
               event_type: 'bounty_budget_release',
               amount_cents: remaining,
-              metadata_json: { bountyId, paid, reserved: res.amount_cents },
+              metadata_json: { bountyId, committed, reserved: res.amount_cents },
               created_at: now,
             } satisfies Selectable<BillingEventsTable>)
             .execute();
@@ -1008,6 +1238,7 @@ export async function resetStore() {
       'TRUNCATE TABLE',
       [
         'accepted_dedupe',
+        'apps',
         'payouts',
         'payout_transfers',
         'crypto_nonces',
@@ -1228,6 +1459,141 @@ export async function getAppSummary(): Promise<
   });
 }
 
+export async function listPublicApps(opts: { page?: number; limit?: number } = {}): Promise<{ rows: App[]; total: number }> {
+  const page = Math.max(1, Number(opts.page ?? 1));
+  const limit = Math.max(1, Math.min(200, Number(opts.limit ?? 50)));
+  const offset = (page - 1) * limit;
+
+  const filtered = db.selectFrom('apps').where('public', '=', true).where('status', '=', 'active');
+  const rows = await filtered.selectAll().orderBy('created_at', 'desc').offset(offset).limit(limit).execute();
+  const totalRow = await filtered.select(({ fn }) => fn.countAll<number>().as('c')).executeTakeFirst();
+  return { rows: rows.map(appFromRow), total: Number(totalRow?.c ?? 0) };
+}
+
+export async function getPublicAppBySlug(slug: string): Promise<App | undefined> {
+  const row = await db
+    .selectFrom('apps')
+    .selectAll()
+    .where('slug', '=', slug)
+    .where('public', '=', true)
+    .where('status', '=', 'active')
+    .executeTakeFirst();
+  return row ? appFromRow(row) : undefined;
+}
+
+export async function getAppByTaskType(taskType: string): Promise<App | undefined> {
+  const row = await db.selectFrom('apps').selectAll().where('task_type', '=', taskType).executeTakeFirst();
+  return row ? appFromRow(row) : undefined;
+}
+
+export async function listAppsByOrg(orgId: string, opts: { page?: number; limit?: number } = {}): Promise<{ rows: App[]; total: number }> {
+  const page = Math.max(1, Number(opts.page ?? 1));
+  const limit = Math.max(1, Math.min(200, Number(opts.limit ?? 50)));
+  const offset = (page - 1) * limit;
+
+  const filtered = db.selectFrom('apps').where('owner_org_id', '=', orgId);
+  const rows = await filtered.selectAll().orderBy('created_at', 'desc').offset(offset).limit(limit).execute();
+  const totalRow = await filtered.select(({ fn }) => fn.countAll<number>().as('c')).executeTakeFirst();
+  return { rows: rows.map(appFromRow), total: Number(totalRow?.c ?? 0) };
+}
+
+export async function listAllAppsAdmin(
+  opts: { page?: number; limit?: number; status?: 'active' | 'disabled'; ownerOrgId?: string } = {}
+): Promise<{ rows: App[]; total: number }> {
+  const page = Math.max(1, Number(opts.page ?? 1));
+  const limit = Math.max(1, Math.min(200, Number(opts.limit ?? 50)));
+  const offset = (page - 1) * limit;
+
+  let filtered = db.selectFrom('apps');
+  if (opts.status) filtered = filtered.where('status', '=', opts.status);
+  if (opts.ownerOrgId) filtered = filtered.where('owner_org_id', '=', opts.ownerOrgId);
+
+  const rows = await filtered.selectAll().orderBy('created_at', 'desc').offset(offset).limit(limit).execute();
+  const totalRow = await filtered.select(({ fn }) => fn.countAll<number>().as('c')).executeTakeFirst();
+  return { rows: rows.map(appFromRow), total: Number(totalRow?.c ?? 0) };
+}
+
+export async function createOrgApp(
+  orgId: string,
+  input: {
+    slug: string;
+    taskType: string;
+    name: string;
+    description?: string | null;
+    dashboardUrl?: string | null;
+    public?: boolean;
+    defaultDescriptor?: Record<string, unknown>;
+  }
+): Promise<App> {
+  const id = nanoid(12);
+  const now = new Date();
+  const row = await db
+    .insertInto('apps')
+    .values({
+      id,
+      owner_org_id: orgId,
+      slug: input.slug,
+      task_type: input.taskType,
+      name: input.name,
+      description: input.description ?? null,
+      dashboard_url: input.dashboardUrl ?? null,
+      public: input.public ?? true,
+      status: 'active',
+      default_descriptor: input.defaultDescriptor ?? {},
+      created_at: now,
+      updated_at: now,
+    } satisfies Selectable<AppsTable>)
+    .returningAll()
+    .executeTakeFirst();
+  if (!row) throw new Error('app_create_failed');
+  return appFromRow(row);
+}
+
+export async function updateOrgApp(
+  orgId: string,
+  appId: string,
+  patch: Partial<{
+    slug: string;
+    taskType: string;
+    name: string;
+    description: string | null;
+    dashboardUrl: string | null;
+    public: boolean;
+    status: 'active' | 'disabled';
+    defaultDescriptor: Record<string, unknown>;
+  }>
+): Promise<App | undefined> {
+  const now = new Date();
+  const update: any = { updated_at: now };
+  if (patch.slug !== undefined) update.slug = patch.slug;
+  if (patch.taskType !== undefined) update.task_type = patch.taskType;
+  if (patch.name !== undefined) update.name = patch.name;
+  if (patch.description !== undefined) update.description = patch.description;
+  if (patch.dashboardUrl !== undefined) update.dashboard_url = patch.dashboardUrl;
+  if (patch.public !== undefined) update.public = patch.public;
+  if (patch.status !== undefined) update.status = patch.status;
+  if (patch.defaultDescriptor !== undefined) update.default_descriptor = patch.defaultDescriptor;
+
+  const row = await db
+    .updateTable('apps')
+    .set(update)
+    .where('id', '=', appId)
+    .where('owner_org_id', '=', orgId)
+    .returningAll()
+    .executeTakeFirst();
+  return row ? appFromRow(row) : undefined;
+}
+
+export async function adminSetAppStatus(appId: string, status: 'active' | 'disabled'): Promise<App | undefined> {
+  const row = await db
+    .updateTable('apps')
+    .set({ status, updated_at: new Date() })
+    .where('id', '=', appId)
+    .returningAll()
+    .executeTakeFirst();
+  return row ? appFromRow(row) : undefined;
+}
+
 export async function markOutboxSent(id: string) {
   await db.updateTable('outbox_events').set({ status: 'sent', sent_at: new Date() }).where('id', '=', id).execute();
 }
@@ -1235,6 +1601,34 @@ export async function markOutboxSent(id: string) {
 export async function addPayout(submissionId: string, workerId: string, amountCents: number) {
   const id = nanoid(12);
   const now = new Date();
+
+  // Compute hold window + fee split deterministically at creation time so:
+  // - disputes can compute refunds immediately (even before payout runner executes), and
+  // - dashboards can show projected splits without waiting for payment processing.
+  const ctx = await db
+    .selectFrom('submissions')
+    .innerJoin('jobs', 'jobs.id', 'submissions.job_id')
+    .innerJoin('bounties', 'bounties.id', 'jobs.bounty_id')
+    .innerJoin('orgs', 'orgs.id', 'bounties.org_id')
+    .select([
+      'bounties.dispute_window_sec as dispute_window_sec',
+      'orgs.platform_fee_bps as platform_fee_bps',
+      'orgs.platform_fee_wallet_address as platform_fee_wallet_address',
+    ])
+    .where('submissions.id', '=', submissionId)
+    .executeTakeFirst();
+
+  const disputeWindowSec = Number((ctx as any)?.dispute_window_sec ?? 0);
+  const holdUntil =
+    Number.isFinite(disputeWindowSec) && disputeWindowSec > 0 ? new Date(Date.now() + disputeWindowSec * 1000) : null;
+
+  const platformFeeBpsVal = Number((ctx as any)?.platform_fee_bps ?? 0);
+  const platformFeeWalletVal = ((ctx as any)?.platform_fee_wallet_address as string | null) ?? null;
+  const pwBps = proofworkFeeBps();
+
+  const split = computePayoutSplitCents(amountCents, { platformFeeBps: platformFeeBpsVal, proofworkFeeBps: pwBps });
+  const pwWalletMaybe = process.env.PROOFWORK_FEE_WALLET_BASE ?? process.env.PLATFORM_FEE_WALLET_BASE ?? null;
+
   const inserted = await db
     .insertInto('payouts')
     .values({
@@ -1246,17 +1640,31 @@ export async function addPayout(submissionId: string, workerId: string, amountCe
       provider: null,
       provider_ref: null,
       payout_chain: null,
-      net_amount_cents: null,
-      platform_fee_cents: null,
-      platform_fee_bps: null,
-      platform_fee_wallet_address: null,
-      proofwork_fee_cents: null,
-      proofwork_fee_bps: null,
-      proofwork_fee_wallet_address: null,
+      net_amount_cents: split.netCents,
+      platform_fee_cents: split.platformFeeCents,
+      platform_fee_bps: platformFeeBpsVal,
+      platform_fee_wallet_address: platformFeeWalletVal,
+      proofwork_fee_cents: split.proofworkFeeCents,
+      proofwork_fee_bps: pwBps,
+      proofwork_fee_wallet_address: pwWalletMaybe,
+      hold_until: holdUntil,
+      blocked_reason: null,
       created_at: now,
       updated_at: now,
     } satisfies Selectable<PayoutsTable>)
-    .onConflict((oc) => oc.column('submission_id').doNothing())
+    .onConflict((oc) =>
+      oc.column('submission_id').doUpdateSet({
+        net_amount_cents: split.netCents,
+        platform_fee_cents: split.platformFeeCents,
+        platform_fee_bps: platformFeeBpsVal,
+        platform_fee_wallet_address: platformFeeWalletVal,
+        proofwork_fee_cents: split.proofworkFeeCents,
+        proofwork_fee_bps: pwBps,
+        proofwork_fee_wallet_address: pwWalletMaybe,
+        hold_until: holdUntil,
+        updated_at: now,
+      })
+    )
     .returningAll()
     .executeTakeFirst();
 
@@ -1284,12 +1692,24 @@ export async function getPayout(id: string) {
     status: row.status as any,
     provider: row.provider ?? undefined,
     providerRef: row.provider_ref ?? undefined,
+    payoutChain: row.payout_chain ?? undefined,
+    netAmountCents: row.net_amount_cents ?? undefined,
+    platformFeeCents: row.platform_fee_cents ?? undefined,
+    platformFeeBps: row.platform_fee_bps ?? undefined,
+    platformFeeWalletAddress: row.platform_fee_wallet_address ?? undefined,
+    proofworkFeeCents: row.proofwork_fee_cents ?? undefined,
+    proofworkFeeBps: row.proofwork_fee_bps ?? undefined,
+    proofworkFeeWalletAddress: row.proofwork_fee_wallet_address ?? undefined,
+    holdUntil: ms(row.hold_until as any),
+    blockedReason: row.blocked_reason ?? undefined,
+    createdAt: ms(row.created_at as any),
+    updatedAt: ms(row.updated_at as any),
   };
 }
 
 export async function markPayoutStatus(
   id: string,
-  status: 'pending' | 'paid' | 'failed',
+  status: 'pending' | 'paid' | 'failed' | 'refunded',
   meta?: { provider?: string | null; providerRef?: string | null }
 ) {
   const patch: any = { status, updated_at: new Date() };
@@ -1335,6 +1755,740 @@ export async function listPayouts() {
     provider: row.provider ?? undefined,
     providerRef: row.provider_ref ?? undefined,
   }));
+}
+
+function payoutViewFromJoinedRow(row: any) {
+  return {
+    id: row.payout_id,
+    orgId: row.org_id,
+    bountyId: row.bounty_id,
+    bountyTitle: row.bounty_title,
+    jobId: row.job_id,
+    submissionId: row.submission_id,
+    workerId: row.worker_id,
+    workerDisplayName: row.worker_display_name ?? undefined,
+    taskType: row.task_type ?? null,
+    amountCents: Number(row.amount_cents ?? 0),
+    netAmountCents: row.net_amount_cents !== null && row.net_amount_cents !== undefined ? Number(row.net_amount_cents) : null,
+    platformFeeCents: row.platform_fee_cents !== null && row.platform_fee_cents !== undefined ? Number(row.platform_fee_cents) : null,
+    platformFeeBps: row.platform_fee_bps !== null && row.platform_fee_bps !== undefined ? Number(row.platform_fee_bps) : null,
+    platformFeeWalletAddress: row.platform_fee_wallet_address ?? null,
+    proofworkFeeCents: row.proofwork_fee_cents !== null && row.proofwork_fee_cents !== undefined ? Number(row.proofwork_fee_cents) : null,
+    proofworkFeeBps: row.proofwork_fee_bps !== null && row.proofwork_fee_bps !== undefined ? Number(row.proofwork_fee_bps) : null,
+    proofworkFeeWalletAddress: row.proofwork_fee_wallet_address ?? null,
+    status: row.status,
+    provider: row.provider ?? null,
+    providerRef: row.provider_ref ?? null,
+    payoutChain: row.payout_chain ?? null,
+    holdUntil: row.hold_until ? (row.hold_until as Date).getTime() : null,
+    blockedReason: row.blocked_reason ?? null,
+    createdAt: row.created_at ? (row.created_at as Date).getTime() : null,
+    updatedAt: row.updated_at ? (row.updated_at as Date).getTime() : null,
+  };
+}
+
+export async function listPayoutsByOrg(
+  orgId: string,
+  opts: { page?: number; limit?: number; status?: string; taskType?: string } = {}
+): Promise<{ rows: any[]; total: number }> {
+  const page = Math.max(1, Number(opts.page ?? 1));
+  const limit = Math.max(1, Math.min(200, Number(opts.limit ?? 50)));
+  const offset = (page - 1) * limit;
+
+  let base = db
+    .selectFrom('payouts as p')
+    .innerJoin('submissions as s', 's.id', 'p.submission_id')
+    .innerJoin('jobs as j', 'j.id', 's.job_id')
+    .innerJoin('bounties as b', 'b.id', 'j.bounty_id')
+    .leftJoin('workers as w', 'w.id', 'p.worker_id')
+    .where('b.org_id', '=', orgId);
+
+  if (opts.status) base = base.where('p.status', '=', opts.status);
+  if (opts.taskType) base = base.where(sql<string>`j.task_descriptor->>'type'`, '=', opts.taskType);
+
+  const rows = await base
+    .select([
+      'p.id as payout_id',
+      'p.submission_id as submission_id',
+      'p.worker_id as worker_id',
+      'w.display_name as worker_display_name',
+      'p.amount_cents as amount_cents',
+      'p.status as status',
+      'p.provider as provider',
+      'p.provider_ref as provider_ref',
+      'p.net_amount_cents as net_amount_cents',
+      'p.platform_fee_cents as platform_fee_cents',
+      'p.platform_fee_bps as platform_fee_bps',
+      'p.platform_fee_wallet_address as platform_fee_wallet_address',
+      'p.proofwork_fee_cents as proofwork_fee_cents',
+      'p.proofwork_fee_bps as proofwork_fee_bps',
+      'p.proofwork_fee_wallet_address as proofwork_fee_wallet_address',
+      'p.payout_chain as payout_chain',
+      'p.hold_until as hold_until',
+      'p.blocked_reason as blocked_reason',
+      'p.created_at as created_at',
+      'p.updated_at as updated_at',
+      'b.id as bounty_id',
+      'b.title as bounty_title',
+      'b.org_id as org_id',
+      'j.id as job_id',
+      sql<string>`j.task_descriptor->>'type'`.as('task_type'),
+    ])
+    .orderBy('p.created_at', 'desc')
+    .offset(offset)
+    .limit(limit)
+    .execute();
+
+  const totalRow = await base.select(({ fn }) => fn.countAll<number>().as('c')).executeTakeFirst();
+
+  return { rows: rows.map(payoutViewFromJoinedRow), total: Number(totalRow?.c ?? 0) };
+}
+
+export async function listPayoutsByWorker(
+  workerId: string,
+  opts: { page?: number; limit?: number; status?: string } = {}
+): Promise<{ rows: any[]; total: number }> {
+  const page = Math.max(1, Number(opts.page ?? 1));
+  const limit = Math.max(1, Math.min(200, Number(opts.limit ?? 50)));
+  const offset = (page - 1) * limit;
+
+  let base = db
+    .selectFrom('payouts as p')
+    .innerJoin('submissions as s', 's.id', 'p.submission_id')
+    .innerJoin('jobs as j', 'j.id', 's.job_id')
+    .innerJoin('bounties as b', 'b.id', 'j.bounty_id')
+    .where('p.worker_id', '=', workerId);
+
+  if (opts.status) base = base.where('p.status', '=', opts.status);
+
+  const rows = await base
+    .select([
+      'p.id as payout_id',
+      'p.submission_id as submission_id',
+      'p.worker_id as worker_id',
+      'p.amount_cents as amount_cents',
+      'p.status as status',
+      'p.provider as provider',
+      'p.provider_ref as provider_ref',
+      'p.net_amount_cents as net_amount_cents',
+      'p.platform_fee_cents as platform_fee_cents',
+      'p.platform_fee_bps as platform_fee_bps',
+      'p.platform_fee_wallet_address as platform_fee_wallet_address',
+      'p.proofwork_fee_cents as proofwork_fee_cents',
+      'p.proofwork_fee_bps as proofwork_fee_bps',
+      'p.proofwork_fee_wallet_address as proofwork_fee_wallet_address',
+      'p.payout_chain as payout_chain',
+      'p.hold_until as hold_until',
+      'p.blocked_reason as blocked_reason',
+      'p.created_at as created_at',
+      'p.updated_at as updated_at',
+      'b.id as bounty_id',
+      'b.title as bounty_title',
+      'b.org_id as org_id',
+      'j.id as job_id',
+      sql<string>`j.task_descriptor->>'type'`.as('task_type'),
+    ])
+    .orderBy('p.created_at', 'desc')
+    .offset(offset)
+    .limit(limit)
+    .execute();
+
+  const totalRow = await base.select(({ fn }) => fn.countAll<number>().as('c')).executeTakeFirst();
+  return { rows: rows.map(payoutViewFromJoinedRow), total: Number(totalRow?.c ?? 0) };
+}
+
+export async function listPayoutsAdmin(
+  opts: { page?: number; limit?: number; status?: string; orgId?: string } = {}
+): Promise<{ rows: any[]; total: number }> {
+  const page = Math.max(1, Number(opts.page ?? 1));
+  const limit = Math.max(1, Math.min(200, Number(opts.limit ?? 50)));
+  const offset = (page - 1) * limit;
+
+  let base = db
+    .selectFrom('payouts as p')
+    .innerJoin('submissions as s', 's.id', 'p.submission_id')
+    .innerJoin('jobs as j', 'j.id', 's.job_id')
+    .innerJoin('bounties as b', 'b.id', 'j.bounty_id')
+    .leftJoin('workers as w', 'w.id', 'p.worker_id');
+
+  if (opts.orgId) base = base.where('b.org_id', '=', opts.orgId);
+  if (opts.status) base = base.where('p.status', '=', opts.status);
+
+  const rows = await base
+    .select([
+      'p.id as payout_id',
+      'p.submission_id as submission_id',
+      'p.worker_id as worker_id',
+      'w.display_name as worker_display_name',
+      'p.amount_cents as amount_cents',
+      'p.status as status',
+      'p.provider as provider',
+      'p.provider_ref as provider_ref',
+      'p.net_amount_cents as net_amount_cents',
+      'p.platform_fee_cents as platform_fee_cents',
+      'p.platform_fee_bps as platform_fee_bps',
+      'p.platform_fee_wallet_address as platform_fee_wallet_address',
+      'p.proofwork_fee_cents as proofwork_fee_cents',
+      'p.proofwork_fee_bps as proofwork_fee_bps',
+      'p.proofwork_fee_wallet_address as proofwork_fee_wallet_address',
+      'p.payout_chain as payout_chain',
+      'p.hold_until as hold_until',
+      'p.blocked_reason as blocked_reason',
+      'p.created_at as created_at',
+      'p.updated_at as updated_at',
+      'b.id as bounty_id',
+      'b.title as bounty_title',
+      'b.org_id as org_id',
+      'j.id as job_id',
+      sql<string>`j.task_descriptor->>'type'`.as('task_type'),
+    ])
+    .orderBy('p.created_at', 'desc')
+    .offset(offset)
+    .limit(limit)
+    .execute();
+
+  const totalRow = await base.select(({ fn }) => fn.countAll<number>().as('c')).executeTakeFirst();
+  return { rows: rows.map(payoutViewFromJoinedRow), total: Number(totalRow?.c ?? 0) };
+}
+
+export async function getOrgEarningsSummary(orgId: string): Promise<any> {
+  const res = await pool.query(
+    `
+    WITH payouts_ctx AS (
+      SELECT
+        p.*,
+        (j.task_descriptor->>'type') AS task_type
+      FROM payouts p
+      JOIN submissions s ON s.id = p.submission_id
+      JOIN jobs j ON j.id = s.job_id
+      JOIN bounties b ON b.id = j.bounty_id
+      WHERE b.org_id = $1
+    )
+    SELECT
+      count(*) FILTER (WHERE status = 'paid')::int AS paid_count,
+      coalesce(sum(amount_cents) FILTER (WHERE status = 'paid'), 0)::int AS gross_paid_cents,
+      coalesce(sum(net_amount_cents) FILTER (WHERE status = 'paid'), 0)::int AS net_paid_cents,
+      coalesce(sum(platform_fee_cents) FILTER (WHERE status = 'paid'), 0)::int AS platform_fee_cents,
+      coalesce(sum(proofwork_fee_cents) FILTER (WHERE status = 'paid'), 0)::int AS proofwork_fee_cents,
+      count(*) FILTER (WHERE status = 'pending')::int AS pending_count,
+      count(*) FILTER (WHERE status = 'failed')::int AS failed_count,
+      count(*) FILTER (WHERE status = 'refunded')::int AS refunded_count
+    FROM payouts_ctx
+    `,
+    [orgId]
+  );
+  const totals = res.rows[0] ?? {};
+
+  const byTask = await pool.query(
+    `
+    WITH payouts_ctx AS (
+      SELECT
+        p.*,
+        (j.task_descriptor->>'type') AS task_type
+      FROM payouts p
+      JOIN submissions s ON s.id = p.submission_id
+      JOIN jobs j ON j.id = s.job_id
+      JOIN bounties b ON b.id = j.bounty_id
+      WHERE b.org_id = $1
+    )
+    SELECT
+      task_type,
+      count(*) FILTER (WHERE status = 'paid')::int AS paid_count,
+      coalesce(sum(amount_cents) FILTER (WHERE status = 'paid'), 0)::int AS gross_paid_cents,
+      coalesce(sum(net_amount_cents) FILTER (WHERE status = 'paid'), 0)::int AS net_paid_cents,
+      coalesce(sum(platform_fee_cents) FILTER (WHERE status = 'paid'), 0)::int AS platform_fee_cents,
+      coalesce(sum(proofwork_fee_cents) FILTER (WHERE status = 'paid'), 0)::int AS proofwork_fee_cents
+    FROM payouts_ctx
+    GROUP BY task_type
+    ORDER BY coalesce(sum(amount_cents) FILTER (WHERE status = 'paid'), 0) DESC
+    `,
+    [orgId]
+  );
+
+  return {
+    orgId,
+    totals: {
+      paidCount: Number(totals.paid_count ?? 0),
+      grossPaidCents: Number(totals.gross_paid_cents ?? 0),
+      netPaidCents: Number(totals.net_paid_cents ?? 0),
+      platformFeeCents: Number(totals.platform_fee_cents ?? 0),
+      proofworkFeeCents: Number(totals.proofwork_fee_cents ?? 0),
+      pendingCount: Number(totals.pending_count ?? 0),
+      failedCount: Number(totals.failed_count ?? 0),
+      refundedCount: Number(totals.refunded_count ?? 0),
+    },
+    byTaskType: (byTask.rows ?? []).map((r: any) => ({
+      taskType: r.task_type ?? null,
+      paidCount: Number(r.paid_count ?? 0),
+      grossPaidCents: Number(r.gross_paid_cents ?? 0),
+      netPaidCents: Number(r.net_paid_cents ?? 0),
+      platformFeeCents: Number(r.platform_fee_cents ?? 0),
+      proofworkFeeCents: Number(r.proofwork_fee_cents ?? 0),
+    })),
+  };
+}
+
+function disputeFromRow(row: any) {
+  return {
+    id: row.id,
+    orgId: row.org_id,
+    bountyId: row.bounty_id,
+    submissionId: row.submission_id ?? null,
+    payoutId: row.payout_id ?? null,
+    status: row.status,
+    reason: row.reason ?? null,
+    resolution: row.resolution ?? null,
+    resolutionNotes: row.resolution_notes ?? null,
+    createdAt: row.created_at ? (row.created_at as Date).getTime() : null,
+    resolvedAt: row.resolved_at ? (row.resolved_at as Date).getTime() : null,
+    resolverActorType: row.resolver_actor_type ?? null,
+    resolverActorId: row.resolver_actor_id ?? null,
+  };
+}
+
+export async function listDisputesByOrg(
+  orgId: string,
+  opts: { page?: number; limit?: number; status?: string } = {}
+): Promise<{ rows: any[]; total: number }> {
+  const page = Math.max(1, Number(opts.page ?? 1));
+  const limit = Math.max(1, Math.min(200, Number(opts.limit ?? 50)));
+  const offset = (page - 1) * limit;
+
+  let q = db.selectFrom('disputes').selectAll().where('org_id', '=', orgId);
+  if (opts.status) q = q.where('status', '=', opts.status);
+  const rows = await q.orderBy('created_at', 'desc').offset(offset).limit(limit).execute();
+  const totalRow = await q.select(({ fn }) => fn.countAll<number>().as('c')).executeTakeFirst();
+  return { rows: rows.map(disputeFromRow), total: Number(totalRow?.c ?? 0) };
+}
+
+export async function listDisputesAdmin(
+  opts: { page?: number; limit?: number; status?: string } = {}
+): Promise<{ rows: any[]; total: number }> {
+  const page = Math.max(1, Number(opts.page ?? 1));
+  const limit = Math.max(1, Math.min(200, Number(opts.limit ?? 50)));
+  const offset = (page - 1) * limit;
+
+  let q = db.selectFrom('disputes').selectAll();
+  if (opts.status) q = q.where('status', '=', opts.status);
+  const rows = await q.orderBy('created_at', 'desc').offset(offset).limit(limit).execute();
+  const totalRow = await q.select(({ fn }) => fn.countAll<number>().as('c')).executeTakeFirst();
+  return { rows: rows.map(disputeFromRow), total: Number(totalRow?.c ?? 0) };
+}
+
+export async function createDispute(
+  orgId: string,
+  input: { payoutId?: string; submissionId?: string; reason: string },
+  actor: { actorType: string; actorId: string | null }
+): Promise<any> {
+  const payoutId = input.payoutId ? String(input.payoutId) : null;
+  const submissionId = input.submissionId ? String(input.submissionId) : null;
+  if (!payoutId && !submissionId) throw new Error('missing_target');
+
+  return await db.transaction().execute(async (trx) => {
+    const now = new Date();
+
+    // Resolve bounty/submission/payout and enforce org ownership.
+    const ctx = payoutId
+      ? await trx
+          .selectFrom('payouts as p')
+          .innerJoin('submissions as s', 's.id', 'p.submission_id')
+          .innerJoin('jobs as j', 'j.id', 's.job_id')
+          .innerJoin('bounties as b', 'b.id', 'j.bounty_id')
+          .select([
+            'b.org_id as org_id',
+            'b.id as bounty_id',
+            's.id as submission_id',
+            'p.id as payout_id',
+            'p.status as payout_status',
+            'p.hold_until as hold_until',
+            'p.worker_id as worker_id',
+          ])
+          .where('p.id', '=', payoutId)
+          .executeTakeFirst()
+      : await trx
+          .selectFrom('submissions as s')
+          .innerJoin('jobs as j', 'j.id', 's.job_id')
+          .innerJoin('bounties as b', 'b.id', 'j.bounty_id')
+          .leftJoin('payouts as p', 'p.submission_id', 's.id')
+          .select([
+            'b.org_id as org_id',
+            'b.id as bounty_id',
+            's.id as submission_id',
+            'p.id as payout_id',
+            'p.status as payout_status',
+            'p.hold_until as hold_until',
+            'p.worker_id as worker_id',
+          ])
+          .where('s.id', '=', submissionId!)
+          .executeTakeFirst();
+
+    if (!ctx) throw new Error('target_not_found');
+    if (String((ctx as any).org_id) !== orgId) throw new Error('forbidden');
+
+    const payoutStatus = String((ctx as any).payout_status ?? '');
+    if (payoutStatus === 'paid') throw new Error('payout_already_paid');
+
+    const finalPayoutId = ((ctx as any).payout_id as string | null) ?? null;
+    if (!finalPayoutId) throw new Error('payout_missing');
+
+    const holdUntil = ((ctx as any).hold_until as Date | null) ?? null;
+    if (!holdUntil) throw new Error('dispute_window_disabled');
+    if (holdUntil.getTime() <= Date.now()) throw new Error('dispute_window_expired');
+
+    const open = await trx
+      .selectFrom('disputes')
+      .select(['id'])
+      .where('payout_id', '=', finalPayoutId)
+      .where('status', '=', 'open')
+      .executeTakeFirst();
+    if (open) throw new Error('dispute_already_open');
+
+    const id = nanoid(12);
+    const row = await trx
+      .insertInto('disputes')
+      .values({
+        id,
+        org_id: orgId,
+        bounty_id: (ctx as any).bounty_id,
+        submission_id: (ctx as any).submission_id ?? null,
+        payout_id: finalPayoutId,
+        status: 'open',
+        reason: input.reason ?? null,
+        resolution: null,
+        resolution_notes: null,
+        created_at: now,
+        resolved_at: null,
+        resolver_actor_type: null,
+        resolver_actor_id: null,
+      } satisfies Selectable<DisputesTable>)
+      .returningAll()
+      .executeTakeFirstOrThrow();
+
+    // Block payout and stop any pending payout execution until the dispute is resolved.
+    await trx.updateTable('payouts').set({ blocked_reason: 'dispute_open', updated_at: now }).where('id', '=', finalPayoutId).execute();
+
+    // Mark payout.requested outbox event as sent so it won't fire while the dispute is open.
+    await trx
+      .updateTable('outbox_events')
+      .set({ status: 'sent', sent_at: now, locked_at: null, locked_by: null, last_error: null })
+      .where('topic', '=', 'payout.requested')
+      .where('idempotency_key', '=', `payout:${finalPayoutId}`)
+      .execute();
+
+    // Schedule an automatic refund at hold_until (refund = gross - Proofwork fee).
+    await trx
+      .insertInto('outbox_events')
+      .values({
+        id: nanoid(12),
+        topic: 'dispute.auto_refund.requested',
+        idempotency_key: `dispute:auto_refund:${id}`,
+        payload: { disputeId: id },
+        status: 'pending',
+        attempts: 0,
+        available_at: holdUntil,
+        locked_at: null,
+        locked_by: null,
+        last_error: null,
+        created_at: now,
+        sent_at: null,
+      } satisfies Selectable<OutboxEventsTable>)
+      .onConflict((oc) => oc.columns(['topic', 'idempotency_key']).doNothing())
+      .execute();
+
+    await trx
+      .insertInto('audit_log')
+      .values({
+        id: nanoid(12),
+        actor_type: actor.actorType,
+        actor_id: actor.actorId,
+        action: 'dispute.open',
+        target_type: 'dispute',
+        target_id: id,
+        metadata: { payoutId: finalPayoutId, submissionId: (ctx as any).submission_id, holdUntil: holdUntil.toISOString() },
+        created_at: now,
+      })
+      .execute();
+
+    return disputeFromRow(row);
+  });
+}
+
+export async function cancelDispute(orgId: string, disputeId: string, actor: { actorType: string; actorId: string | null }): Promise<any> {
+  return await db.transaction().execute(async (trx) => {
+    const now = new Date();
+    const row = await trx
+      .selectFrom('disputes')
+      .selectAll()
+      .where('id', '=', disputeId)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!row) throw new Error('not_found');
+    if (row.org_id !== orgId) throw new Error('forbidden');
+    if (row.status !== 'open') throw new Error('not_open');
+
+    const updated = await trx
+      .updateTable('disputes')
+      .set({
+        status: 'cancelled',
+        resolved_at: now,
+        resolver_actor_type: actor.actorType,
+        resolver_actor_id: actor.actorId,
+        resolution: 'cancelled',
+        resolution_notes: null,
+      })
+      .where('id', '=', disputeId)
+      .returningAll()
+      .executeTakeFirstOrThrow();
+
+    if (row.payout_id) {
+      await trx.updateTable('payouts').set({ blocked_reason: null, updated_at: now }).where('id', '=', row.payout_id).execute();
+
+      const payoutRow = await trx
+        .selectFrom('payouts')
+        .select(['hold_until', 'submission_id', 'worker_id'])
+        .where('id', '=', row.payout_id)
+        .executeTakeFirstOrThrow();
+
+      const nextAt =
+        payoutRow.hold_until && (payoutRow.hold_until as any as Date).getTime() > Date.now() ? payoutRow.hold_until : now;
+
+      const existingEvt = await trx
+        .selectFrom('outbox_events')
+        .select(['id'])
+        .where('topic', '=', 'payout.requested')
+        .where('idempotency_key', '=', `payout:${row.payout_id}`)
+        .executeTakeFirst();
+
+      if (existingEvt?.id) {
+        await trx
+          .updateTable('outbox_events')
+          .set({ status: 'pending', available_at: nextAt, locked_at: null, locked_by: null, last_error: null, sent_at: null })
+          .where('id', '=', existingEvt.id)
+          .execute();
+      } else {
+        await trx
+          .insertInto('outbox_events')
+          .values({
+            id: nanoid(12),
+            topic: 'payout.requested',
+            idempotency_key: `payout:${row.payout_id}`,
+            payload: { payoutId: row.payout_id, submissionId: payoutRow.submission_id, workerId: payoutRow.worker_id },
+            status: 'pending',
+            attempts: 0,
+            available_at: nextAt,
+            locked_at: null,
+            locked_by: null,
+            last_error: null,
+            created_at: now,
+            sent_at: null,
+          } satisfies Selectable<OutboxEventsTable>)
+          .execute();
+      }
+    }
+
+    await trx
+      .insertInto('audit_log')
+      .values({
+        id: nanoid(12),
+        actor_type: actor.actorType,
+        actor_id: actor.actorId,
+        action: 'dispute.cancel',
+        target_type: 'dispute',
+        target_id: disputeId,
+        metadata: {},
+        created_at: now,
+      })
+      .execute();
+
+    return disputeFromRow(updated);
+  });
+}
+
+export async function resolveDisputeAdmin(
+  disputeId: string,
+  input: { resolution: 'refund' | 'uphold'; notes?: string | null },
+  actor: { actorType: string; actorId: string | null }
+): Promise<any> {
+  return await db.transaction().execute(async (trx) => {
+    const now = new Date();
+    const row = await trx
+      .selectFrom('disputes')
+      .selectAll()
+      .where('id', '=', disputeId)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!row) throw new Error('not_found');
+    if (row.status !== 'open') throw new Error('not_open');
+
+    const payoutId = row.payout_id;
+    if (!payoutId) throw new Error('payout_missing');
+
+    const payoutRow = await trx.selectFrom('payouts').selectAll().where('id', '=', payoutId).forUpdate().executeTakeFirstOrThrow();
+    if (payoutRow.status === 'paid') throw new Error('payout_already_paid');
+    if (payoutRow.status === 'refunded') return disputeFromRow(row);
+
+    if (input.resolution === 'refund') {
+      const proofworkFee = Number(payoutRow.proofwork_fee_cents ?? 0);
+      const refundCents = Math.max(0, Number(payoutRow.amount_cents ?? 0) - (Number.isFinite(proofworkFee) ? proofworkFee : 0));
+
+      // Credit the org billing balance (refund minus Proofwork fee).
+      const orgId = row.org_id;
+      const acct =
+        (await trx.selectFrom('billing_accounts').selectAll().where('org_id', '=', orgId).executeTakeFirst()) ??
+        (await trx
+          .insertInto('billing_accounts')
+          .values({
+            id: `acct_${orgId}`,
+            org_id: orgId,
+            balance_cents: 0,
+            currency: 'usd',
+            created_at: now,
+            updated_at: now,
+          } satisfies Selectable<BillingAccountsTable>)
+          .onConflict((oc) => oc.column('org_id').doNothing())
+          .returningAll()
+          .executeTakeFirst()) ??
+        (await trx.selectFrom('billing_accounts').selectAll().where('org_id', '=', orgId).executeTakeFirstOrThrow());
+
+      if (refundCents > 0) {
+        await trx
+          .updateTable('billing_accounts')
+          .set({ balance_cents: sql`balance_cents + ${refundCents}`, updated_at: now })
+          .where('id', '=', acct.id)
+          .execute();
+
+        await trx
+          .insertInto('billing_events')
+          .values({
+            id: nanoid(12),
+            account_id: acct.id,
+            event_type: 'dispute_refund',
+            amount_cents: refundCents,
+            metadata_json: { disputeId, payoutId, proofworkFeeCents: proofworkFee },
+            created_at: now,
+          } satisfies Selectable<BillingEventsTable>)
+          .execute();
+      }
+
+      // Mark payout refunded (final).
+      await trx
+        .updateTable('payouts')
+        .set({ status: 'refunded', blocked_reason: 'dispute_refund', updated_at: now })
+        .where('id', '=', payoutId)
+        .execute();
+
+      // Mark submission payout_status reversed (best-effort).
+      if (row.submission_id) {
+        await trx.updateTable('submissions').set({ payout_status: 'reversed' }).where('id', '=', row.submission_id).execute();
+      }
+
+      // Stop any pending payout outbox events for this payout.
+      await trx
+        .updateTable('outbox_events')
+        .set({ status: 'sent', sent_at: now, locked_at: null, locked_by: null, last_error: null })
+        .where('topic', '=', 'payout.requested')
+        .where('idempotency_key', '=', `payout:${payoutId}`)
+        .execute();
+
+      const updated = await trx
+        .updateTable('disputes')
+        .set({
+          status: 'resolved',
+          resolved_at: now,
+          resolver_actor_type: actor.actorType,
+          resolver_actor_id: actor.actorId,
+          resolution: 'refund',
+          resolution_notes: input.notes ?? null,
+        })
+        .where('id', '=', disputeId)
+        .returningAll()
+        .executeTakeFirstOrThrow();
+
+      await trx
+        .insertInto('audit_log')
+        .values({
+          id: nanoid(12),
+          actor_type: actor.actorType,
+          actor_id: actor.actorId,
+          action: 'dispute.resolve_refund',
+          target_type: 'dispute',
+          target_id: disputeId,
+          metadata: { refundCents, proofworkFeeCents: proofworkFee },
+          created_at: now,
+        })
+        .execute();
+
+      return disputeFromRow(updated);
+    }
+
+    // uphold: clear block and re-schedule payout request at max(now, hold_until)
+    await trx.updateTable('payouts').set({ blocked_reason: null, updated_at: now }).where('id', '=', payoutId).execute();
+
+    const nextAt = payoutRow.hold_until && (payoutRow.hold_until as any as Date).getTime() > Date.now() ? payoutRow.hold_until : now;
+
+    const existingEvt = await trx
+      .selectFrom('outbox_events')
+      .select(['id'])
+      .where('topic', '=', 'payout.requested')
+      .where('idempotency_key', '=', `payout:${payoutId}`)
+      .executeTakeFirst();
+
+    if (existingEvt?.id) {
+      await trx
+        .updateTable('outbox_events')
+        .set({ status: 'pending', available_at: nextAt, locked_at: null, locked_by: null, last_error: null })
+        .where('id', '=', existingEvt.id)
+        .execute();
+    } else {
+      await trx
+        .insertInto('outbox_events')
+        .values({
+          id: nanoid(12),
+          topic: 'payout.requested',
+          idempotency_key: `payout:${payoutId}`,
+          payload: { payoutId, submissionId: row.submission_id, workerId: payoutRow.worker_id },
+          status: 'pending',
+          attempts: 0,
+          available_at: nextAt,
+          locked_at: null,
+          locked_by: null,
+          last_error: null,
+          created_at: now,
+          sent_at: null,
+        } satisfies Selectable<OutboxEventsTable>)
+        .execute();
+    }
+
+    const updated = await trx
+      .updateTable('disputes')
+      .set({
+        status: 'resolved',
+        resolved_at: now,
+        resolver_actor_type: actor.actorType,
+        resolver_actor_id: actor.actorId,
+        resolution: 'uphold',
+        resolution_notes: input.notes ?? null,
+      })
+      .where('id', '=', disputeId)
+      .returningAll()
+      .executeTakeFirstOrThrow();
+
+    await trx
+      .insertInto('audit_log')
+      .values({
+        id: nanoid(12),
+        actor_type: actor.actorType,
+        actor_id: actor.actorId,
+        action: 'dispute.resolve_uphold',
+        target_type: 'dispute',
+        target_id: disputeId,
+        metadata: {},
+        created_at: now,
+      })
+      .execute();
+
+    return disputeFromRow(updated);
+  });
 }
 
 export async function registerAcceptedDedupe(bountyId: string, key: string) {
@@ -1407,4 +2561,36 @@ export async function setOrgPlatformFeeSettings(
     platformFeeBps: Number((row as any).platform_fee_bps ?? 0),
     platformFeeWalletAddress: row.platform_fee_wallet_address ?? null,
   };
+}
+
+export async function getOrgCorsAllowOrigins(orgId: string): Promise<string[] | undefined> {
+  const row = await db.selectFrom('orgs').select(['cors_allow_origins']).where('id', '=', orgId).executeTakeFirst();
+  if (!row) return undefined;
+  const raw = (row as any).cors_allow_origins;
+  return Array.isArray(raw) ? raw.filter((o: any) => typeof o === 'string' && o.length) : [];
+}
+
+export async function setOrgCorsAllowOrigins(orgId: string, origins: string[]): Promise<string[] | undefined> {
+  const row = await db
+    .updateTable('orgs')
+    .set({ cors_allow_origins: JSON.stringify(origins) })
+    .where('id', '=', orgId)
+    .returning(['cors_allow_origins'])
+    .executeTakeFirst();
+  if (!row) return undefined;
+  const raw = (row as any).cors_allow_origins;
+  return Array.isArray(raw) ? raw.filter((o: any) => typeof o === 'string' && o.length) : [];
+}
+
+export async function listAllCorsAllowOrigins(): Promise<string[]> {
+  // For preflight requests we cannot determine org from tokens. This returns a stable union set.
+  const res = await pool.query<{ origin: string }>(
+    `
+    SELECT DISTINCT jsonb_array_elements_text(cors_allow_origins) AS origin
+    FROM orgs
+    WHERE cors_allow_origins IS NOT NULL
+      AND jsonb_typeof(cors_allow_origins) = 'array'
+    `
+  );
+  return res.rows.map((r) => String(r.origin)).filter(Boolean);
 }

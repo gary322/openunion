@@ -35,6 +35,21 @@ export interface Bounty {
   taskDescriptor?: Record<string, unknown>;
 }
 
+export interface App {
+  id: string;
+  ownerOrgId: string;
+  slug: string;
+  taskType: string;
+  name: string;
+  description?: string;
+  dashboardUrl?: string;
+  public: boolean;
+  status: 'active' | 'disabled';
+  defaultDescriptor: Record<string, unknown>;
+  createdAt: number;
+  updatedAt: number;
+}
+
 export interface Job {
   id: string;
   bountyId: string;

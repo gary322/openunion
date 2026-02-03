@@ -144,9 +144,57 @@ export const orgPlatformFeeSchema = z.object({
   platformFeeWalletAddress: z.string().optional().nullable(),
 });
 
+export const orgCorsAllowlistSchema = z.object({
+  origins: z.array(z.string().min(1).max(300)).max(100),
+});
+
 export const orgRegisterSchema = z.object({
   orgName: z.string().min(2).max(80),
   email: z.string().min(3).max(200),
   password: z.string().min(8).max(200),
   apiKeyName: z.string().min(1).max(80).optional(),
+});
+
+export const appSlugSchema = z
+  .string()
+  .min(1)
+  .max(64)
+  .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, 'slug must be lowercase alphanumeric with optional dashes');
+
+export const appCreateSchema = z.object({
+  slug: appSlugSchema,
+  taskType: z.string().min(1).max(120),
+  name: z.string().min(1).max(120),
+  description: z.string().max(2000).optional().nullable(),
+  dashboardUrl: z.string().max(500).optional().nullable(),
+  public: z.boolean().optional(),
+  defaultDescriptor: taskDescriptorSchema.optional(),
+});
+
+export const appUpdateSchema = z.object({
+  slug: appSlugSchema.optional(),
+  taskType: z.string().min(1).max(120).optional(),
+  name: z.string().min(1).max(120).optional(),
+  description: z.string().max(2000).optional().nullable(),
+  dashboardUrl: z.string().max(500).optional().nullable(),
+  public: z.boolean().optional(),
+  status: z.enum(['active', 'disabled']).optional(),
+  defaultDescriptor: taskDescriptorSchema.optional(),
+});
+
+export const disputeCreateSchema = z
+  .object({
+    payoutId: z.string().min(1).optional(),
+    submissionId: z.string().min(1).optional(),
+    reason: z.string().min(1).max(2000),
+  })
+  .refine((v) => Boolean(v.payoutId || v.submissionId), { message: 'payoutId or submissionId required' });
+
+export const disputeResolveSchema = z.object({
+  resolution: z.enum(['refund', 'uphold']),
+  notes: z.string().max(5000).optional().nullable(),
+});
+
+export const adminAppStatusSchema = z.object({
+  status: z.enum(['active', 'disabled']),
 });

@@ -1,5 +1,5 @@
 import { db } from '../src/db/client.js';
-import { getPayout, markPayoutStatus } from '../src/store.js';
+import { getPayout, markPayoutStatus, resolveDisputeAdmin } from '../src/store.js';
 import { deleteArtifactObject, scanArtifactObject } from '../src/storage.js';
 import { getPaymentProvider } from '../src/payments/provider.js';
 import { runVerifierGateway } from '../src/verification/gateway.js';
@@ -377,6 +377,22 @@ export async function handlePayoutRequested(payload: any) {
     }
   } else {
     await markPayoutStatus(payoutId, 'failed', { provider: res.provider, providerRef: res.providerRef });
+  }
+}
+
+export async function handleDisputeAutoRefundRequested(payload: any) {
+  const disputeId = payload?.disputeId as string | undefined;
+  if (!disputeId) throw new Error('missing_disputeId');
+
+  // Disputes posture: auto-refund after the hold window, returning funds to the buyer
+  // minus Proofwork's fee. This should be safe to re-run idempotently.
+  try {
+    await resolveDisputeAdmin(disputeId, { resolution: 'refund', notes: 'auto_refund' }, { actorType: 'system', actorId: null });
+  } catch (err: any) {
+    const msg = String(err?.message ?? err);
+    // If the dispute is already resolved/cancelled or missing, treat as a no-op.
+    if (['not_found', 'not_open', 'payout_missing', 'payout_already_paid'].includes(msg)) return;
+    throw err;
   }
 }
 

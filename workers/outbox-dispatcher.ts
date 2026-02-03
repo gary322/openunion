@@ -8,6 +8,7 @@ import { runOutboxLoop } from './outbox-lib.js';
 import {
   handleArtifactDeleteRequested,
   handleArtifactScanRequested,
+  handleDisputeAutoRefundRequested,
   handlePayoutConfirmRequested,
   handlePayoutRequested,
 } from './handlers.js';
@@ -16,7 +17,13 @@ import { startWorkerHealthServer } from './health.js';
 const workerId = process.env.WORKER_ID ?? `outbox-dispatcher-${process.pid}`;
 // NOTE: verification.requested is handled by the dedicated verification-runner so it can be
 // configured with VERIFIER_GATEWAY_URL and scaled independently.
-const topics = ['payout.requested', 'payout.confirm.requested', 'artifact.scan.requested', 'artifact.delete.requested'];
+const topics = [
+  'payout.requested',
+  'payout.confirm.requested',
+  'artifact.scan.requested',
+  'artifact.delete.requested',
+  'dispute.auto_refund.requested',
+];
 
 (async () => {
   await runMigrations();
@@ -32,6 +39,7 @@ const topics = ['payout.requested', 'payout.confirm.requested', 'artifact.scan.r
       if (evt.topic === 'payout.confirm.requested') return await handlePayoutConfirmRequested(evt.payload);
       if (evt.topic === 'artifact.scan.requested') return await handleArtifactScanRequested(evt.payload);
       if (evt.topic === 'artifact.delete.requested') return await handleArtifactDeleteRequested(evt.payload);
+      if (evt.topic === 'dispute.auto_refund.requested') return await handleDisputeAutoRefundRequested(evt.payload);
       throw new Error(`unknown_topic:${evt.topic}`);
     },
   });
