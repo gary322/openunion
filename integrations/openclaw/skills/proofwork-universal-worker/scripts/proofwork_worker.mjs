@@ -36,6 +36,13 @@ const LLM_ARXIV_MAX_RESULTS = (() => {
   return Math.max(1, Math.min(10, Math.floor(n)));
 })();
 
+const ARXIV_API_BASE_URL = String(process.env.ARXIV_API_BASE_URL ?? "").trim() || "https://export.arxiv.org/api/query";
+const ARXIV_MAX_RESULTS = (() => {
+  const n = Number(process.env.ARXIV_MAX_RESULTS ?? 5);
+  if (!Number.isFinite(n)) return 5;
+  return Math.max(1, Math.min(10, Math.floor(n)));
+})();
+
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
@@ -317,6 +324,78 @@ async function maybeGetArxivReferencesFromLlm(idea) {
       const clean = String(p.arxivId).replace(/^arxiv:/i, "");
       return { id: `arxiv:${clean}`, title: p.title, url: `https://arxiv.org/abs/${clean}` };
     });
+  } catch {
+    return [];
+  }
+}
+
+function decodeXmlEntities(s) {
+  return String(s)
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, "\"")
+    .replace(/&apos;/g, "'");
+}
+
+function normalizeWs(s) {
+  return String(s).replace(/\s+/g, " ").trim();
+}
+
+function extractArxivId(raw) {
+  let s = String(raw ?? "").trim();
+  if (!s) return null;
+  s = s.replace(/^arxiv:/i, "");
+  const mAbs = s.match(/\/abs\/([^?#]+)$/i);
+  const mPdf = s.match(/\/pdf\/([^?#]+)$/i);
+  if (mAbs?.[1]) s = mAbs[1];
+  else if (mPdf?.[1]) s = mPdf[1];
+  s = s.replace(/\.pdf$/i, "");
+  s = s.replace(/v\d+$/i, "");
+  s = s.trim();
+  if (!s) return null;
+  if (/^\d{4}\.\d{4,5}$/.test(s)) return s;
+  if (/^[a-z-]+(\/[a-z-]+)*\/\d{7}$/i.test(s)) return s;
+  return null;
+}
+
+function parseArxivAtomFeed(xml) {
+  const out = [];
+  const entries = String(xml).match(/<entry[\s>][\s\S]*?<\/entry>/gi) ?? [];
+  for (const entry of entries) {
+    const idMatch = entry.match(/<id>\s*([^<]+)\s*<\/id>/i);
+    const titleMatch = entry.match(/<title>\s*([\s\S]*?)\s*<\/title>/i);
+    const id = extractArxivId(idMatch?.[1] ?? "");
+    if (!id) continue;
+    const titleRaw = titleMatch?.[1] ? decodeXmlEntities(titleMatch[1]) : "";
+    const title = titleRaw ? normalizeWs(titleRaw) : undefined;
+    out.push({ id, title });
+  }
+  return out;
+}
+
+async function getArxivReferencesFromApi(query) {
+  const q = String(query ?? "").trim();
+  if (!q) return [];
+
+  try {
+    const url = new URL(ARXIV_API_BASE_URL);
+    url.searchParams.set("search_query", `all:${q}`);
+    url.searchParams.set("start", "0");
+    url.searchParams.set("max_results", String(ARXIV_MAX_RESULTS));
+
+    const ac = new AbortController();
+    const t = setTimeout(() => ac.abort(), 30_000);
+    t.unref?.();
+    try {
+      const resp = await fetch(url.toString(), { method: "GET", headers: { Accept: "application/atom+xml" }, signal: ac.signal });
+      if (!resp.ok) return [];
+      const xml = await resp.text();
+      const parsed = parseArxivAtomFeed(xml).slice(0, ARXIV_MAX_RESULTS);
+      return parsed.map((p) => ({ id: `arxiv:${p.id}`, title: p.title, url: `https://arxiv.org/abs/${p.id}` }));
+    } finally {
+      clearTimeout(t);
+    }
   } catch {
     return [];
   }
@@ -849,12 +928,13 @@ async function runStructuredJsonOutputsModule(input) {
     const idea = typeof inputSpec?.idea === "string" ? inputSpec.idea : "";
     const llmRefs = type.includes("arxiv") ? await maybeGetArxivReferencesFromLlm(idea) : [];
     const extractedRefs = Array.isArray(extracted.references) ? extracted.references : null;
+    const apiRefs = llmRefs.length === 0 && idea ? await getArxivReferencesFromApi(idea) : [];
     await emit("references", {
       schema: "references.v1",
       generated_at: new Date().toISOString(),
       idea,
       // Must include {id,url} for verifier structured JSON checks.
-      references: llmRefs.length > 0 ? llmRefs : extractedRefs && extractedRefs.length ? extractedRefs : [{ id: "0000.00000", title: "Example Paper", url: "https://arxiv.org/abs/0000.00000" }],
+      references: llmRefs.length > 0 ? llmRefs : apiRefs.length > 0 ? apiRefs : extractedRefs && extractedRefs.length ? extractedRefs : [],
     });
   }
 

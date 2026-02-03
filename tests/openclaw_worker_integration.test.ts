@@ -7,6 +7,8 @@ import { mkdtemp, writeFile, chmod } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
+import { createServer } from 'node:http';
+import { once } from 'node:events';
 
 function runNodeScript(params: { scriptPath: string; env: Record<string, string | undefined>; cwd: string }) {
   return new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve) => {
@@ -161,11 +163,37 @@ process.exit(0);
     // Seed data creates multiple jobs (one per fingerprint class). Make the test deterministic by leaving exactly one job.
     await pool.query('DELETE FROM jobs WHERE id <> $1', [job.jobId]);
 
+    // Stub arXiv API for deterministic references without external network access.
+    const arxivServer = createServer((req, res) => {
+      const u = new URL(req.url ?? '/', 'http://127.0.0.1');
+      if (u.pathname !== '/api/query') {
+        res.statusCode = 404;
+        res.end('not found');
+        return;
+      }
+      res.statusCode = 200;
+      res.setHeader('content-type', 'application/atom+xml; charset=utf-8');
+      res.end(`<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>arXiv Query</title>
+  <entry>
+    <id>http://arxiv.org/abs/2310.06825v1</id>
+    <title>Test Paper One</title>
+  </entry>
+</feed>`);
+    });
+    arxivServer.listen(0, '127.0.0.1');
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+    await once(arxivServer, 'listening');
+    const arxivAddr: any = arxivServer.address();
+    const arxivApiBaseUrl = `http://127.0.0.1:${arxivAddr.port}/api/query`;
+
     const descriptor = {
       schema_version: 'v1',
       type: 'openclaw_universal_worker_test',
       capability_tags: ['screenshot', 'llm_summarize'],
-      input_spec: { url: 'https://example.com' },
+      // Provide an idea so the worker can fetch real arXiv references via API.
+      input_spec: { url: 'https://example.com', idea: 'test' },
       output_spec: {
         required_artifacts: [
           { kind: 'screenshot', count: 1 },
@@ -177,20 +205,27 @@ process.exit(0);
 
     const mockOpenClaw = await makeMockOpenClawBin();
     const scriptPath = 'integrations/openclaw/skills/proofwork-universal-worker/scripts/proofwork_worker.mjs';
-    const run = await runNodeScript({
-      scriptPath,
-      cwd: process.cwd(),
-      env: {
-        ONCE: 'true',
-        PROOFWORK_API_BASE_URL: baseUrl,
-        PROOFWORK_WORKER_TOKEN: workerToken,
-        PROOFWORK_SUPPORTED_CAPABILITY_TAGS: 'browser,http,screenshot,llm_summarize',
-        PROOFWORK_CANARY_PERCENT: '100',
-        OPENCLAW_BIN: mockOpenClaw,
-        // Do not use OpenClaw LLM in tests; force deterministic fallback.
-        OPENCLAW_AGENT_ID: '',
-      },
-    });
+    let run: { code: number | null; stdout: string; stderr: string } = { code: 1, stdout: '', stderr: '' };
+    try {
+      run = await runNodeScript({
+        scriptPath,
+        cwd: process.cwd(),
+        env: {
+          ONCE: 'true',
+          PROOFWORK_API_BASE_URL: baseUrl,
+          PROOFWORK_WORKER_TOKEN: workerToken,
+          PROOFWORK_SUPPORTED_CAPABILITY_TAGS: 'browser,http,screenshot,llm_summarize',
+          PROOFWORK_CANARY_PERCENT: '100',
+          OPENCLAW_BIN: mockOpenClaw,
+          // Do not use OpenClaw LLM in tests; force deterministic fallback.
+          OPENCLAW_AGENT_ID: '',
+          ARXIV_API_BASE_URL: arxivApiBaseUrl,
+          ARXIV_MAX_RESULTS: '1',
+        },
+      });
+    } finally {
+      await new Promise<void>((resolve) => arxivServer.close(() => resolve()));
+    }
     if (run.code !== 0) {
       // Help debug by surfacing subprocess output in CI logs.
       // eslint-disable-next-line no-console
