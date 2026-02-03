@@ -43,6 +43,7 @@ async function waitForRpc(url: string, timeoutMs = 20_000) {
 let hardhatProc: ReturnType<typeof spawn> | undefined;
 let deployed: { usdc: string; payoutSplitter: string; payerAddress: string } | undefined;
 
+// Hardhat startup + contract compilation can be slow on shared CI runners.
 beforeAll(async () => {
   try {
     // Compile contracts once.
@@ -82,7 +83,7 @@ beforeAll(async () => {
     }
     throw err;
   }
-});
+}, 120_000);
 
 afterAll(async () => {
   if (hardhatProc && !hardhatProc.killed) {
