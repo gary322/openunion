@@ -52,14 +52,15 @@ jobs:
       - name: Security audit (high)
         run: npm audit --audit-level=high
 
+      # Some unit/integration tests spawn Playwright (Universal Worker browser_flow).
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
       - name: Unit/integration tests
         run: npm test
 
       - name: Typecheck/build (tsc)
         run: npm run build
-
-      - name: Install Playwright browsers
-        run: npx playwright install --with-deps chromium
 
       - name: E2E tests
         run: npm run test:e2e
