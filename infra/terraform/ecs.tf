@@ -85,7 +85,7 @@ locals {
   public_base_url = var.public_base_url != "" ? var.public_base_url : (
     var.enable_alb ? (
       var.acm_certificate_arn != "" ? "https://${aws_lb.api[0].dns_name}" : "http://${aws_lb.api[0].dns_name}"
-    ) : (
+      ) : (
       local.cloudfront_enabled ? "https://${aws_cloudfront_distribution.router[0].domain_name}" : (
         var.enable_router_instance ? "http://${aws_eip.router[0].public_ip}" : ""
       )
