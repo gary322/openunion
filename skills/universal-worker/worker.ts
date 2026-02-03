@@ -279,10 +279,13 @@ async function waitForArtifactScanned(input: { token: string; finalUrl: string }
   const url = rewriteArtifactFinalUrlToApiBase(input.finalUrl);
   const headers: Record<string, string> = { Authorization: `Bearer ${input.token}` };
   const debug = envBool('ARTIFACT_WAIT_DEBUG', false);
+  const maxWaitRaw = Number(process.env.ARTIFACT_SCAN_MAX_WAIT_SEC ?? 300);
+  // Clamp to avoid infinite hangs while still allowing slow clamd cold starts in real deployments.
+  const maxWaitSec = Number.isFinite(maxWaitRaw) ? Math.max(30, Math.min(30 * 60, Math.floor(maxWaitRaw))) : 300;
   let lastStatus: number | undefined;
 
   // S3 backend is async-scanned: /api/artifacts/:id/download returns 409 until status is scanned/accepted.
-  for (let i = 0; i < 300; i++) {
+  for (let i = 0; i < maxWaitSec; i++) {
     const resp = await fetch(url, { method: 'GET', headers, redirect: 'manual' });
     // Avoid buffering large artifacts in memory.
     // Note: for blocked artifacts (422) we may read the small JSON body for the reason.
