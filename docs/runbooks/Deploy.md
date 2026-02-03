@@ -1,6 +1,11 @@
 # Deploy (staging → production) checklist
 
 ### Pre-flight
+- **GitHub deployments (recommended)**:
+  - GitHub Environments exist and are named exactly: `staging`, `production` (OIDC role trust depends on them).
+  - `production` environment requires reviewer approval (configure reviewers in GitHub UI).
+  - `main` is protected (PR required + CI must be green).
+  - Note: GitHub Actions deploy uses **AWS OIDC** (not SSH deploy keys).
 - **Secrets configured** in Secrets Manager (or your secret store):
   - `DATABASE_URL`, `WORKER_TOKEN_PEPPER`, `BUYER_TOKEN_PEPPER`, `SESSION_SECRET`
   - `VERIFIER_TOKEN_HASH` + `VERIFIER_TOKEN` (token preimage distributed to internal verifier workers/gateway)

@@ -86,6 +86,24 @@
         <tbody id="rows"></tbody>
       </table>
     </div>
+
+    <div class="card" style="margin-top:14px">
+      <div class="sub">Apps registry (moderation): <span class="mono">GET /api/admin/apps</span> · <span class="mono">POST /api/admin/apps/:id/status</span></div>
+      <table style="margin-top:10px">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Slug</th>
+            <th>Task Type</th>
+            <th>Status</th>
+            <th>Public</th>
+            <th>Dashboard</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody id="appsList"></tbody>
+      </table>
+    </div>
   </div>
 
   <script src="./apps.js"></script>

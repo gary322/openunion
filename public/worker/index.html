@@ -180,10 +180,22 @@
           <pre id="submitOut">{}</pre>
           <div id="submitStatus" class="status"></div>
         </div>
+
+        <div class="card">
+          <h2>Payouts</h2>
+          <div class="sub">Payout history + status (pending/paid/failed/refunded).</div>
+          <label>Status filter</label>
+          <input id="payoutStatus" placeholder="pending|paid|failed|refunded" />
+          <div class="btnrow">
+            <button id="btnListPayouts" class="primary">GET /api/worker/payouts</button>
+          </div>
+          <label>Response</label>
+          <pre id="payoutOut">{}</pre>
+          <div id="payoutStatusMsg" class="status"></div>
+        </div>
       </div>
     </div>
 
     <script src="./app.js"></script>
   </body>
 </html>
-

@@ -65,6 +65,54 @@ async function refresh() {
     `;
     tbody.appendChild(tr);
   }
+
+  // Registry list for moderation.
+  const { res: res2, json: json2 } = await api('/api/admin/apps?page=1&limit=200', { token });
+  const appsTbody = $('appsList');
+  appsTbody.innerHTML = '';
+  if (!res2.ok) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td colspan="7">apps list failed (${res2.status})</td>`;
+    appsTbody.appendChild(tr);
+    return;
+  }
+
+  const apps = json2.apps || [];
+  for (const a of apps) {
+    const tr = document.createElement('tr');
+    const dash = a.dashboardUrl ? `<a href="${a.dashboardUrl}">link</a>` : '-';
+    const btnLabel = a.status === 'disabled' ? 'Enable' : 'Disable';
+    const nextStatus = a.status === 'disabled' ? 'active' : 'disabled';
+    tr.innerHTML = `
+      <td class="mono">${a.id}</td>
+      <td class="mono">${a.slug}</td>
+      <td class="mono">${a.taskType}</td>
+      <td>${a.status}</td>
+      <td>${a.public ? 'yes' : 'no'}</td>
+      <td>${dash}</td>
+      <td><button data-app-id="${a.id}" data-next="${nextStatus}">${btnLabel}</button></td>
+    `;
+    appsTbody.appendChild(tr);
+  }
+
+  for (const btn of appsTbody.querySelectorAll('button[data-app-id]')) {
+    btn.addEventListener('click', async (ev) => {
+      const b = ev.currentTarget;
+      const appId = b.getAttribute('data-app-id');
+      const next = b.getAttribute('data-next');
+      if (!appId || !next) return;
+      b.disabled = true;
+      try {
+        const r = await api(`/api/admin/apps/${encodeURIComponent(appId)}/status`, { method: 'POST', token, body: { status: next } });
+        if (!r.res.ok) {
+          $('status').textContent = `set status failed (${r.res.status})`;
+        }
+      } finally {
+        b.disabled = false;
+        refresh().catch(() => {});
+      }
+    });
+  }
 }
 
 $('btnSave').addEventListener('click', () => {

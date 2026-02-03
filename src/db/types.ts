@@ -23,6 +23,11 @@ export interface OrgsTable {
   name: string;
   platform_fee_bps: number;
   platform_fee_wallet_address: string | null;
+  cors_allow_origins: unknown;
+  daily_spend_limit_cents: number | null;
+  monthly_spend_limit_cents: number | null;
+  max_published_bounties: number | null;
+  max_open_jobs: number | null;
   created_at: Timestamp;
 }
 
@@ -109,6 +114,8 @@ export interface PayoutsTable {
   proofwork_fee_bps: number | null;
   proofwork_fee_wallet_address: string | null;
   payout_chain: string | null;
+  hold_until: Timestamp | null;
+  blocked_reason: string | null;
   created_at: Timestamp;
   updated_at: Timestamp;
 }
@@ -280,10 +287,27 @@ export interface DisputesTable {
   payout_id: string | null;
   status: string;
   reason: string | null;
+  resolution: string | null;
+  resolution_notes: string | null;
   created_at: Timestamp;
   resolved_at: Timestamp | null;
   resolver_actor_type: string | null;
   resolver_actor_id: string | null;
+}
+
+export interface AppsTable {
+  id: string;
+  owner_org_id: string;
+  slug: string;
+  task_type: string;
+  name: string;
+  description: string | null;
+  dashboard_url: string | null;
+  public: boolean;
+  status: string;
+  default_descriptor: unknown;
+  created_at: Timestamp;
+  updated_at: Timestamp;
 }
 
 export interface PayoutTransfersTable {
@@ -349,6 +373,7 @@ export interface SchemaMigrationsTable {
 export interface DB {
   workers: WorkersTable;
   orgs: OrgsTable;
+  apps: AppsTable;
   bounties: BountiesTable;
   jobs: JobsTable;
   submissions: SubmissionsTable;

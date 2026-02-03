@@ -254,6 +254,21 @@ async function onSubmit() {
   setStatus('submitStatus', `state=${json.state}`, 'good');
 }
 
+async function onListPayouts() {
+  setStatus('payoutStatusMsg', '', null);
+  const token = requireTokenUI();
+  const status = $('payoutStatus').value.trim();
+  const qs = new URLSearchParams();
+  if (status) qs.set('status', status);
+  const { res, json } = await api(`/api/worker/payouts?${qs.toString()}`, { token });
+  $('payoutOut').textContent = pretty(json);
+  if (!res.ok) {
+    setStatus('payoutStatusMsg', `list payouts failed (${res.status})`, 'bad');
+    return;
+  }
+  setStatus('payoutStatusMsg', `ok (${json.payouts?.length ?? 0} payouts)`, 'good');
+}
+
 $('btnRegister').addEventListener('click', () => onRegister().catch((e) => setStatus('authStatus', String(e), 'bad')));
 $('btnSaveToken').addEventListener('click', () => onSaveToken());
 $('btnMe').addEventListener('click', () => onMe().catch((e) => setStatus('authStatus', String(e), 'bad')));
@@ -261,7 +276,7 @@ $('btnNext').addEventListener('click', () => onNext().catch((e) => setStatus('jo
 $('btnClaim').addEventListener('click', () => onClaim().catch((e) => setStatus('jobStatus', String(e), 'bad')));
 $('btnUpload').addEventListener('click', () => onUpload().catch((e) => setStatus('uploadStatus', String(e), 'bad')));
 $('btnSubmit').addEventListener('click', () => onSubmit().catch((e) => setStatus('submitStatus', String(e), 'bad')));
+$('btnListPayouts').addEventListener('click', () => onListPayouts().catch((e) => setStatus('payoutStatusMsg', String(e), 'bad')));
 
 // Init
 setToken(getToken());
-

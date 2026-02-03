@@ -92,6 +92,28 @@ async function onCreateKey() {
   setStatus('keyStatus', 'token created and saved', 'good');
 }
 
+async function onListKeys() {
+  setStatus('keyStatus', '', null);
+  const { res, json } = await api('/api/org/api-keys', { method: 'GET' });
+  $('keyOut').textContent = pretty(json);
+  if (!res.ok) {
+    setStatus('keyStatus', `list keys failed (${res.status})`, 'bad');
+    return;
+  }
+  setStatus('keyStatus', `ok (${json.apiKeys?.length ?? 0} keys)`, 'good');
+}
+
+async function onRevokeKey() {
+  setStatus('keyStatus', '', null);
+  const csrf = getCsrfToken();
+  const id = $('revokeKeyId').value.trim();
+  if (!id) return setStatus('keyStatus', 'missing apiKeyId', 'bad');
+  const { res, json } = await api(`/api/session/api-keys/${encodeURIComponent(id)}/revoke`, { method: 'POST', csrf });
+  $('keyOut').textContent = pretty(json);
+  if (!res.ok) return setStatus('keyStatus', `revoke failed (${res.status})`, 'bad');
+  setStatus('keyStatus', 'revoked', 'good');
+}
+
 async function onGetPlatformFee() {
   setStatus('pfStatus', '', null);
   const token = $('buyerToken').value.trim();
@@ -124,6 +146,37 @@ async function onSetPlatformFee() {
     return;
   }
   setStatus('pfStatus', 'saved', 'good');
+}
+
+async function onGetCorsAllowlist() {
+  setStatus('corsStatus', '', null);
+  const token = $('buyerToken').value.trim();
+  const { res, json } = await api('/api/org/cors-allow-origins', { method: 'GET', token: token || undefined });
+  $('corsOut').textContent = pretty(json);
+  if (!res.ok) {
+    setStatus('corsStatus', `load failed (${res.status})`, 'bad');
+    return;
+  }
+  const origins = Array.isArray(json?.origins) ? json.origins : [];
+  $('corsOrigins').value = origins.join('\n');
+  setStatus('corsStatus', 'ok', 'good');
+}
+
+async function onSetCorsAllowlist() {
+  setStatus('corsStatus', '', null);
+  const token = $('buyerToken').value.trim();
+  const csrf = getCsrfToken();
+  const origins = $('corsOrigins')
+    .value.split('\n')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const { res, json } = await api('/api/org/cors-allow-origins', { method: 'PUT', token: token || undefined, csrf, body: { origins } });
+  $('corsOut').textContent = pretty(json);
+  if (!res.ok) {
+    setStatus('corsStatus', `save failed (${res.status})`, 'bad');
+    return;
+  }
+  setStatus('corsStatus', 'saved', 'good');
 }
 
 function onSaveToken() {
@@ -230,13 +283,118 @@ async function onPublish() {
   setStatus('bountyStatus', `published ${json.id}`, 'good');
 }
 
+async function onListOrgApps() {
+  setStatus('appsStatus', '', null);
+  const token = $('buyerToken').value.trim();
+  const { res, json } = await api('/api/org/apps', { method: 'GET', token: token || undefined });
+  $('appsOut').textContent = pretty(json);
+  if (!res.ok) return setStatus('appsStatus', `list apps failed (${res.status})`, 'bad');
+  setStatus('appsStatus', `ok (${json.apps?.length ?? 0} apps)`, 'good');
+}
+
+async function onCreateOrgApp() {
+  setStatus('appsStatus', '', null);
+  const token = $('buyerToken').value.trim();
+  const csrf = getCsrfToken();
+  const slug = $('appSlug').value.trim();
+  const taskType = $('appTaskType').value.trim();
+  const name = $('appName').value.trim();
+  const dashboardUrl = $('appDashboardUrl').value.trim() || null;
+
+  let defaultDescriptor = undefined;
+  const raw = $('appDefaultDescriptor').value.trim();
+  if (raw) {
+    try {
+      defaultDescriptor = JSON.parse(raw);
+    } catch {
+      return setStatus('appsStatus', 'defaultDescriptor JSON parse error', 'bad');
+    }
+  }
+
+  const { res, json } = await api('/api/org/apps', {
+    method: 'POST',
+    token: token || undefined,
+    csrf,
+    body: { slug, taskType, name, dashboardUrl, public: true, defaultDescriptor },
+  });
+  $('appsOut').textContent = pretty(json);
+  if (!res.ok) return setStatus('appsStatus', `create app failed (${res.status})`, 'bad');
+  setStatus('appsStatus', `created app ${json.app?.id || ''}`, 'good');
+}
+
+async function onGetEarnings() {
+  setStatus('earningsStatus', '', null);
+  const token = $('buyerToken').value.trim();
+  const { res, json } = await api('/api/org/earnings', { method: 'GET', token: token || undefined });
+  $('earningsOut').textContent = pretty(json);
+  if (!res.ok) return setStatus('earningsStatus', `earnings failed (${res.status})`, 'bad');
+  setStatus('earningsStatus', 'ok', 'good');
+}
+
+async function onListPayouts() {
+  setStatus('earningsStatus', '', null);
+  const token = $('buyerToken').value.trim();
+  const status = $('payoutStatusFilter').value.trim();
+  const taskType = $('payoutTaskTypeFilter').value.trim();
+  const qs = new URLSearchParams();
+  if (status) qs.set('status', status);
+  if (taskType) qs.set('taskType', taskType);
+  const { res, json } = await api(`/api/org/payouts?${qs.toString()}`, { method: 'GET', token: token || undefined });
+  $('earningsOut').textContent = pretty(json);
+  if (!res.ok) return setStatus('earningsStatus', `payouts failed (${res.status})`, 'bad');
+  setStatus('earningsStatus', `ok (${json.payouts?.length ?? 0} payouts)`, 'good');
+}
+
+async function onCreateDispute() {
+  setStatus('disputeStatus', '', null);
+  const token = $('buyerToken').value.trim();
+  const csrf = getCsrfToken();
+  const payoutId = $('disputePayoutId').value.trim();
+  const submissionId = $('disputeSubmissionId').value.trim();
+  const reason = $('disputeReason').value.trim();
+  const body = { reason };
+  if (payoutId) body.payoutId = payoutId;
+  if (submissionId) body.submissionId = submissionId;
+  const { res, json } = await api('/api/org/disputes', { method: 'POST', token: token || undefined, csrf, body });
+  $('disputeOut').textContent = pretty(json);
+  if (!res.ok) return setStatus('disputeStatus', `open dispute failed (${res.status})`, 'bad');
+  $('cancelDisputeId').value = json.dispute?.id || '';
+  setStatus('disputeStatus', `opened dispute ${json.dispute?.id || ''}`, 'good');
+}
+
+async function onListDisputes() {
+  setStatus('disputeStatus', '', null);
+  const token = $('buyerToken').value.trim();
+  const { res, json } = await api('/api/org/disputes', { method: 'GET', token: token || undefined });
+  $('disputeOut').textContent = pretty(json);
+  if (!res.ok) return setStatus('disputeStatus', `list disputes failed (${res.status})`, 'bad');
+  setStatus('disputeStatus', `ok (${json.disputes?.length ?? 0} disputes)`, 'good');
+}
+
+async function onCancelDispute() {
+  setStatus('disputeStatus', '', null);
+  const token = $('buyerToken').value.trim();
+  const csrf = getCsrfToken();
+  const id = $('cancelDisputeId').value.trim();
+  if (!id) return setStatus('disputeStatus', 'missing disputeId', 'bad');
+  const { res, json } = await api(`/api/org/disputes/${encodeURIComponent(id)}/cancel`, { method: 'POST', token: token || undefined, csrf });
+  $('disputeOut').textContent = pretty(json);
+  if (!res.ok) return setStatus('disputeStatus', `cancel failed (${res.status})`, 'bad');
+  setStatus('disputeStatus', 'cancelled', 'good');
+}
+
 $('btnLogin').addEventListener('click', () => onLogin().catch((e) => setStatus('loginStatus', String(e), 'bad')));
 $('btnRegister').addEventListener('click', () => onRegister().catch((e) => setStatus('regStatus', String(e), 'bad')));
 $('btnCreateKey').addEventListener('click', () => onCreateKey().catch((e) => setStatus('keyStatus', String(e), 'bad')));
+$('btnListKeys').addEventListener('click', () => onListKeys().catch((e) => setStatus('keyStatus', String(e), 'bad')));
+$('btnRevokeKey').addEventListener('click', () => onRevokeKey().catch((e) => setStatus('keyStatus', String(e), 'bad')));
 $('btnSaveToken').addEventListener('click', () => onSaveToken());
 
 $('btnGetPlatformFee').addEventListener('click', () => onGetPlatformFee().catch((e) => setStatus('pfStatus', String(e), 'bad')));
 $('btnSetPlatformFee').addEventListener('click', () => onSetPlatformFee().catch((e) => setStatus('pfStatus', String(e), 'bad')));
+
+$('btnGetCors').addEventListener('click', () => onGetCorsAllowlist().catch((e) => setStatus('corsStatus', String(e), 'bad')));
+$('btnSetCors').addEventListener('click', () => onSetCorsAllowlist().catch((e) => setStatus('corsStatus', String(e), 'bad')));
 
 $('btnAddOrigin').addEventListener('click', () => onAddOrigin().catch((e) => setStatus('originStatus', String(e), 'bad')));
 $('btnListOrigins').addEventListener('click', () => onListOrigins().catch((e) => setStatus('originStatus', String(e), 'bad')));
@@ -246,6 +404,15 @@ $('btnRevokeOrigin').addEventListener('click', () => onRevokeOrigin().catch((e) 
 $('btnCreateBounty').addEventListener('click', () => onCreateBounty().catch((e) => setStatus('bountyStatus', String(e), 'bad')));
 $('btnListBounties').addEventListener('click', () => onListBounties().catch((e) => setStatus('bountyStatus', String(e), 'bad')));
 $('btnPublish').addEventListener('click', () => onPublish().catch((e) => setStatus('bountyStatus', String(e), 'bad')));
+
+// Apps / earnings / disputes
+$('btnListOrgApps').addEventListener('click', () => onListOrgApps().catch((e) => setStatus('appsStatus', String(e), 'bad')));
+$('btnCreateOrgApp').addEventListener('click', () => onCreateOrgApp().catch((e) => setStatus('appsStatus', String(e), 'bad')));
+$('btnGetEarnings').addEventListener('click', () => onGetEarnings().catch((e) => setStatus('earningsStatus', String(e), 'bad')));
+$('btnListPayouts').addEventListener('click', () => onListPayouts().catch((e) => setStatus('earningsStatus', String(e), 'bad')));
+$('btnCreateDispute').addEventListener('click', () => onCreateDispute().catch((e) => setStatus('disputeStatus', String(e), 'bad')));
+$('btnListDisputes').addEventListener('click', () => onListDisputes().catch((e) => setStatus('disputeStatus', String(e), 'bad')));
+$('btnCancelDispute').addEventListener('click', () => onCancelDispute().catch((e) => setStatus('disputeStatus', String(e), 'bad')));
 
 setBuyerToken(getBuyerToken());
 setCsrfToken(getCsrfToken());

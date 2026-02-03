@@ -134,10 +134,20 @@
           <input id="keyName" value="portal" />
           <div class="btnrow">
             <button id="btnCreateKey" class="primary">POST /api/session/api-keys</button>
+            <button id="btnListKeys">GET /api/org/api-keys</button>
             <button id="btnSaveToken">Save token</button>
           </div>
           <label>Buyer token</label>
           <input id="buyerToken" placeholder="pw_bu_..." />
+          <label>Revoke API key (session)</label>
+          <div class="row">
+            <div>
+              <input id="revokeKeyId" placeholder="apiKeyId" />
+            </div>
+            <div>
+              <button id="btnRevokeKey">POST /api/session/api-keys/:id/revoke</button>
+            </div>
+          </div>
           <div id="keyStatus" class="status"></div>
           <label>Response</label>
           <pre id="keyOut">{}</pre>
@@ -163,6 +173,20 @@
           <div id="pfStatus" class="status"></div>
           <label>Response</label>
           <pre id="pfOut">{}</pre>
+        </div>
+
+        <div class="card">
+          <h2>CORS allowlist (browser integrations)</h2>
+          <div class="sub">Allow third-party browser UIs on your domains to call Proofwork buyer APIs using your buyer token. One origin per line.</div>
+          <label>Allowed origins</label>
+          <textarea id="corsOrigins" placeholder="https://app.yourdomain.com"></textarea>
+          <div class="btnrow">
+            <button id="btnGetCors">GET /api/org/cors-allow-origins</button>
+            <button id="btnSetCors" class="primary">PUT /api/org/cors-allow-origins</button>
+          </div>
+          <div id="corsStatus" class="status"></div>
+          <label>Response</label>
+          <pre id="corsOut">{}</pre>
         </div>
 
         <div class="card">
@@ -216,6 +240,95 @@
           <div id="bountyStatus" class="status"></div>
           <label>Response</label>
           <pre id="bountyOut">{}</pre>
+        </div>
+
+        <div class="card">
+          <h2>Apps registry (your apps)</h2>
+          <div class="sub">Register app types without admin approval. Published apps appear in the main Apps list when public=true.</div>
+          <div class="row">
+            <div>
+              <label>Slug</label>
+              <input id="appSlug" placeholder="my-app" />
+            </div>
+            <div>
+              <label>Task type</label>
+              <input id="appTaskType" placeholder="my_task_type" />
+            </div>
+          </div>
+          <div class="row">
+            <div>
+              <label>Name</label>
+              <input id="appName" placeholder="My App" />
+            </div>
+            <div>
+              <label>Dashboard URL (optional)</label>
+              <input id="appDashboardUrl" placeholder="https://your.app/dashboard or /apps/app/my-app/" />
+            </div>
+          </div>
+          <label>Default descriptor (optional JSON)</label>
+          <textarea id="appDefaultDescriptor" placeholder="{\"schema_version\":\"v1\", ... }"></textarea>
+          <div class="btnrow">
+            <button id="btnListOrgApps">GET /api/org/apps</button>
+            <button id="btnCreateOrgApp" class="primary">POST /api/org/apps</button>
+          </div>
+          <div id="appsStatus" class="status"></div>
+          <label>Response</label>
+          <pre id="appsOut">{}</pre>
+        </div>
+
+        <div class="card">
+          <h2>Earnings + payouts</h2>
+          <div class="sub">Self-serve platform earnings and payout history (includes worker net + fees).</div>
+          <div class="row">
+            <div>
+              <label>Payout status filter</label>
+              <input id="payoutStatusFilter" placeholder="pending|paid|failed|refunded" />
+            </div>
+            <div>
+              <label>Task type filter</label>
+              <input id="payoutTaskTypeFilter" placeholder="github_scan" />
+            </div>
+          </div>
+          <div class="btnrow">
+            <button id="btnGetEarnings" class="primary">GET /api/org/earnings</button>
+            <button id="btnListPayouts">GET /api/org/payouts</button>
+          </div>
+          <div id="earningsStatus" class="status"></div>
+          <label>Response</label>
+          <pre id="earningsOut">{}</pre>
+        </div>
+
+        <div class="card">
+          <h2>Disputes</h2>
+          <div class="sub">Default posture: open a dispute during the hold window; auto-refund executes after the window (refund = gross − Proofwork fee).</div>
+          <div class="row">
+            <div>
+              <label>Payout ID</label>
+              <input id="disputePayoutId" placeholder="payoutId" />
+            </div>
+            <div>
+              <label>Submission ID (optional)</label>
+              <input id="disputeSubmissionId" placeholder="submissionId" />
+            </div>
+          </div>
+          <label>Reason</label>
+          <textarea id="disputeReason">Incorrect result</textarea>
+          <div class="btnrow">
+            <button id="btnCreateDispute" class="primary">POST /api/org/disputes</button>
+            <button id="btnListDisputes">GET /api/org/disputes</button>
+          </div>
+          <label>Cancel dispute (id)</label>
+          <div class="row">
+            <div>
+              <input id="cancelDisputeId" placeholder="disputeId" />
+            </div>
+            <div>
+              <button id="btnCancelDispute">POST /api/org/disputes/:id/cancel</button>
+            </div>
+          </div>
+          <div id="disputeStatus" class="status"></div>
+          <label>Response</label>
+          <pre id="disputeOut">{}</pre>
         </div>
       </div>
     </div>

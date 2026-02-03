@@ -273,7 +273,18 @@ export async function seedBuyer() {
   // Ensure demo org exists
   await db
     .insertInto('orgs')
-    .values({ id: DEMO_ORG_ID, name: 'Demo Org', platform_fee_bps: 0, platform_fee_wallet_address: null, created_at: new Date() })
+    .values({
+      id: DEMO_ORG_ID,
+      name: 'Demo Org',
+      platform_fee_bps: 0,
+      platform_fee_wallet_address: null,
+      cors_allow_origins: [],
+      daily_spend_limit_cents: null,
+      monthly_spend_limit_cents: null,
+      max_published_bounties: null,
+      max_open_jobs: null,
+      created_at: new Date(),
+    })
     .onConflict((oc) => oc.column('id').doNothing())
     .execute();
 
@@ -350,7 +361,18 @@ export async function registerOrg(input: {
   const now = new Date();
   await db
     .insertInto('orgs')
-    .values({ id: orgId, name: orgName, platform_fee_bps: 0, platform_fee_wallet_address: null, created_at: now })
+    .values({
+      id: orgId,
+      name: orgName,
+      platform_fee_bps: 0,
+      platform_fee_wallet_address: null,
+      cors_allow_origins: [],
+      daily_spend_limit_cents: null,
+      monthly_spend_limit_cents: null,
+      max_published_bounties: null,
+      max_open_jobs: null,
+      created_at: now,
+    })
     .execute();
 
   await db

@@ -21,6 +21,7 @@ import {
   getActiveJobForWorker,
   getBounty,
   getJob,
+  getPayout,
   getSubmission,
   getVerification,
   getWorkerByToken,
@@ -28,6 +29,7 @@ import {
   findSubmissionByIdempotency,
   leaseJob,
   listBountiesByOrg,
+  markPayoutStatus,
   updateJob,
   updateSubmission,
   updateVerification,
@@ -37,6 +39,7 @@ import {
   reapExpiredLeases,
   recordReputation,
   registerAcceptedDedupe,
+  seedBuiltInApps,
   seedDemoData,
   setBountyStatus,
   verifierBacklog,
@@ -45,9 +48,29 @@ import {
   artifactScanBacklogOldestAgeSec,
   enqueueOutbox,
   banWorker,
+  createOrgApp,
   getAppSummary,
+  getAppByTaskType,
   getOrgPlatformFeeSettings,
   setOrgPlatformFeeSettings,
+  getOrgCorsAllowOrigins,
+  setOrgCorsAllowOrigins,
+  listAllCorsAllowOrigins,
+  listAppsByOrg,
+  listAllAppsAdmin,
+  listPublicApps,
+  getPublicAppBySlug,
+  adminSetAppStatus,
+  updateOrgApp,
+  listPayoutsByOrg,
+  listPayoutsByWorker,
+  listPayoutsAdmin,
+  getOrgEarningsSummary,
+  listDisputesByOrg,
+  listDisputesAdmin,
+  createDispute,
+  cancelDispute,
+  resolveDisputeAdmin,
 } from './store.js';
 import { db } from './db/client.js';
 import { runMigrations } from './db/migrate.js';
@@ -74,7 +97,13 @@ import {
   verifierVerdictSchema,
   taskDescriptorSchema,
   orgPlatformFeeSchema,
+  orgCorsAllowlistSchema,
   orgRegisterSchema,
+  appCreateSchema,
+  appUpdateSchema,
+  disputeCreateSchema,
+  disputeResolveSchema,
+  adminAppStatusSchema,
 } from './schemas.js';
 import { Envelope, Submission, Verification, Worker } from './types.js';
 import { nanoid } from 'nanoid';
@@ -95,6 +124,7 @@ import { writeAuditEvent } from './audit.js';
 import { hmacSha256Hex } from './auth/tokens.js';
 import { inc, renderPrometheusMetrics } from './metrics.js';
 import { createReadStream } from 'fs';
+import { readFile } from 'fs/promises';
 import {
   requireStripeWebhookSecret,
   stripeCreateCheckoutSession,
@@ -250,20 +280,103 @@ export function buildServer() {
   // CORS + HTTPS enforcement (production)
   app.addHook('onRequest', async (request: any, reply: any) => {
     const origin = request.headers['origin'] as string | undefined;
-    const allow = (process.env.CORS_ALLOW_ORIGINS ?? '')
-      .split(',')
-      .map((s) => s.trim())
-      .filter(Boolean);
+    const globalAllowList = new Set(
+      (process.env.CORS_ALLOW_ORIGINS ?? '')
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean)
+    );
 
-    if (origin && allow.includes(origin)) {
-      reply.header('access-control-allow-origin', origin);
+    // Always allow same-origin browser calls. The per-org allowlist is meant for third-party UIs
+    // hosted on different origins; it must not break first-party UI served by this host.
+    const xfProto = String(request.headers['x-forwarded-proto'] ?? '').split(',')[0].trim();
+    const xfHost = String(request.headers['x-forwarded-host'] ?? '').split(',')[0].trim();
+    const host = String(request.headers['host'] ?? '').split(',')[0].trim();
+    const serverOrigin = (xfHost || host) ? `${xfProto || 'http'}://${xfHost || host}` : '';
+
+    const corsCacheTtlMs = Number(process.env.ORG_CORS_CACHE_TTL_MS ?? 30_000);
+    const cacheTtlMs = Number.isFinite(corsCacheTtlMs) ? Math.max(1000, Math.min(10 * 60_000, corsCacheTtlMs)) : 30_000;
+    const now = Date.now();
+
+    // Caches are scoped to the server instance.
+    const tokenOrgCache: Map<string, { orgId: string; exp: number }> =
+      ((app as any).__tokenOrgCache ??= new Map());
+    const orgCorsCache: Map<string, { origins: string[]; exp: number }> =
+      ((app as any).__orgCorsCache ??= new Map());
+    const unionCorsCache: { origins: string[]; exp: number } =
+      ((app as any).__unionCorsCache ??= { origins: [], exp: 0 });
+
+    async function resolveOrgIdFromBuyerToken(token: string): Promise<string | null> {
+      const cached = tokenOrgCache.get(token);
+      if (cached && cached.exp > now) return cached.orgId;
+      const apiKey = await getApiKey(token);
+      if (!apiKey) return null;
+      tokenOrgCache.set(token, { orgId: apiKey.orgId, exp: now + cacheTtlMs });
+      return apiKey.orgId;
+    }
+
+    async function resolveOrgCorsOrigins(orgId: string): Promise<string[]> {
+      const cached = orgCorsCache.get(orgId);
+      if (cached && cached.exp > now) return cached.origins;
+      const origins = (await getOrgCorsAllowOrigins(orgId)) ?? [];
+      orgCorsCache.set(orgId, { origins, exp: now + cacheTtlMs });
+      return origins;
+    }
+
+    async function resolveUnionCorsOrigins(): Promise<string[]> {
+      if (unionCorsCache.exp > now) return unionCorsCache.origins;
+      const origins = await listAllCorsAllowOrigins();
+      unionCorsCache.origins = origins;
+      unionCorsCache.exp = now + cacheTtlMs;
+      return origins;
+    }
+
+    function setCorsHeaders(o: string) {
+      reply.header('access-control-allow-origin', o);
       reply.header('vary', 'Origin');
       reply.header('access-control-allow-credentials', 'true');
-      reply.header('access-control-allow-headers', 'Content-Type, Authorization, X-CSRF-Token, Stripe-Signature');
+      reply.header(
+        'access-control-allow-headers',
+        'Content-Type, Authorization, X-CSRF-Token, Stripe-Signature, Idempotency-Key'
+      );
       reply.header('access-control-allow-methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
-      if (request.method === 'OPTIONS') {
-        reply.code(204).send();
-        return;
+    }
+
+    if (origin) {
+      let allow = origin === serverOrigin || globalAllowList.has(origin);
+      const auth = String(request.headers['authorization'] ?? '');
+      const token = auth.startsWith('Bearer ') ? auth.slice(7).trim() : '';
+      const isBuyerToken = token.startsWith('pw_bu_');
+
+      if (!allow && token && isBuyerToken) {
+        const orgId = await resolveOrgIdFromBuyerToken(token);
+        if (orgId) {
+          const orgAllow = await resolveOrgCorsOrigins(orgId);
+          allow = orgAllow.includes(origin);
+        }
+      }
+
+      if (String(request.method).toUpperCase() === 'OPTIONS') {
+        // Preflight cannot carry auth, so allow if:
+        // - global allowlist, OR
+        // - origin is in any org's allowlist (union). Actual request still enforces per-org.
+        if (!allow) {
+          const union = await resolveUnionCorsOrigins();
+          allow = union.includes(origin);
+        }
+        if (allow) {
+          setCorsHeaders(origin);
+          reply.code(204).send();
+          return;
+        }
+      } else {
+        if (allow) {
+          setCorsHeaders(origin);
+        } else if (request.url?.startsWith('/api') && !request.url.startsWith('/api/webhooks/') && token && isBuyerToken) {
+          // Enforce per-org browser origins for buyer tokens (3P UIs).
+          reply.code(403).send({ error: { code: 'cors_forbidden', message: 'Origin is not allowlisted for this org' } });
+          return;
+        }
       }
     }
 
@@ -311,6 +424,43 @@ export function buildServer() {
     decorateReply: false,
     index: false,
   });
+
+  // Dynamic app page for registry apps (works even when no static /public/apps/<slug>/ folder exists).
+  // Built-in apps can still ship custom UIs under /public/apps/<slug>/ and set dashboard_url accordingly.
+  let appPageTemplateCache: string | null = null;
+  async function getAppPageTemplate(): Promise<string> {
+    if (appPageTemplateCache) return appPageTemplateCache;
+    const p = path.resolve(process.cwd(), 'public/apps/app_page.html');
+    appPageTemplateCache = await readFile(p, 'utf8');
+    return appPageTemplateCache;
+  }
+
+  const renderRegistryAppPage = async (request: any, reply: any) => {
+    const slug = String(request.params.slug ?? '');
+    const rec = await getPublicAppBySlug(slug);
+    if (!rec) return reply.code(404).send('not found');
+
+    const d: any = rec.defaultDescriptor ?? {};
+    const cfg = {
+      title: rec.name,
+      titlePrefix: rec.name,
+      description: rec.description ?? '',
+      taskType: rec.taskType,
+      defaultCaps: Array.isArray(d.capability_tags) ? d.capability_tags : [],
+      defaultFreshnessSlaSec: typeof d.freshness_sla_sec === 'number' ? d.freshness_sla_sec : undefined,
+      defaultInputSpec: d.input_spec ?? {},
+      defaultOutputSpec: d.output_spec ?? {},
+    };
+
+    const tpl = await getAppPageTemplate();
+    const html = tpl.replace('<script id="appConfig" type="application/json">{}</script>', `<script id="appConfig" type="application/json">${JSON.stringify(cfg)}</script>`);
+    reply.header('content-type', 'text/html; charset=utf-8');
+    return reply.send(html);
+  };
+
+  app.get('/apps/app/:slug', renderRegistryAppPage);
+  app.get('/apps/app/:slug/', renderRegistryAppPage);
+
   app.get('/worker', async (_req, reply) => reply.redirect('/worker/index.html'));
   app.get('/buyer', async (_req, reply) => reply.redirect('/buyer/index.html'));
   app.get('/admin', async (_req, reply) => reply.redirect('/admin/index.html'));
@@ -328,6 +478,8 @@ export function buildServer() {
 
   app.addHook('onReady', async () => {
     await runMigrations();
+    // Built-in apps are required for /apps and admin dashboards even when demo seeding is disabled.
+    await seedBuiltInApps();
     if (shouldSeedDemoData()) {
       await seedDemoData();
       await seedBuyer();
@@ -479,6 +631,22 @@ export function buildServer() {
     const txt = await renderPrometheusMetrics();
     reply.header('content-type', 'text/plain; version=0.0.4');
     return txt;
+  });
+
+  // Public apps registry (partner-facing listing)
+  app.get('/api/apps', async (request: any) => {
+    const q = (request.query ?? {}) as any;
+    const page = Math.max(1, Number(q.page ?? 1));
+    const limit = Math.max(1, Math.min(200, Number(q.limit ?? 50)));
+    const { rows, total } = await listPublicApps({ page, limit });
+    return { apps: rows, page, limit, total };
+  });
+
+  app.get('/api/apps/:slug', async (request: any, reply) => {
+    const slug = String(request.params.slug ?? '');
+    const appRec = await getPublicAppBySlug(slug);
+    if (!appRec) return reply.code(404).send({ error: { code: 'not_found', message: 'app not found' } });
+    return { app: appRec };
   });
 
   // Secure artifact download (no public bucket required).
@@ -1058,6 +1226,305 @@ export function buildServer() {
     }
   );
 
+  // Org settings (buyer): per-org CORS allowlist for third-party browser UIs.
+  app.get('/api/org/cors-allow-origins', { preHandler: (app as any).authenticateBuyer }, async (request: any, reply) => {
+    const origins = await getOrgCorsAllowOrigins(request.orgId);
+    if (!origins) return reply.code(404).send({ error: { code: 'not_found', message: 'org not found' } });
+    return { orgId: request.orgId, origins };
+  });
+
+  app.put(
+    '/api/org/cors-allow-origins',
+    { preHandler: (app as any).authenticateBuyer, schema: { body: orgCorsAllowlistSchema } },
+    async (request: any, reply) => {
+      const role = request.role as string | undefined;
+      if (role && !['owner', 'admin'].includes(role)) {
+        return reply.code(403).send({ error: { code: 'forbidden', message: 'requires owner/admin' } });
+      }
+
+      const body = request.body as any;
+      const raw = Array.isArray(body?.origins) ? body.origins : [];
+      const cleaned: string[] = [];
+      for (const item of raw) {
+        const s = String(item ?? '').trim();
+        if (!s) continue;
+        let u: URL;
+        try {
+          u = new URL(s);
+        } catch {
+          return reply.code(400).send({ error: { code: 'invalid', message: `invalid origin: ${s}` } });
+        }
+        if (!['http:', 'https:'].includes(u.protocol)) {
+          return reply.code(400).send({ error: { code: 'invalid', message: `invalid origin protocol: ${u.protocol}` } });
+        }
+        cleaned.push(u.origin);
+      }
+      // de-dupe and cap
+      const uniq = Array.from(new Set(cleaned));
+      if (uniq.length > 100) return reply.code(400).send({ error: { code: 'invalid', message: 'too many origins (max 100)' } });
+
+      const updated = await setOrgCorsAllowOrigins(request.orgId, uniq);
+      if (!updated) return reply.code(404).send({ error: { code: 'not_found', message: 'org not found' } });
+
+      await writeAuditEvent({
+        actorType: request.sessionId ? 'buyer_session' : 'buyer_api_key',
+        actorId: request.sessionId ?? request.apiKeyId ?? null,
+        action: 'org.cors_allow_origins.update',
+        targetType: 'org',
+        targetId: request.orgId,
+        metadata: { originsCount: uniq.length },
+      });
+
+      return { orgId: request.orgId, origins: updated };
+    }
+  );
+
+  // Apps registry (buyer): self-serve app definitions (no admin approval required).
+  app.get('/api/org/apps', { preHandler: (app as any).authenticateBuyer }, async (request: any) => {
+    const q = (request.query ?? {}) as any;
+    const page = Math.max(1, Number(q.page ?? 1));
+    const limit = Math.max(1, Math.min(200, Number(q.limit ?? 50)));
+    const { rows, total } = await listAppsByOrg(request.orgId, { page, limit });
+    return { apps: rows, page, limit, total };
+  });
+
+  app.post('/api/org/apps', { preHandler: (app as any).authenticateBuyer, schema: { body: appCreateSchema } }, async (request: any, reply) => {
+    const role = request.role as string | undefined;
+    if (role && !['owner', 'admin'].includes(role)) {
+      return reply.code(403).send({ error: { code: 'forbidden', message: 'requires owner/admin' } });
+    }
+
+    const body = request.body as any;
+    const slug = String(body.slug ?? '').trim();
+    const taskType = String(body.taskType ?? '').trim();
+    const name = String(body.name ?? '').trim();
+    const description = body.description ?? null;
+    const publicFlag = body.public === undefined ? true : Boolean(body.public);
+
+    // Normalize dashboard URL: allow absolute URLs or local paths.
+    let dashboardUrl: string | null = body.dashboardUrl ?? null;
+    if (dashboardUrl !== null && dashboardUrl !== undefined && String(dashboardUrl).trim()) {
+      const raw = String(dashboardUrl).trim();
+      if (raw.startsWith('/')) dashboardUrl = raw;
+      else {
+        try {
+          const u = new URL(raw);
+          if (!['http:', 'https:'].includes(u.protocol)) {
+            return reply.code(400).send({ error: { code: 'invalid', message: 'dashboardUrl must be http(s) or /path' } });
+          }
+          dashboardUrl = u.toString();
+        } catch {
+          return reply.code(400).send({ error: { code: 'invalid', message: 'dashboardUrl must be a valid URL or /path' } });
+        }
+      }
+    } else {
+      dashboardUrl = null;
+    }
+
+    let defaultDescriptor: any = body.defaultDescriptor ?? null;
+    if (defaultDescriptor !== null && defaultDescriptor !== undefined) {
+      if (!isTaskDescriptorEnabled()) {
+        return reply.code(409).send({ error: { code: 'feature_disabled', message: 'task_descriptor is disabled' } });
+      }
+      const parsed = (taskDescriptorSchema as any).safeParse(defaultDescriptor);
+      if (!parsed.success) {
+        return reply.code(400).send({ error: { code: 'invalid_task_descriptor', message: parsed.error.message } });
+      }
+      if (String(parsed.data.type) !== taskType) {
+        return reply.code(400).send({ error: { code: 'invalid', message: 'defaultDescriptor.type must match taskType' } });
+      }
+      const bytes = Buffer.byteLength(JSON.stringify(parsed.data), 'utf8');
+      if (bytes > TASK_DESCRIPTOR_MAX_BYTES) {
+        return reply.code(400).send({ error: { code: 'task_descriptor_too_large', message: `defaultDescriptor exceeds ${TASK_DESCRIPTOR_MAX_BYTES} bytes` } });
+      }
+      if (hasSensitiveKeys(parsed.data)) {
+        return reply.code(400).send({ error: { code: 'task_descriptor_sensitive', message: 'defaultDescriptor contains sensitive keys' } });
+      }
+      defaultDescriptor = parsed.data;
+    } else {
+      defaultDescriptor = {};
+    }
+
+    try {
+      const appRec = await createOrgApp(request.orgId, {
+        slug,
+        taskType,
+        name,
+        description,
+        dashboardUrl,
+        public: publicFlag,
+        defaultDescriptor,
+      });
+
+      await writeAuditEvent({
+        actorType: request.sessionId ? 'buyer_session' : 'buyer_api_key',
+        actorId: request.sessionId ?? request.apiKeyId ?? null,
+        action: 'app.create',
+        targetType: 'app',
+        targetId: appRec.id,
+        metadata: { slug, taskType, public: publicFlag },
+      });
+
+      return { app: appRec };
+    } catch (err: any) {
+      const msg = String(err?.message ?? err);
+      // Unique violations: slug or task_type collisions.
+      if (String((err as any)?.code ?? '') === '23505') {
+        return reply.code(409).send({ error: { code: 'conflict', message: 'app slug or taskType already exists' } });
+      }
+      return reply.code(500).send({ error: { code: 'internal', message: msg.slice(0, 200) } });
+    }
+  });
+
+  app.patch('/api/org/apps/:appId', { preHandler: (app as any).authenticateBuyer, schema: { body: appUpdateSchema } }, async (request: any, reply) => {
+    const role = request.role as string | undefined;
+    if (role && !['owner', 'admin'].includes(role)) {
+      return reply.code(403).send({ error: { code: 'forbidden', message: 'requires owner/admin' } });
+    }
+
+    const appId = String(request.params.appId ?? '');
+    const body = request.body as any;
+    const patch: any = {};
+    if (body.slug !== undefined) patch.slug = String(body.slug).trim();
+    if (body.taskType !== undefined) patch.taskType = String(body.taskType).trim();
+    if (body.name !== undefined) patch.name = String(body.name).trim();
+    if (body.description !== undefined) patch.description = body.description ?? null;
+    if (body.public !== undefined) patch.public = Boolean(body.public);
+    if (body.status !== undefined) patch.status = body.status;
+
+    if (body.dashboardUrl !== undefined) {
+      const raw = body.dashboardUrl;
+      if (raw === null || raw === undefined || !String(raw).trim()) patch.dashboardUrl = null;
+      else {
+        const s = String(raw).trim();
+        if (s.startsWith('/')) patch.dashboardUrl = s;
+        else {
+          try {
+            const u = new URL(s);
+            if (!['http:', 'https:'].includes(u.protocol)) {
+              return reply.code(400).send({ error: { code: 'invalid', message: 'dashboardUrl must be http(s) or /path' } });
+            }
+            patch.dashboardUrl = u.toString();
+          } catch {
+            return reply.code(400).send({ error: { code: 'invalid', message: 'dashboardUrl must be a valid URL or /path' } });
+          }
+        }
+      }
+    }
+
+    if (body.defaultDescriptor !== undefined) {
+      if (!isTaskDescriptorEnabled()) {
+        return reply.code(409).send({ error: { code: 'feature_disabled', message: 'task_descriptor is disabled' } });
+      }
+      const parsed = (taskDescriptorSchema as any).safeParse(body.defaultDescriptor);
+      if (!parsed.success) {
+        return reply.code(400).send({ error: { code: 'invalid_task_descriptor', message: parsed.error.message } });
+      }
+      const bytes = Buffer.byteLength(JSON.stringify(parsed.data), 'utf8');
+      if (bytes > TASK_DESCRIPTOR_MAX_BYTES) {
+        return reply.code(400).send({ error: { code: 'task_descriptor_too_large', message: `defaultDescriptor exceeds ${TASK_DESCRIPTOR_MAX_BYTES} bytes` } });
+      }
+      if (hasSensitiveKeys(parsed.data)) {
+        return reply.code(400).send({ error: { code: 'task_descriptor_sensitive', message: 'defaultDescriptor contains sensitive keys' } });
+      }
+      patch.defaultDescriptor = parsed.data;
+      if (patch.taskType && String(parsed.data.type) !== patch.taskType) {
+        return reply.code(400).send({ error: { code: 'invalid', message: 'defaultDescriptor.type must match taskType when both are provided' } });
+      }
+    }
+
+    try {
+      const updated = await updateOrgApp(request.orgId, appId, patch);
+      if (!updated) return reply.code(404).send({ error: { code: 'not_found', message: 'app not found' } });
+
+      await writeAuditEvent({
+        actorType: request.sessionId ? 'buyer_session' : 'buyer_api_key',
+        actorId: request.sessionId ?? request.apiKeyId ?? null,
+        action: 'app.update',
+        targetType: 'app',
+        targetId: appId,
+        metadata: { patchKeys: Object.keys(patch) },
+      });
+
+      return { app: updated };
+    } catch (err: any) {
+      if (String((err as any)?.code ?? '') === '23505') {
+        return reply.code(409).send({ error: { code: 'conflict', message: 'app slug or taskType already exists' } });
+      }
+      return reply.code(500).send({ error: { code: 'internal', message: 'update_failed' } });
+    }
+  });
+
+  // Org financial visibility (buyer): earnings + payout history + disputes.
+  app.get('/api/org/earnings', { preHandler: (app as any).authenticateBuyer }, async (request: any) => {
+    return await getOrgEarningsSummary(request.orgId);
+  });
+
+  app.get('/api/org/payouts', { preHandler: (app as any).authenticateBuyer }, async (request: any) => {
+    const q = (request.query ?? {}) as any;
+    const page = Math.max(1, Number(q.page ?? 1));
+    const limit = Math.max(1, Math.min(200, Number(q.limit ?? 50)));
+    const status = typeof q.status === 'string' ? q.status : undefined;
+    const taskType = typeof q.taskType === 'string' ? q.taskType : typeof q.task_type === 'string' ? q.task_type : undefined;
+
+    const res = await listPayoutsByOrg(request.orgId, { page, limit, status, taskType });
+    return { payouts: res.rows, page, limit, total: res.total };
+  });
+
+  app.get('/api/org/disputes', { preHandler: (app as any).authenticateBuyer }, async (request: any) => {
+    const q = (request.query ?? {}) as any;
+    const page = Math.max(1, Number(q.page ?? 1));
+    const limit = Math.max(1, Math.min(200, Number(q.limit ?? 50)));
+    const status = typeof q.status === 'string' ? q.status : undefined;
+    const res = await listDisputesByOrg(request.orgId, { page, limit, status });
+    return { disputes: res.rows, page, limit, total: res.total };
+  });
+
+  app.post(
+    '/api/org/disputes',
+    { preHandler: (app as any).authenticateBuyer, schema: { body: disputeCreateSchema } },
+    async (request: any, reply) => {
+      const body = request.body as any;
+      try {
+        const actorType = request.sessionId ? 'buyer_session' : 'buyer_api_key';
+        const actorId = request.sessionId ?? request.apiKeyId ?? null;
+        const dispute = await createDispute(
+          request.orgId,
+          { payoutId: body.payoutId, submissionId: body.submissionId, reason: body.reason },
+          { actorType, actorId }
+        );
+        return { dispute };
+      } catch (err: any) {
+        const msg = String(err?.message ?? err);
+        const code =
+          msg === 'missing_target' ? 400 :
+          msg === 'target_not_found' ? 404 :
+          msg === 'forbidden' ? 403 :
+          msg === 'payout_already_paid' ? 409 :
+          msg === 'payout_missing' ? 409 :
+          msg === 'dispute_already_open' ? 409 :
+          msg === 'dispute_window_disabled' ? 409 :
+          msg === 'dispute_window_expired' ? 409 :
+          400;
+        return reply.code(code).send({ error: { code: 'invalid', message: msg } });
+      }
+    }
+  );
+
+  app.post('/api/org/disputes/:disputeId/cancel', { preHandler: (app as any).authenticateBuyer }, async (request: any, reply) => {
+    const disputeId = String(request.params.disputeId ?? '');
+    try {
+      const actorType = request.sessionId ? 'buyer_session' : 'buyer_api_key';
+      const actorId = request.sessionId ?? request.apiKeyId ?? null;
+      const dispute = await cancelDispute(request.orgId, disputeId, { actorType, actorId });
+      return { dispute };
+    } catch (err: any) {
+      const msg = String(err?.message ?? err);
+      const code = msg === 'not_found' ? 404 : msg === 'forbidden' ? 403 : msg === 'not_open' ? 409 : 400;
+      return reply.code(code).send({ error: { code: 'invalid', message: msg } });
+    }
+  });
+
   // Bounties
   app.get('/api/bounties', { preHandler: (app as any).authenticateBuyer }, async (request: any) => {
     const q = request.query || {};
@@ -1315,6 +1782,17 @@ export function buildServer() {
       return { ok: true, chain, address: normalized };
     }
   );
+
+  // Worker payout visibility
+  app.get('/api/worker/payouts', { preHandler: (app as any).authenticateWorker }, async (request: any) => {
+    const worker: Worker = request.worker;
+    const q = (request.query ?? {}) as any;
+    const page = Math.max(1, Number(q.page ?? 1));
+    const limit = Math.max(1, Math.min(200, Number(q.limit ?? 50)));
+    const status = typeof q.status === 'string' ? q.status : undefined;
+    const res = await listPayoutsByWorker(worker.id, { page, limit, status });
+    return { payouts: res.rows, page, limit, total: res.total };
+  });
 
   // jobs/next
   app.get('/api/jobs/next', { preHandler: (app as any).authenticateWorker }, async (request: any, reply) => {
@@ -2067,6 +2545,124 @@ export function buildServer() {
     return { ok: true, submission: sub, job };
   });
 
+  // Payouts/disputes (admin): reconciliation + dispute resolution
+  app.get('/api/admin/payouts', { preHandler: (app as any).authenticateAdmin }, async (request: any) => {
+    const q = (request.query ?? {}) as any;
+    const page = Math.max(1, Number(q.page ?? 1));
+    const limit = Math.max(1, Math.min(200, Number(q.limit ?? 50)));
+    const status = typeof q.status === 'string' ? q.status : undefined;
+    const orgId = typeof q.orgId === 'string' ? q.orgId : typeof q.org_id === 'string' ? q.org_id : undefined;
+    const res = await listPayoutsAdmin({ page, limit, status, orgId });
+    return { payouts: res.rows, page, limit, total: res.total };
+  });
+
+  app.post('/api/admin/payouts/:payoutId/retry', { preHandler: (app as any).authenticateAdmin }, async (request: any, reply) => {
+    const payoutId = String(request.params.payoutId ?? '');
+    const payout = await getPayout(payoutId);
+    if (!payout) return reply.code(404).send({ error: { code: 'not_found', message: 'payout not found' } });
+    if (payout.status === 'paid') return reply.code(409).send({ error: { code: 'conflict', message: 'payout already paid' } });
+    if (payout.status === 'refunded') return reply.code(409).send({ error: { code: 'conflict', message: 'payout refunded' } });
+    if (payout.blockedReason) return reply.code(409).send({ error: { code: 'conflict', message: `payout blocked: ${payout.blockedReason}` } });
+
+    // Reset status to pending and clear provider refs so a retry is visible and deterministic.
+    await markPayoutStatus(payoutId, 'pending', { provider: null, providerRef: null });
+
+    const nextAt = payout.holdUntil && payout.holdUntil > Date.now() ? new Date(payout.holdUntil) : new Date();
+    const existingEvt = await db
+      .selectFrom('outbox_events')
+      .select(['id'])
+      .where('topic', '=', 'payout.requested')
+      .where('idempotency_key', '=', `payout:${payoutId}`)
+      .executeTakeFirst();
+
+    if (existingEvt?.id) {
+      await db
+        .updateTable('outbox_events')
+        .set({ status: 'pending', attempts: 0, available_at: nextAt, locked_at: null, locked_by: null, last_error: null, sent_at: null })
+        .where('id', '=', existingEvt.id)
+        .execute();
+    } else {
+      await db
+        .insertInto('outbox_events')
+        .values({
+          id: nanoid(12),
+          topic: 'payout.requested',
+          idempotency_key: `payout:${payoutId}`,
+          payload: { payoutId, submissionId: payout.submissionId, workerId: payout.workerId },
+          status: 'pending',
+          attempts: 0,
+          available_at: nextAt,
+          locked_at: null,
+          locked_by: null,
+          last_error: null,
+          created_at: new Date(),
+          sent_at: null,
+        })
+        .execute();
+    }
+
+    await writeAuditEvent({
+      actorType: 'admin_token',
+      actorId: null,
+      action: 'payout.retry',
+      targetType: 'payout',
+      targetId: payoutId,
+      metadata: { nextAt: nextAt.toISOString() },
+    });
+
+    return { ok: true };
+  });
+
+  app.get('/api/admin/disputes', { preHandler: (app as any).authenticateAdmin }, async (request: any) => {
+    const q = (request.query ?? {}) as any;
+    const page = Math.max(1, Number(q.page ?? 1));
+    const limit = Math.max(1, Math.min(200, Number(q.limit ?? 50)));
+    const status = typeof q.status === 'string' ? q.status : undefined;
+    const res = await listDisputesAdmin({ page, limit, status });
+    return { disputes: res.rows, page, limit, total: res.total };
+  });
+
+  app.post(
+    '/api/admin/disputes/:disputeId/resolve',
+    { preHandler: (app as any).authenticateAdmin, schema: { body: disputeResolveSchema } },
+    async (request: any, reply) => {
+      const disputeId = String(request.params.disputeId ?? '');
+      const body = request.body as any;
+      try {
+        const dispute = await resolveDisputeAdmin(
+          disputeId,
+          { resolution: body.resolution, notes: body.notes ?? null },
+          { actorType: 'admin_token', actorId: null }
+        );
+        return { dispute };
+      } catch (err: any) {
+        const msg = String(err?.message ?? err);
+        const code = msg === 'not_found' ? 404 : msg === 'not_open' ? 409 : msg === 'payout_already_paid' ? 409 : 400;
+        return reply.code(code).send({ error: { code: 'invalid', message: msg } });
+      }
+    }
+  );
+
+  app.post(
+    '/api/admin/apps/:appId/status',
+    { preHandler: (app as any).authenticateAdmin, schema: { body: adminAppStatusSchema } },
+    async (request: any, reply) => {
+      const appId = String(request.params.appId ?? '');
+      const body = request.body as any;
+      const updated = await adminSetAppStatus(appId, body.status);
+      if (!updated) return reply.code(404).send({ error: { code: 'not_found', message: 'app not found' } });
+      await writeAuditEvent({
+        actorType: 'admin_token',
+        actorId: null,
+        action: 'app.set_status',
+        targetType: 'app',
+        targetId: appId,
+        metadata: { status: body.status },
+      });
+      return { app: updated };
+    }
+  );
+
   // Billing ops (admin)
   app.post('/api/admin/billing/orgs/:orgId/topup', { preHandler: (app as any).authenticateAdmin }, async (request: any, reply) => {
     const orgId = request.params.orgId as string;
@@ -2133,6 +2729,17 @@ export function buildServer() {
 
     const events = await query.execute();
     return { events };
+  });
+
+  // Apps registry (admin): list all apps (including disabled/non-public) for moderation.
+  app.get('/api/admin/apps', { preHandler: (app as any).authenticateAdmin }, async (request: any) => {
+    const q = (request.query ?? {}) as any;
+    const page = Math.max(1, Number(q.page ?? 1));
+    const limit = Math.max(1, Math.min(200, Number(q.limit ?? 50)));
+    const status = typeof q.status === 'string' && ['active', 'disabled'].includes(q.status) ? q.status : undefined;
+    const ownerOrgId = typeof q.ownerOrgId === 'string' ? q.ownerOrgId : typeof q.owner_org_id === 'string' ? q.owner_org_id : undefined;
+    const res = await listAllAppsAdmin({ page, limit, status, ownerOrgId });
+    return { apps: res.rows, page, limit, total: res.total };
   });
 
   app.get('/api/admin/apps/summary', { preHandler: (app as any).authenticateAdmin }, async () => {

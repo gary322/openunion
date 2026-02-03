@@ -5,7 +5,7 @@ const _loadEnv = (process.env.NODE_ENV !== 'test' && !process.env.VITEST)
 await _loadEnv;
 import { runMigrations } from '../src/db/migrate.js';
 import { runOutboxLoop } from './outbox-lib.js';
-import { handlePayoutConfirmRequested, handlePayoutRequested } from './handlers.js';
+import { handleDisputeAutoRefundRequested, handlePayoutConfirmRequested, handlePayoutRequested } from './handlers.js';
 import { startWorkerHealthServer } from './health.js';
 
 const workerId = process.env.WORKER_ID ?? `payout-runner-${process.pid}`;
@@ -16,12 +16,13 @@ const workerId = process.env.WORKER_ID ?? `payout-runner-${process.pid}`;
   await startWorkerHealthServer({ name: 'payout-runner', portEnv: 'PAYOUT_HEALTH_PORT', defaultPort: 9103 });
 
   await runOutboxLoop({
-    topics: ['payout.requested', 'payout.confirm.requested'],
+    topics: ['payout.requested', 'payout.confirm.requested', 'dispute.auto_refund.requested'],
     workerId,
     pollIntervalMs: 500,
     handler: async (evt) => {
       if (evt.topic === 'payout.requested') return await handlePayoutRequested(evt.payload);
       if (evt.topic === 'payout.confirm.requested') return await handlePayoutConfirmRequested(evt.payload);
+      if (evt.topic === 'dispute.auto_refund.requested') return await handleDisputeAutoRefundRequested(evt.payload);
       throw new Error(`unknown_topic:${evt.topic}`);
     },
   });
@@ -29,4 +30,3 @@ const workerId = process.env.WORKER_ID ?? `payout-runner-${process.pid}`;
   console.error(err);
   process.exitCode = 1;
 });
-
