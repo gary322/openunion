@@ -34,6 +34,7 @@ uploads/
 **/.terraform/
 **/*.tfstate
 **/*.tfstate.*
+infra/terraform/tfplan_*
 
 # Playwright
 test-results/
