@@ -1635,12 +1635,14 @@ export async function listAlarmNotificationsAdmin(
   const limit = Math.max(1, Math.min(200, Number(opts.limit ?? 50)));
   const offset = (page - 1) * limit;
 
-  let q = db.selectFrom('alarm_notifications').selectAll();
-  if (opts.environment) q = q.where('environment', '=', opts.environment);
-  if (opts.alarmName) q = q.where('alarm_name', '=', opts.alarmName);
+  // IMPORTANT: do not reuse a selectAll() query for countAll(); Postgres rejects selecting
+  // non-aggregated columns alongside aggregates without GROUP BY.
+  let base = db.selectFrom('alarm_notifications');
+  if (opts.environment) base = base.where('environment', '=', opts.environment);
+  if (opts.alarmName) base = base.where('alarm_name', '=', opts.alarmName);
 
-  const rows = await q.orderBy('received_at', 'desc').offset(offset).limit(limit).execute();
-  const totalRow = await q.select(({ fn }) => fn.countAll<number>().as('c')).executeTakeFirst();
+  const rows = await base.selectAll().orderBy('received_at', 'desc').offset(offset).limit(limit).execute();
+  const totalRow = await base.select(({ fn }) => fn.countAll<number>().as('c')).executeTakeFirst();
 
   const mapped = rows.map((r: any) => ({
     id: r.id,

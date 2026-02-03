@@ -756,6 +756,17 @@ describe('Admin controls', () => {
     expect(entry.jobsTotal).toBeGreaterThan(0);
   });
 
+  it('lists alarm notifications (empty list ok)', async () => {
+    const app = buildServer();
+    await app.ready();
+    const ADMIN_TOKEN = 'pw_adm_internal';
+
+    const res = await request(app.server).get('/api/admin/alerts?limit=5').set('Authorization', `Bearer ${ADMIN_TOKEN}`);
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body.alerts)).toBe(true);
+    expect(typeof res.body.total).toBe('number');
+  });
+
   it('can requeue verification and payout is auto-paid via outbox processor', async () => {
     const app = buildServer();
     await app.ready();
