@@ -164,6 +164,16 @@ export function encodePayoutSplitterCallV2(input: {
   );
 }
 
+// Minimal ABI encoding for: approve(address spender,uint256 amount)
+// selector = keccak256("approve(address,uint256)")[:4]
+export function encodeErc20ApproveCall(input: { spender: string; amount: bigint }): string {
+  const selector = id('approve(address,uint256)').slice(0, 10);
+  const pad32 = (hexNo0x: string) => hexNo0x.padStart(64, '0');
+  const addr = (a: string) => pad32(a.toLowerCase().replace(/^0x/, ''));
+  const u256 = (v: bigint) => pad32(v.toString(16));
+  return selector + addr(input.spender) + u256(input.amount);
+}
+
 export async function signAndBroadcastSplitterTx(input: {
   signer: EvmSigner;
   chainId?: number;
@@ -173,13 +183,26 @@ export async function signAndBroadcastSplitterTx(input: {
   maxPriorityFeePerGas: bigint;
   data: string;
 }): Promise<{ from: string; txHash: string; signedTx: string }> {
+  return await signAndBroadcastTx({ ...input, to: payoutSplitterAddress() });
+}
+
+export async function signAndBroadcastTx(input: {
+  signer: EvmSigner;
+  chainId?: number;
+  nonce: bigint;
+  gasLimit: bigint;
+  maxFeePerGas: bigint;
+  maxPriorityFeePerGas: bigint;
+  to: string;
+  data: string;
+}): Promise<{ from: string; txHash: string; signedTx: string }> {
   const chainId = input.chainId ?? evmChainId();
   const from = await input.signer.getAddress();
 
   const tx = Transaction.from({
     type: 2,
     chainId,
-    to: payoutSplitterAddress(),
+    to: input.to,
     nonce: Number(input.nonce),
     gasLimit: input.gasLimit,
     maxFeePerGas: input.maxFeePerGas,
