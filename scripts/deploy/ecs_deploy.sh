@@ -14,6 +14,7 @@ set -euo pipefail
 #
 # Optional overrides:
 # - CLUSTER, API_SERVICE, VERIFIER_SERVICE, WORKER_SERVICES, MIGRATE_TASK_FAMILY
+# - CLAMAV_IMAGE: clamd sidecar image for the scanner service (default: clamav/clamav-debian:latest)
 
 need_bin() {
   local b="$1"
@@ -65,6 +66,7 @@ MIGRATE_TASK_FAMILY="${MIGRATE_TASK_FAMILY:-${PREFIX}-migrate}"
 WORKER_SERVICES="${WORKER_SERVICES:-${PREFIX}-outbox,${PREFIX}-verification,${PREFIX}-payout,${PREFIX}-scanner,${PREFIX}-retention}"
 
 SKIP_MIGRATIONS="${SKIP_MIGRATIONS:-false}"
+CLAMAV_IMAGE="${CLAMAV_IMAGE:-clamav/clamav-debian:latest}"
 
 log() {
   echo "[deploy] $*"
@@ -106,6 +108,15 @@ deploy_service() {
     container_name="${container_name#${PREFIX}-}"
   fi
   new_td_json="$(render_new_taskdef "$current_td" "$image_uri" "$container_name")"
+
+  # The scanner service runs with a clamd sidecar container. The deploy pipeline updates the app
+  # image frequently, but the clamd image should remain stable (and must be TCP-enabled).
+  #
+  # Some upstream clamav images default to Unix sockets only; our scanner connects over TCP.
+  # Use a known-good image by default, and allow override via CLAMAV_IMAGE.
+  if [[ "$service" == "${PREFIX}-scanner" ]]; then
+    new_td_json="$(jq --arg IMG "$CLAMAV_IMAGE" '(.containerDefinitions[] | select(.name=="clamd") | .image) = $IMG' <<<"$new_td_json")"
+  fi
   local new_td_arn
   new_td_arn="$(aws ecs register-task-definition --cli-input-json "$new_td_json" --query 'taskDefinition.taskDefinitionArn' --output text)"
   if [[ -z "$new_td_arn" || "$new_td_arn" == "None" ]]; then
