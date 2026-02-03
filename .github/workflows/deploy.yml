@@ -133,6 +133,7 @@ jobs:
           export SMOKE_ADMIN_TOKEN
           SMOKE_ADMIN_TOKEN="$(aws secretsmanager get-secret-value --region "${AWS_REGION}" --secret-id "proofwork-staging/ADMIN_TOKEN" --query SecretString --output text)"
           npm run smoke:remote
+          npm run smoke:remote:ui
 
   deploy_production:
     name: Deploy Production + Smoke
@@ -184,3 +185,4 @@ jobs:
           export SMOKE_ADMIN_TOKEN
           SMOKE_ADMIN_TOKEN="$(aws secretsmanager get-secret-value --region "${AWS_REGION}" --secret-id "proofwork-prod/ADMIN_TOKEN" --query SecretString --output text)"
           npm run smoke:remote
+          npm run smoke:remote:ui
