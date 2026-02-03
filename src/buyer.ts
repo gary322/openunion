@@ -2,6 +2,7 @@ import { nanoid } from 'nanoid';
 import { sha256 } from './utils.js';
 import { db } from './db/client.js';
 import { hmacSha256Hex } from './auth/tokens.js';
+import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 
 export type OrgRole = 'owner' | 'admin' | 'editor' | 'viewer';
 export interface User {
@@ -37,6 +38,48 @@ const DEMO_USER_EMAIL = 'buyer@example.com';
 const BUYER_TOKEN_PEPPER = process.env.BUYER_TOKEN_PEPPER ?? process.env.WORKER_TOKEN_PEPPER ?? 'dev_pepper_change_me';
 if (process.env.NODE_ENV === 'production' && BUYER_TOKEN_PEPPER === 'dev_pepper_change_me') {
   throw new Error('BUYER_TOKEN_PEPPER must be set in production');
+}
+
+// Password hashing (production-safe)
+//
+// We keep backward compatibility with legacy SHA-256 hashes used in early demos/tests.
+// New registrations use scrypt with a random salt.
+const SCRYPT_N = 1 << 14; // 16384
+const SCRYPT_R = 8;
+const SCRYPT_P = 1;
+const SCRYPT_KEYLEN = 32;
+
+function normalizeEmail(email: string) {
+  return email.trim().toLowerCase();
+}
+
+function hashPassword(password: string): string {
+  const salt = randomBytes(16);
+  const derived = scryptSync(password, salt, SCRYPT_KEYLEN, { N: SCRYPT_N, r: SCRYPT_R, p: SCRYPT_P });
+  return `scrypt$${SCRYPT_N}$${SCRYPT_R}$${SCRYPT_P}$${salt.toString('base64')}$${derived.toString('base64')}`;
+}
+
+function verifyPasswordHash(password: string, stored: string): boolean {
+  const raw = String(stored ?? '');
+  if (raw.startsWith('scrypt$')) {
+    const parts = raw.split('$');
+    if (parts.length !== 6) return false;
+    const n = Number(parts[1]);
+    const r = Number(parts[2]);
+    const p = Number(parts[3]);
+    const saltB64 = parts[4];
+    const hashB64 = parts[5];
+    if (!Number.isFinite(n) || !Number.isFinite(r) || !Number.isFinite(p)) return false;
+    const salt = Buffer.from(saltB64, 'base64');
+    const expected = Buffer.from(hashB64, 'base64');
+    const actual = scryptSync(password, salt, expected.length, { N: n, r, p });
+    // timingSafeEqual throws if lengths differ; guard.
+    if (actual.length !== expected.length) return false;
+    return timingSafeEqual(actual, expected);
+  }
+
+  // Legacy demo/test format: sha256(password)
+  return raw === sha256(password);
 }
 
 function originFromRow(row: any): Origin {
@@ -104,11 +147,51 @@ export async function seedBuyer() {
 }
 
 export async function verifyPassword(email: string, pwd: string) {
-  const normalizedEmail = email.trim().toLowerCase();
+  const normalizedEmail = normalizeEmail(email);
   const user = await db.selectFrom('org_users').selectAll().where('email', '=', normalizedEmail).executeTakeFirst();
   if (!user) return undefined;
-  if (user.password_hash !== sha256(pwd)) return undefined;
+  if (!verifyPasswordHash(pwd, user.password_hash)) return undefined;
   return { id: user.id, email: user.email, passwordHash: user.password_hash, orgId: user.org_id, role: user.role as OrgRole } satisfies User;
+}
+
+export async function registerOrg(input: {
+  orgName: string;
+  email: string;
+  password: string;
+}): Promise<{ orgId: string; userId: string; email: string; role: OrgRole }> {
+  const orgName = String(input.orgName ?? '').trim();
+  const email = normalizeEmail(String(input.email ?? ''));
+  const password = String(input.password ?? '');
+
+  if (!orgName || orgName.length < 2 || orgName.length > 80) throw new Error('invalid_org_name');
+  if (!email || !email.includes('@') || email.length > 200) throw new Error('invalid_email');
+  if (!password || password.length < 8 || password.length > 200) throw new Error('invalid_password');
+
+  const orgId = `org_${nanoid(10)}`;
+  const userId = nanoid(8);
+
+  const existing = await db.selectFrom('org_users').select(['id']).where('email', '=', email).executeTakeFirst();
+  if (existing) throw new Error('email_already_registered');
+
+  const now = new Date();
+  await db
+    .insertInto('orgs')
+    .values({ id: orgId, name: orgName, platform_fee_bps: 0, platform_fee_wallet_address: null, created_at: now })
+    .execute();
+
+  await db
+    .insertInto('org_users')
+    .values({
+      id: userId,
+      email,
+      password_hash: hashPassword(password),
+      org_id: orgId,
+      role: 'owner',
+      created_at: now,
+    })
+    .execute();
+
+  return { orgId, userId, email, role: 'owner' };
 }
 
 export async function createOrgApiKey(orgId: string, name: string) {

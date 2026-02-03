@@ -62,6 +62,22 @@ async function onLogin() {
   setStatus('loginStatus', `ok orgId=${json.orgId} role=${json.role}`, 'good');
 }
 
+async function onRegister() {
+  setStatus('regStatus', '', null);
+  const orgName = $('regOrgName').value.trim();
+  const apiKeyName = $('regApiKeyName').value.trim() || 'default';
+  const email = $('regEmail').value.trim();
+  const password = $('regPassword').value;
+  const { res, json } = await api('/api/org/register', { method: 'POST', body: { orgName, email, password, apiKeyName } });
+  $('regOut').textContent = pretty(json);
+  if (!res.ok) {
+    setStatus('regStatus', `register failed (${res.status})`, 'bad');
+    return;
+  }
+  if (json?.token) setBuyerToken(String(json.token));
+  setStatus('regStatus', `ok orgId=${json.orgId} (token saved)`, 'good');
+}
+
 async function onCreateKey() {
   setStatus('keyStatus', '', null);
   const name = $('keyName').value.trim() || 'portal';
@@ -215,6 +231,7 @@ async function onPublish() {
 }
 
 $('btnLogin').addEventListener('click', () => onLogin().catch((e) => setStatus('loginStatus', String(e), 'bad')));
+$('btnRegister').addEventListener('click', () => onRegister().catch((e) => setStatus('regStatus', String(e), 'bad')));
 $('btnCreateKey').addEventListener('click', () => onCreateKey().catch((e) => setStatus('keyStatus', String(e), 'bad')));
 $('btnSaveToken').addEventListener('click', () => onSaveToken());
 

@@ -15,6 +15,10 @@ Rotate procedure:
 
 ## 2) Buyer org API keys
 - Issued by `POST /api/org/api-keys` (or session route `/api/session/api-keys`).
+- New platform onboarding can be done via `POST /api/org/register` which creates:
+  - an org
+  - an owner user
+  - an initial org API key (returned as `token`)
 - Hashed with `BUYER_TOKEN_PEPPER` (defaults to `WORKER_TOKEN_PEPPER`).
 
 Rotate procedure:
@@ -38,4 +42,3 @@ Rotation procedure (hashed tokens):
 - Never place secrets inside `task_descriptor` (treated as metadata).
 - In production, set `WORKER_TOKEN_PEPPER`, `BUYER_TOKEN_PEPPER`, `SESSION_SECRET` to non-default values.
 - Prefer running verifier components on internal networks only.
-

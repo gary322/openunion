@@ -140,3 +140,10 @@ export const orgPlatformFeeSchema = z.object({
   // Base-chain EVM address. Required when platformFeeBps > 0.
   platformFeeWalletAddress: z.string().optional().nullable(),
 });
+
+export const orgRegisterSchema = z.object({
+  orgName: z.string().min(2).max(80),
+  email: z.string().min(3).max(200),
+  password: z.string().min(8).max(200),
+  apiKeyName: z.string().min(1).max(80).optional(),
+});

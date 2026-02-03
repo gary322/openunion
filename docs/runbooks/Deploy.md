@@ -12,6 +12,7 @@
 - **Workers**: decide desired counts for outbox/verification/payout/scanner/retention and autoscaling ranges.
 - **Feature flags / safety levers**:
   - `ENABLE_TASK_DESCRIPTOR` (default true)
+  - `ENABLE_DEMO_SEED` (default false in production; only enable in dedicated demo envs)
   - `UNIVERSAL_WORKER_PAUSE` (emergency stop)
   - `UNIVERSAL_WORKER_CANARY_PERCENT` (canary rollout for universal worker claims)
   - `MAX_*_AGE_SEC` backpressure knobs for queue lag
@@ -36,6 +37,7 @@
 ### Post-deploy validation
 - Run a staged smoke test:
   - buyer creates bounty → worker submits → verifier completes → payout requested/confirmed
+  - if `ENABLE_DEMO_SEED=false`, bootstrap a platform org via `POST /api/org/register` (or the Buyer portal "Register" card) and fund it (Stripe checkout or admin top-up) before publishing bounties.
 - Confirm SLO health signals (see `docs/runbooks/SLOs.md`):
   - verifier backlog age
   - outbox pending age

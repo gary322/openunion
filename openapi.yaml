@@ -46,6 +46,14 @@ paths:
       responses:
         '200':
           description: api keys
+  /api/org/register:
+    post:
+      summary: Register a new org + owner user + initial API key (public)
+      responses:
+        '200':
+          description: orgId + userId + apiKey + token
+        '409':
+          description: email already registered
   /api/session/api-keys:
     post:
       summary: Create org API key (buyer session)

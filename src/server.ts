@@ -51,7 +51,18 @@ import {
 } from './store.js';
 import { db } from './db/client.js';
 import { runMigrations } from './db/migrate.js';
-import { seedBuyer, verifyPassword, createOrgApiKey, getApiKey, addOrigin, listOrigins, checkOrigin, revokeOrigin, originAllowed } from './buyer.js';
+import {
+  seedBuyer,
+  verifyPassword,
+  createOrgApiKey,
+  getApiKey,
+  addOrigin,
+  listOrigins,
+  checkOrigin,
+  revokeOrigin,
+  originAllowed,
+  registerOrg,
+} from './buyer.js';
 import {
   registerWorkerSchema,
   presignRequestSchema,
@@ -63,6 +74,7 @@ import {
   verifierVerdictSchema,
   taskDescriptorSchema,
   orgPlatformFeeSchema,
+  orgRegisterSchema,
 } from './schemas.js';
 import { Envelope, Submission, Verification, Worker } from './types.js';
 import { nanoid } from 'nanoid';
@@ -100,6 +112,14 @@ const MAX_VERIFICATION_ATTEMPTS = Number(process.env.MAX_VERIFICATION_ATTEMPTS ?
 const TASK_DESCRIPTOR_MAX_BYTES = Number(process.env.TASK_DESCRIPTOR_MAX_BYTES ?? 16000);
 function isUniversalWorkerPaused() {
   return String(process.env.UNIVERSAL_WORKER_PAUSE ?? '').toLowerCase() === 'true';
+}
+
+function shouldSeedDemoData() {
+  // In production, do not seed demo users/bounties by default.
+  // Set ENABLE_DEMO_SEED=true only in dedicated demo environments.
+  const v = String(process.env.ENABLE_DEMO_SEED ?? '').trim().toLowerCase();
+  if (v) return ['true', '1', 'yes'].includes(v);
+  return process.env.NODE_ENV !== 'production';
 }
 
 function isTaskDescriptorEnabled() {
@@ -308,8 +328,10 @@ export function buildServer() {
 
   app.addHook('onReady', async () => {
     await runMigrations();
-    await seedDemoData();
-    await seedBuyer();
+    if (shouldSeedDemoData()) {
+      await seedDemoData();
+      await seedBuyer();
+    }
   });
 
   // Simple decorators
@@ -615,6 +637,36 @@ export function buildServer() {
     }
     reply.header('set-cookie', `pw_sess=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`);
     return { ok: true };
+  });
+
+  // Org registration (self-serve): create org + owner user + initial API key.
+  //
+  // NOTE: This is intentionally minimal and designed for Proofwork-style platform onboarding.
+  // Production deployments should add email verification / abuse controls as needed.
+  app.post('/api/org/register', { schema: { body: orgRegisterSchema } }, async (request: any, reply: any) => {
+    if (!(await rateLimit(`register:ip:${request.ip}`, 10))) {
+      return reply.code(429).send({ error: { code: 'rate_limited', message: 'Rate limited' } });
+    }
+    const body = request.body as any;
+    try {
+      const created = await registerOrg({ orgName: body.orgName, email: body.email, password: body.password });
+      const { apiKey, token } = await createOrgApiKey(created.orgId, String(body.apiKeyName ?? 'default'));
+
+      await writeAuditEvent({
+        actorType: 'anonymous',
+        actorId: created.email,
+        action: 'org.register',
+        targetType: 'org',
+        targetId: created.orgId,
+        metadata: { orgName: body.orgName },
+      });
+
+      return { orgId: created.orgId, userId: created.userId, email: created.email, role: created.role, apiKey, token };
+    } catch (err: any) {
+      const msg = String(err?.message ?? err);
+      const code = msg === 'email_already_registered' ? 409 : 400;
+      return reply.code(code).send({ error: { code: 'invalid', message: msg } });
+    }
   });
 
   // Buyer API key create/list (replace with proper user auth/session in production)
