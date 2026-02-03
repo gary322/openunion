@@ -211,6 +211,26 @@ async function main() {
   const smokeOrigin = process.env.SMOKE_ORIGIN ?? 'https://example.com';
   await ensureVerifiedOrigin({ baseUrl, buyerToken, origin: smokeOrigin });
 
+  // Register the smoke task type in the app registry (required for taskDescriptor.type).
+  // Use a unique task type per run to avoid cross-org collisions if smoke falls back to creating a new org.
+  const appReg = await fetchJson({
+    baseUrl,
+    path: '/api/org/apps',
+    method: 'POST',
+    headers: authHeader,
+    body: {
+      slug: `smoke-${Date.now()}`,
+      taskType: smokeTaskType,
+      name: 'Smoke App',
+      description: 'auto-created by smoke_remote.ts',
+      public: false,
+      dashboardUrl: '/apps/',
+    },
+  });
+  if (!appReg.ok && appReg.status !== 409) {
+    throw new Error(`app_register_failed:${appReg.status}:${appReg.json?.error?.code ?? ''}`);
+  }
+
   // Create a bounty with a descriptor that our Universal Worker can deterministically satisfy.
   const bountyTitle = `Smoke bounty ${new Date().toISOString()}`;
   const bountyResp = await fetchJson({
