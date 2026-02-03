@@ -122,10 +122,14 @@ export async function scanBytes(input: { bytes: Buffer; contentType?: string; fi
 }
 
 async function scanWithClamd(input: { bytes: Buffer }): Promise<ScanResult> {
+  const timeoutMs = Number(process.env.CLAMD_TIMEOUT_MS ?? 15_000);
+  const socketPathRaw = String(process.env.CLAMD_SOCKET ?? process.env.CLAMD_SOCKET_PATH ?? '').trim();
+
   const host = process.env.CLAMD_HOST ?? '127.0.0.1';
   const port = Number(process.env.CLAMD_PORT ?? 3310);
-  const timeoutMs = Number(process.env.CLAMD_TIMEOUT_MS ?? 15_000);
-  if (!Number.isFinite(port) || port <= 0) throw new Error('invalid_clamd_port');
+  if (!socketPathRaw) {
+    if (!Number.isFinite(port) || port <= 0) throw new Error('invalid_clamd_port');
+  }
 
   const { connect } = await import('net');
 
@@ -137,7 +141,8 @@ async function scanWithClamd(input: { bytes: Buffer }): Promise<ScanResult> {
       resolve(res);
     };
 
-    const socket = connect({ host, port }, () => {
+    const connOpts: any = socketPathRaw ? { path: socketPathRaw } : { host, port };
+    const socket = connect(connOpts, () => {
       try {
         // clamd protocol: use the NUL-terminated "zINSTREAM" form for broad compatibility.
         // Some builds accept "INSTREAM\\n", but others only accept "zINSTREAM\\0".
