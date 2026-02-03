@@ -1,8 +1,10 @@
 name: Deploy
 
 on:
-  push:
+  workflow_run:
+    workflows: ["CI"]
     branches: [main]
+    types: [completed]
   workflow_dispatch:
     inputs:
       deploy_production:
@@ -29,6 +31,7 @@ jobs:
     name: Build + Push Images
     runs-on: ubuntu-latest
     environment: staging
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') }}
     permissions:
       contents: read
       id-token: write
@@ -38,6 +41,8 @@ jobs:
       sha7: ${{ steps.meta.outputs.sha7 }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
@@ -52,7 +57,11 @@ jobs:
         id: meta
         run: |
           set -euo pipefail
-          SHA7="${GITHUB_SHA::7}"
+          SHA="${GITHUB_SHA}"
+          if [[ "${{ github.event_name }}" == "workflow_run" ]]; then
+            SHA="${{ github.event.workflow_run.head_sha }}"
+          fi
+          SHA7="${SHA::7}"
           echo "sha7=$SHA7" >> "$GITHUB_OUTPUT"
           echo "app_image=${ECR_APP_REPO}:sha-${SHA7}" >> "$GITHUB_OUTPUT"
           echo "verifier_image=${ECR_VERIFIER_REPO}:sha-${SHA7}" >> "$GITHUB_OUTPUT"
@@ -74,11 +83,14 @@ jobs:
     runs-on: ubuntu-latest
     needs: build_and_push
     environment: staging
+    if: ${{ needs.build_and_push.result == 'success' }}
     permissions:
       contents: read
       id-token: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
 
       - name: Setup Node (for smoke script)
         uses: actions/setup-node@v4
@@ -127,6 +139,8 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
 
       - name: Setup Node (for smoke script)
         uses: actions/setup-node@v4
