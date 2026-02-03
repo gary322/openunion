@@ -3,6 +3,9 @@ import { z } from 'zod';
 export const capabilityTagEnum = z.enum(['browser', 'http', 'ffmpeg', 'llm_summarize', 'screenshot']);
 export const artifactKindEnum = z.enum(['screenshot', 'snapshot', 'pdf', 'log', 'video', 'other']);
 
+// Zod v4 changed `z.record` signature to (keySchema, valueSchema). Use string keys explicitly.
+const jsonRecord = () => z.record(z.string(), z.any());
+
 const requiredArtifactSpecSchema = z
   .object({
     kind: artifactKindEnum,
@@ -23,15 +26,15 @@ export const taskDescriptorSchema = z.object({
   schema_version: z.literal('v1').default('v1'),
   type: z.string().min(1).max(120),
   capability_tags: z.array(capabilityTagEnum).min(1).max(20),
-  input_spec: z.record(z.any()).default({}),
+  input_spec: jsonRecord().default({}),
   output_spec: outputSpecSchema,
   freshness_sla_sec: z.number().int().positive().max(86_400).optional(),
-  site_profile: z.record(z.any()).optional(),
+  site_profile: jsonRecord().optional(),
 });
 
 export const registerWorkerSchema = z.object({
   displayName: z.string().min(1).max(80).optional(),
-  capabilities: z.record(z.any()).default({}),
+  capabilities: jsonRecord().default({}),
 });
 
 export const presignRequestSchema = z.object({
@@ -79,7 +82,7 @@ export const proofPackManifestSchema = z.object({
   worker: z.object({
     workerId: z.string(),
     skillVersion: z.string(),
-    fingerprint: z.record(z.any()),
+    fingerprint: jsonRecord(),
   }),
   result: z.object({
     outcome: z.enum(['success', 'failure']),
@@ -132,7 +135,7 @@ export const verifierVerdictSchema = z.object({
     qualityScore: z.number(),
   }),
   evidenceArtifacts: z.array(artifactRefSchema),
-  runMetadata: z.record(z.any()).optional(),
+  runMetadata: jsonRecord().optional(),
 });
 
 export const orgPlatformFeeSchema = z.object({

@@ -3,6 +3,8 @@ import { sha256 } from './utils.js';
 import { db } from './db/client.js';
 import { hmacSha256Hex } from './auth/tokens.js';
 import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
+import { lookup, resolveTxt } from 'node:dns/promises';
+import { isIP } from 'node:net';
 
 export type OrgRole = 'owner' | 'admin' | 'editor' | 'viewer';
 export interface User {
@@ -93,6 +95,178 @@ function originFromRow(row: any): Origin {
     verifiedAt: row.verified_at ? row.verified_at.getTime() : undefined,
     failureReason: row.failure_reason ?? undefined,
   };
+}
+
+function originVerifierAllowPrivateNetworks(): boolean {
+  if (process.env.NODE_ENV !== 'production') return true;
+  const v = String(process.env.ORIGIN_VERIFIER_ALLOW_PRIVATE ?? '').trim().toLowerCase();
+  return v === '1' || v === 'true' || v === 'yes';
+}
+
+function isPrivateOrSpecialIpv4(ip: string): boolean {
+  const parts = ip.split('.').map((p) => Number(p));
+  if (parts.length !== 4 || parts.some((n) => !Number.isFinite(n) || n < 0 || n > 255)) return true;
+  const [a, b] = parts;
+
+  // RFC1918 private + loopback + link-local + multicast + reserved + TEST-NET ranges.
+  if (a === 0) return true;
+  if (a === 10) return true;
+  if (a === 127) return true;
+  if (a === 169 && b === 254) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 192 && b === 168) return true;
+  if (a === 192 && b === 0) return true;
+  if (a === 192 && b === 88) return true; // 192.88.99.0/24 (6to4 relay, deprecated but non-global)
+  if (a === 198 && (b === 18 || b === 19)) return true; // 198.18.0.0/15 (benchmarking)
+  if (a === 192 && b === 2) return true; // TEST-NET-1
+  if (a === 198 && b === 51) return true; // TEST-NET-2
+  if (a === 203 && b === 0) return true; // TEST-NET-3
+  if (a >= 224) return true;
+  return false;
+}
+
+function isPrivateOrSpecialIpv6(ip: string): boolean {
+  const lower = ip.toLowerCase();
+  if (lower === '::' || lower === '::1') return true;
+  // Unique local (fc00::/7), link-local (fe80::/10)
+  if (lower.startsWith('fc') || lower.startsWith('fd')) return true;
+  if (lower.startsWith('fe8') || lower.startsWith('fe9') || lower.startsWith('fea') || lower.startsWith('feb')) return true;
+  // IPv4-mapped or translated; treat as special and re-check IPv4 portion.
+  const m = lower.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
+  if (m?.[1]) return isPrivateOrSpecialIpv4(m[1]);
+  return false;
+}
+
+function isPrivateOrSpecialIp(ip: string): boolean {
+  const kind = isIP(ip);
+  if (kind === 4) return isPrivateOrSpecialIpv4(ip);
+  if (kind === 6) return isPrivateOrSpecialIpv6(ip);
+  return true;
+}
+
+async function assertOriginHostIsPublic(origin: string): Promise<void> {
+  if (originVerifierAllowPrivateNetworks()) return;
+  const u = new URL(origin);
+  const host = u.hostname;
+  if (!host) throw new Error('invalid_origin_host');
+  const lower = host.toLowerCase();
+  if (lower === 'localhost' || lower.endsWith('.localhost')) throw new Error('origin_host_private');
+  if (isIP(host)) {
+    if (isPrivateOrSpecialIp(host)) throw new Error('origin_host_private');
+    return;
+  }
+
+  const res = await lookup(host, { all: true });
+  if (!Array.isArray(res) || res.length === 0) throw new Error('origin_host_dns_failed');
+  for (const rec of res) {
+    if (!rec?.address) continue;
+    if (isPrivateOrSpecialIp(String(rec.address))) throw new Error('origin_host_private');
+  }
+}
+
+async function readBodyLimited(resp: Response, maxBytes: number): Promise<Buffer> {
+  const len = resp.headers.get('content-length');
+  if (len && Number.isFinite(Number(len)) && Number(len) > maxBytes) {
+    resp.body?.cancel?.();
+    throw new Error('origin_verify_body_too_large');
+  }
+
+  const reader = resp.body?.getReader?.();
+  if (!reader) return Buffer.from(await resp.arrayBuffer());
+
+  const chunks: Buffer[] = [];
+  let total = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    const buf = Buffer.from(value);
+    total += buf.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel();
+      throw new Error('origin_verify_body_too_large');
+    }
+    chunks.push(buf);
+  }
+  return Buffer.concat(chunks);
+}
+
+async function verifyOriginProof(input: { origin: string; method: Origin['method']; token: string }): Promise<{ ok: true } | { ok: false; reason: string }> {
+  const origin = String(input.origin);
+  const method = input.method;
+  const token = String(input.token);
+  if (!origin || !token) return { ok: false, reason: 'invalid_origin_or_token' };
+
+  let u: URL;
+  try {
+    u = new URL(origin);
+  } catch {
+    return { ok: false, reason: 'invalid_origin' };
+  }
+  if (!['http:', 'https:'].includes(u.protocol)) return { ok: false, reason: 'invalid_origin_protocol' };
+  if (u.username || u.password) return { ok: false, reason: 'invalid_origin_credentials' };
+
+  const timeoutMs = Number(process.env.ORIGIN_VERIFIER_TIMEOUT_MS ?? 5000);
+  const maxBytes = Number(process.env.ORIGIN_VERIFIER_MAX_BYTES ?? 8192);
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    await assertOriginHostIsPublic(origin);
+
+    if (method === 'dns_txt') {
+      // Expected: TXT record at _proofwork.<host> contains the token.
+      // Example: _proofwork.example.com TXT "pw_verify_..."
+      const name = `_proofwork.${u.hostname}`;
+      const txt = await resolveTxt(name);
+      for (const rec of txt) {
+        const joined = rec.join('');
+        if (joined.includes(token)) return { ok: true };
+      }
+      return { ok: false, reason: 'dns_txt_missing_token' };
+    }
+
+    if (method === 'http_file') {
+      // Expected: https://<origin>/.well-known/proofwork-verify.txt contains the token.
+      const verifyUrl = new URL('/.well-known/proofwork-verify.txt', origin).toString();
+      const resp = await fetch(verifyUrl, {
+        method: 'GET',
+        redirect: 'manual',
+        signal: controller.signal,
+        headers: { 'user-agent': 'proofwork-origin-verifier/1.0' },
+      });
+      if (!resp.ok) return { ok: false, reason: `http_file_bad_status:${resp.status}` };
+      const body = await readBodyLimited(resp, maxBytes);
+      const text = body.toString('utf8');
+      if (!text.includes(token)) return { ok: false, reason: 'http_file_missing_token' };
+      return { ok: true };
+    }
+
+    if (method === 'header') {
+      // Expected: https://<origin>/ responds with header X-Proofwork-Verify: <token> (or includes token).
+      const verifyUrl = new URL('/', origin).toString();
+      const resp = await fetch(verifyUrl, {
+        method: 'HEAD',
+        redirect: 'manual',
+        signal: controller.signal,
+        headers: { 'user-agent': 'proofwork-origin-verifier/1.0' },
+      });
+      resp.body?.cancel?.();
+      if (!resp.ok) return { ok: false, reason: `header_bad_status:${resp.status}` };
+      const h =
+        resp.headers.get('x-proofwork-verify') ??
+        resp.headers.get('x-proofwork-verification') ??
+        resp.headers.get('x-proofwork-verify-token');
+      if (!h) return { ok: false, reason: 'header_missing' };
+      if (!String(h).includes(token)) return { ok: false, reason: 'header_missing_token' };
+      return { ok: true };
+    }
+
+    return { ok: false, reason: 'unknown_method' };
+  } catch (err: any) {
+    const msg = String(err?.name ?? '').includes('Abort') ? 'origin_verify_timeout' : String(err?.message ?? err);
+    return { ok: false, reason: msg };
+  } finally {
+    clearTimeout(t);
+  }
 }
 
 export async function seedBuyer() {
@@ -270,11 +444,33 @@ export async function checkOrigin(id: string) {
   const row = await db.selectFrom('origins').selectAll().where('id', '=', id).executeTakeFirst();
   if (!row) return undefined;
 
-  // Auto-verify pending origins for now (replace with real DNS/HTTP checks in prod).
   if (row.status === 'pending') {
+    // DB column is stored as text; narrow for verifier contract (and treat unexpected values as a soft failure).
+    const method = row.method as Origin['method'];
+    if (method !== 'http_file' && method !== 'dns_txt' && method !== 'header') {
+      const updated = await db
+        .updateTable('origins')
+        .set({ status: 'pending', failure_reason: 'invalid verification method' })
+        .where('id', '=', id)
+        .returningAll()
+        .executeTakeFirstOrThrow();
+      return originFromRow(updated);
+    }
+
+    const check = await verifyOriginProof({ origin: row.origin, method, token: row.token });
+    if (check.ok) {
+      const updated = await db
+        .updateTable('origins')
+        .set({ status: 'verified', verified_at: new Date(), failure_reason: null })
+        .where('id', '=', id)
+        .returningAll()
+        .executeTakeFirstOrThrow();
+      return originFromRow(updated);
+    }
+
     const updated = await db
       .updateTable('origins')
-      .set({ status: 'verified', verified_at: new Date(), failure_reason: null })
+      .set({ status: 'pending', failure_reason: check.reason })
       .where('id', '=', id)
       .returningAll()
       .executeTakeFirstOrThrow();

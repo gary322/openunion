@@ -21,26 +21,11 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 20
-      minio:
-        image: minio/minio:latest
-        env:
-          MINIO_ROOT_USER: minioadmin
-          MINIO_ROOT_PASSWORD: minioadmin
-        ports:
-          - 9000:9000
-          - 9001:9001
-        options: >-
-          --health-cmd "curl -f http://localhost:9000/minio/health/live || exit 1"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 20
-        command: server /data --console-address ":9001"
 
     env:
-      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/proofwork
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/proofwork
       STORAGE_BACKEND: local
       STORAGE_LOCAL_DIR: ./var/uploads
-      PUBLIC_BASE_URL: http://localhost:3000
       STRIPE_WEBHOOK_SECRET: whsec_test_secret
       BUYER_TOKEN_PEPPER: dev_pepper_change_me
       WORKER_TOKEN_PEPPER: dev_pepper_change_me
@@ -63,14 +48,38 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Wait for Postgres
+        run: |
+          set -euo pipefail
+          node --input-type=module - <<'NODE'
+          import pg from 'pg';
+          const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
+          const deadline = Date.now() + 30_000;
+          while (true) {
+            try {
+              await pool.query('select 1');
+              break;
+            } catch (err) {
+              if (Date.now() > deadline) throw err;
+              await new Promise((r) => setTimeout(r, 500));
+            }
+          }
+          await pool.end();
+          console.log('postgres ok');
+          NODE
+
       - name: Security audit (high)
         run: npm audit --audit-level=high
+
+      # Some unit/integration tests spawn Playwright (Universal Worker browser_flow).
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
 
       - name: Unit/integration tests
         run: npm test
 
-      - name: Install Playwright browsers
-        run: npx playwright install --with-deps chromium
+      - name: Typecheck/build (tsc)
+        run: npm run build
 
       - name: E2E tests
         run: npm run test:e2e
@@ -91,27 +100,13 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 20
-      minio:
-        image: minio/minio:latest
-        env:
-          MINIO_ROOT_USER: minioadmin
-          MINIO_ROOT_PASSWORD: minioadmin
-        ports:
-          - 9000:9000
-          - 9001:9001
-        options: >-
-          --health-cmd "curl -f http://localhost:9000/minio/health/live || exit 1"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 20
-        command: server /data --console-address ":9001"
       clamav:
         image: clamav/clamav:stable
         ports:
           - 3310:3310
 
     env:
-      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/proofwork
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/proofwork
       BUYER_TOKEN_PEPPER: dev_pepper_change_me
       WORKER_TOKEN_PEPPER: dev_pepper_change_me
       SESSION_SECRET: dev_session_secret_change_me
@@ -140,6 +135,32 @@ jobs:
         with:
           node-version: 22
 
+      - name: Start MinIO (local S3)
+        run: |
+          set -euo pipefail
+          docker run -d --name minio \
+            -p 9000:9000 -p 9001:9001 \
+            -e MINIO_ROOT_USER=minioadmin \
+            -e MINIO_ROOT_PASSWORD=minioadmin \
+            minio/minio:latest server /data --console-address ":9001"
+          for i in {1..60}; do
+            if curl -fsS http://localhost:9000/minio/health/live >/dev/null; then
+              echo "minio ok"
+              break
+            fi
+            sleep 1
+          done
+
+      - name: Create MinIO buckets
+        run: |
+          set -euo pipefail
+          docker run --rm --network host --entrypoint /bin/sh minio/mc:latest -c '
+            mc alias set local http://localhost:9000 minioadmin minioadmin;
+            mc mb -p local/proofwork-staging || true;
+            mc mb -p local/proofwork-clean || true;
+            mc mb -p local/proofwork-quarantine || true;
+          '
+
       - name: Install dependencies
         run: npm ci
 
@@ -164,7 +185,7 @@ jobs:
           --health-retries 20
 
     env:
-      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/proofwork
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/proofwork
       BUYER_TOKEN_PEPPER: dev_pepper_change_me
       WORKER_TOKEN_PEPPER: dev_pepper_change_me
       SESSION_SECRET: dev_session_secret_change_me
