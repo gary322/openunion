@@ -30,6 +30,8 @@ export async function buyerApi(path, { method = 'GET', token, body } = {}) {
   const res = await fetch(`${getApiBase()}${path}`, {
     method,
     headers,
+    // These app pages are token-authenticated; do not send cookie sessions (avoids CSRF coupling).
+    credentials: 'omit',
     body: body ? JSON.stringify(body) : undefined,
   });
   const text = await res.text();

@@ -3,6 +3,7 @@ import request from 'supertest';
 import { buildServer } from '../src/server.js';
 import { resetStore } from '../src/store.js';
 import { db } from '../src/db/client.js';
+import http from 'http';
 
 describe('org registration', () => {
   beforeEach(async () => {
@@ -13,10 +14,31 @@ describe('org registration', () => {
     const app = buildServer();
     await app.ready();
 
+    // Real origin verification (http_file): stand up a deterministic origin that serves the verification token.
+    let verifyToken = '';
+    const originServer = http.createServer((req, res) => {
+      if (req.url === '/.well-known/proofwork-verify.txt') {
+        if (!verifyToken) {
+          res.writeHead(404, { 'content-type': 'text/plain' });
+          res.end('missing');
+          return;
+        }
+        res.writeHead(200, { 'content-type': 'text/plain' });
+        res.end(verifyToken);
+        return;
+      }
+      res.writeHead(200, { 'content-type': 'text/plain' });
+      res.end('ok');
+    });
+    await new Promise<void>((resolve) => originServer.listen(0, '127.0.0.1', () => resolve()));
+    const port = (originServer.address() as any).port as number;
+    const originUrl = `http://127.0.0.1:${port}`;
+
     const email = `test+${Date.now()}@example.com`;
     const password = 'password123';
 
-    const reg = await request(app.server).post('/api/org/register').send({ orgName: 'Test Org', email, password, apiKeyName: 'default' });
+    try {
+      const reg = await request(app.server).post('/api/org/register').send({ orgName: 'Test Org', email, password, apiKeyName: 'default' });
     expect(reg.status).toBe(200);
     expect(reg.body.orgId).toMatch(/^org_/);
     expect(reg.body.token).toMatch(/^pw_bu_/);
@@ -34,10 +56,12 @@ describe('org registration', () => {
     const addOrigin = await request(app.server)
       .post('/api/origins')
       .set('Authorization', `Bearer ${buyerToken}`)
-      .send({ origin: 'https://example.com', method: 'dns_txt' });
+      .send({ origin: originUrl, method: 'http_file' });
     expect(addOrigin.status).toBe(200);
     const originId = String(addOrigin.body?.origin?.id ?? '');
     expect(originId).toBeTruthy();
+    verifyToken = String(addOrigin.body?.origin?.token ?? '');
+    expect(verifyToken).toMatch(/^pw_verify_/);
 
     const checkOrigin = await request(app.server).post(`/api/origins/${encodeURIComponent(originId)}/check`).set('Authorization', `Bearer ${buyerToken}`);
     expect(checkOrigin.status).toBe(200);
@@ -50,7 +74,7 @@ describe('org registration', () => {
       .send({
         title: 'B',
         description: 'D',
-        allowedOrigins: ['https://example.com'],
+        allowedOrigins: [originUrl],
         requiredProofs: 1,
         fingerprintClassesRequired: ['desktop_us'],
         payoutCents: 1500,
@@ -72,6 +96,10 @@ describe('org registration', () => {
 
     const pub = await request(app.server).post(`/api/bounties/${encodeURIComponent(bountyId)}/publish`).set('Authorization', `Bearer ${buyerToken}`);
     expect(pub.status).toBe(200);
+    } finally {
+      await new Promise<void>((resolve) => originServer.close(() => resolve()));
+      await app.close();
+    }
   });
 
   it('rejects duplicate registration by email', async () => {
@@ -86,6 +114,7 @@ describe('org registration', () => {
 
     const r2 = await request(app.server).post('/api/org/register').send({ orgName: 'Dup Org 2', email, password });
     expect(r2.status).toBe(409);
+
+    await app.close();
   });
 });
-

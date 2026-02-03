@@ -50,13 +50,24 @@ test('buyer → bounty → worker → upload → verify (gateway) → payout (lo
   const baseURL = String(test.info().project.use.baseURL ?? 'http://localhost:3111').replace(/\/$/, '');
 
   let targetServer: http.Server | undefined;
+  let originVerifyToken = '';
   let gateway: any | undefined;
   let hardhat: ReturnType<typeof spawn> | undefined;
   let pool: pg.Pool | undefined;
 
   try {
     // Start deterministic target page server (so verifier harness has something to visit).
-    targetServer = http.createServer((_req, res) => {
+    targetServer = http.createServer((req, res) => {
+      if (req.url === '/.well-known/proofwork-verify.txt') {
+        if (!originVerifyToken) {
+          res.writeHead(404, { 'content-type': 'text/plain' });
+          res.end('missing');
+          return;
+        }
+        res.writeHead(200, { 'content-type': 'text/plain' });
+        res.end(originVerifyToken);
+        return;
+      }
       res.writeHead(200, { 'content-type': 'text/html' });
       res.end(
         `<!doctype html><html><head><meta charset="utf-8"><title>E2E</title></head><body><h1>OK</h1><script>console.log("e2e_target_loaded")</script></body></html>`
@@ -147,7 +158,15 @@ test('buyer → bounty → worker → upload → verify (gateway) → payout (lo
 
     await page.fill('#originUrl', targetOrigin);
     await page.fill('#originMethod', 'http_file');
+    const addOriginRespPromise = page.waitForResponse(
+      (r) => r.url().includes('/api/origins') && r.request().method() === 'POST'
+    );
     await page.click('#btnAddOrigin');
+    const addOriginResp = await addOriginRespPromise;
+    expect(addOriginResp.ok()).toBeTruthy();
+    const addOriginJson = (await addOriginResp.json()) as any;
+    originVerifyToken = String(addOriginJson?.origin?.token ?? '');
+    expect(originVerifyToken).toMatch(/^pw_verify_/);
     await expect(page.locator('#originStatus')).toContainText('added origin');
 
     // Auto-verifies pending origins.
