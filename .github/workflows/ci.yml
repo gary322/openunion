@@ -26,7 +26,6 @@ jobs:
       DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/proofwork
       STORAGE_BACKEND: local
       STORAGE_LOCAL_DIR: ./var/uploads
-      PUBLIC_BASE_URL: http://localhost:3000
       STRIPE_WEBHOOK_SECRET: whsec_test_secret
       BUYER_TOKEN_PEPPER: dev_pepper_change_me
       WORKER_TOKEN_PEPPER: dev_pepper_change_me
