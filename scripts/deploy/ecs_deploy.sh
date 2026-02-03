@@ -73,14 +73,18 @@ log() {
 render_new_taskdef() {
   local task_def_arn="$1"
   local image_uri="$2"
+  local container_name="${3:-}"
 
   aws ecs describe-task-definition \
     --task-definition "$task_def_arn" \
     --query taskDefinition \
     --output json \
-  | jq --arg IMAGE "$image_uri" \
+  | jq --arg IMAGE "$image_uri" --arg NAME "$container_name" \
       'del(.taskDefinitionArn,.revision,.status,.requiresAttributes,.compatibilities,.registeredAt,.registeredBy)
-       | .containerDefinitions |= map(.image=$IMAGE)'
+       | .containerDefinitions |= (if ($NAME | length) > 0
+           then map(if .name == $NAME then .image = $IMAGE else . end)
+           else map(.image = $IMAGE)
+         end)'
 }
 
 deploy_service() {
@@ -97,7 +101,11 @@ deploy_service() {
 
   log "service=$service: registering new task definition with image=$image_uri"
   local new_td_json
-  new_td_json="$(render_new_taskdef "$current_td" "$image_uri")"
+  local container_name="$service"
+  if [[ "$container_name" == "${PREFIX}-"* ]]; then
+    container_name="${container_name#${PREFIX}-}"
+  fi
+  new_td_json="$(render_new_taskdef "$current_td" "$image_uri" "$container_name")"
   local new_td_arn
   new_td_arn="$(aws ecs register-task-definition --cli-input-json "$new_td_json" --query 'taskDefinition.taskDefinitionArn' --output text)"
   if [[ -z "$new_td_arn" || "$new_td_arn" == "None" ]]; then
@@ -138,7 +146,7 @@ run_migrations() {
   # Ensure migrations run from the *new* app image (so new SQL files are present in the container).
   log "registering migrate task definition revision with new app image..."
   local migrate_td_json
-  migrate_td_json="$(render_new_taskdef "$migrate_td" "$APP_IMAGE_URI")"
+  migrate_td_json="$(render_new_taskdef "$migrate_td" "$APP_IMAGE_URI" "migrate")"
   local migrate_td_new
   migrate_td_new="$(aws ecs register-task-definition --cli-input-json "$migrate_td_json" --query 'taskDefinition.taskDefinitionArn' --output text)"
   if [[ -z "$migrate_td_new" || "$migrate_td_new" == "None" ]]; then
