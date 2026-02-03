@@ -27,6 +27,7 @@
     "load:upload-burst": "node scripts/load/upload-burst.js",
     "load:backlog-verifier": "node scripts/load/backlog-verifier.js",
     "smoke:remote": "tsx scripts/smoke_remote.ts",
+    "smoke:remote:ui": "tsx scripts/smoke_ui_remote.ts",
     "test:watch": "vitest",
     "lint": "echo 'add linter later'"
   },
