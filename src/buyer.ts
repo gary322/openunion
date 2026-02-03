@@ -445,7 +445,19 @@ export async function checkOrigin(id: string) {
   if (!row) return undefined;
 
   if (row.status === 'pending') {
-    const check = await verifyOriginProof({ origin: row.origin, method: row.method, token: row.token });
+    // DB column is stored as text; narrow for verifier contract (and treat unexpected values as a soft failure).
+    const method = row.method as Origin['method'];
+    if (method !== 'http_file' && method !== 'dns_txt' && method !== 'header') {
+      const updated = await db
+        .updateTable('origins')
+        .set({ status: 'pending', failure_reason: 'invalid verification method' })
+        .where('id', '=', id)
+        .returningAll()
+        .executeTakeFirstOrThrow();
+      return originFromRow(updated);
+    }
+
+    const check = await verifyOriginProof({ origin: row.origin, method, token: row.token });
     if (check.ok) {
       const updated = await db
         .updateTable('origins')
