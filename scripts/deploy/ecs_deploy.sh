@@ -137,7 +137,8 @@ run_migrations() {
 
   log "finding latest migrate task definition (family=${MIGRATE_TASK_FAMILY})..."
   local migrate_td
-  migrate_td="$(aws ecs list-task-definitions --family-prefix "$MIGRATE_TASK_FAMILY" --sort DESC --max-items 1 --query 'taskDefinitionArns[0]' --output text)"
+  # NOTE: awscli prints an extra "None" line for paginated text output; grab the first line only.
+  migrate_td="$(aws ecs list-task-definitions --family-prefix "$MIGRATE_TASK_FAMILY" --sort DESC --max-items 1 --query 'taskDefinitionArns[0]' --output text | head -n 1)"
   if [[ -z "$migrate_td" || "$migrate_td" == "None" ]]; then
     echo "[deploy] migrate task definition not found for family=${MIGRATE_TASK_FAMILY}" >&2
     exit 1
@@ -147,6 +148,9 @@ run_migrations() {
   log "registering migrate task definition revision with new app image..."
   local migrate_td_json
   migrate_td_json="$(render_new_taskdef "$migrate_td" "$APP_IMAGE_URI" "migrate")"
+  # Terraform's migrate task uses a stable command path. Our TS build outputs under dist/src/.
+  # Patch the command here to keep deploys working even if an older task def still points to dist/db/.
+  migrate_td_json="$(jq '(.containerDefinitions[] | select(.name=="migrate") | .command) = ["node","dist/src/db/migrate.js"]' <<<"$migrate_td_json")"
   local migrate_td_new
   migrate_td_new="$(aws ecs register-task-definition --cli-input-json "$migrate_td_json" --query 'taskDefinition.taskDefinitionArn' --output text)"
   if [[ -z "$migrate_td_new" || "$migrate_td_new" == "None" ]]; then
