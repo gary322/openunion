@@ -23,7 +23,7 @@ jobs:
           --health-retries 20
 
     env:
-      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/proofwork
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/proofwork
       STORAGE_BACKEND: local
       STORAGE_LOCAL_DIR: ./var/uploads
       PUBLIC_BASE_URL: http://localhost:3000
@@ -86,7 +86,7 @@ jobs:
           - 3310:3310
 
     env:
-      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/proofwork
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/proofwork
       BUYER_TOKEN_PEPPER: dev_pepper_change_me
       WORKER_TOKEN_PEPPER: dev_pepper_change_me
       SESSION_SECRET: dev_session_secret_change_me
@@ -165,7 +165,7 @@ jobs:
           --health-retries 20
 
     env:
-      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/proofwork
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/proofwork
       BUYER_TOKEN_PEPPER: dev_pepper_change_me
       WORKER_TOKEN_PEPPER: dev_pepper_change_me
       SESSION_SECRET: dev_session_secret_change_me
