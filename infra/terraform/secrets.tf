@@ -68,6 +68,14 @@ resource "aws_secretsmanager_secret_version" "admin_token_hash" {
   secret_string = var.admin_token_hash
 }
 
+resource "aws_secretsmanager_secret" "admin_token" {
+  name = "${local.name}/ADMIN_TOKEN"
+}
+resource "aws_secretsmanager_secret_version" "admin_token" {
+  secret_id     = aws_secretsmanager_secret.admin_token.id
+  secret_string = var.admin_token
+}
+
 resource "aws_secretsmanager_secret" "session_secret" {
   name = "${local.name}/SESSION_SECRET"
 }

@@ -252,6 +252,12 @@ variable "admin_token_hash" {
   sensitive = true
 }
 
+variable "admin_token" {
+  type        = string
+  sensitive   = true
+  description = "Admin bearer token preimage used by humans/tools to access /api/admin/*."
+}
+
 variable "session_secret" {
   type      = string
   sensitive = true

@@ -22,6 +22,7 @@ terraform apply \
   -var 'verifier_token_hash=...' \
   -var 'verifier_token=...' \
   -var 'admin_token_hash=...' \
+  -var 'admin_token=...' \
   -var 'session_secret=...'
 ```
 
