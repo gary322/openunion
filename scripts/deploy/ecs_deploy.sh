@@ -110,7 +110,9 @@ deploy_service() {
 }
 
 run_migrations() {
-  if [[ "${SKIP_MIGRATIONS,,}" == "true" || "${SKIP_MIGRATIONS,,}" == "1" ]]; then
+  local skip
+  skip="$(printf '%s' "${SKIP_MIGRATIONS}" | tr '[:upper:]' '[:lower:]')"
+  if [[ "$skip" == "true" || "$skip" == "1" ]]; then
     log "SKIP_MIGRATIONS=true; skipping migrate task"
     return
   fi
