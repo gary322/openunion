@@ -21,8 +21,9 @@ env:
   ACCOUNT_ID: "542672133063"
   ECR_APP_REPO: 542672133063.dkr.ecr.us-east-1.amazonaws.com/proofwork
   ECR_VERIFIER_REPO: 542672133063.dkr.ecr.us-east-1.amazonaws.com/proofwork-verifier-gateway
-  STAGING_BASE_URL: http://34.227.117.192
-  PROD_BASE_URL: http://3.95.152.254
+  # Prefer stable ALB DNS names over instance/Elastic IPs (IPs can change; some IPs may be closed).
+  STAGING_BASE_URL: http://proofwork-staging-alb-1837483526.us-east-1.elb.amazonaws.com
+  PROD_BASE_URL: http://proofwork-prod-alb-1387116481.us-east-1.elb.amazonaws.com
   STAGING_ROLE_ARN: arn:aws:iam::542672133063:role/openunion-github-staging-deploy
   PROD_ROLE_ARN: arn:aws:iam::542672133063:role/openunion-github-prod-deploy
 
