@@ -31,7 +31,12 @@ jobs:
     name: Build + Push Images
     runs-on: ubuntu-latest
     environment: staging
-    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') }}
+    # Safety: only deploy from main. workflow_run is already main-scoped; workflow_dispatch must also be main.
+    if: >-
+      ${{
+        (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
+        || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+      }}
     permissions:
       contents: read
       id-token: write
@@ -132,7 +137,8 @@ jobs:
     name: Deploy Production + Smoke
     runs-on: ubuntu-latest
     needs: [deploy_staging, build_and_push]
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy_production == 'true' }}
+    # Safety: production deploys must come from main and require explicit workflow_dispatch input.
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.deploy_production == 'true' }}
     environment: production
     permissions:
       contents: read
