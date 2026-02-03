@@ -22,15 +22,30 @@ export async function runVerifierGateway(input: {
   submission: any;
 }): Promise<VerifierGatewayResult> {
   const url = requireGatewayUrl();
+  const timeoutMs = Number(process.env.VERIFIER_GATEWAY_TIMEOUT_MS ?? 30_000);
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), Number.isFinite(timeoutMs) ? timeoutMs : 30_000);
 
-  const resp = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(process.env.VERIFIER_GATEWAY_AUTH_HEADER ? { Authorization: process.env.VERIFIER_GATEWAY_AUTH_HEADER } : {}),
-    },
-    body: JSON.stringify(input),
-  });
+  let resp: Response;
+  try {
+    resp = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(process.env.VERIFIER_GATEWAY_AUTH_HEADER ? { Authorization: process.env.VERIFIER_GATEWAY_AUTH_HEADER } : {}),
+      },
+      body: JSON.stringify(input),
+      signal: controller.signal,
+    });
+  } catch (err: any) {
+    const name = String(err?.name ?? '');
+    if (name.includes('Abort')) {
+      throw new Error('verifier_gateway_timeout');
+    }
+    throw err;
+  } finally {
+    clearTimeout(t);
+  }
 
   if (!resp.ok) {
     throw new Error(`verifier_gateway_failed:${resp.status}`);
@@ -68,4 +83,3 @@ export async function runVerifierGateway(input: {
     runMetadata: body?.runMetadata,
   };
 }
-

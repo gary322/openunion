@@ -24,6 +24,23 @@ import { inc } from '../src/metrics.js';
 
 const API_BASE_URL = (process.env.API_BASE_URL ?? 'http://localhost:3000').replace(/\/$/, '');
 const VERIFIER_TOKEN = process.env.VERIFIER_TOKEN ?? 'pw_vf_internal';
+const VERIFIER_API_TIMEOUT_MS = Number(process.env.VERIFIER_API_TIMEOUT_MS ?? 15_000);
+
+async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), Number.isFinite(timeoutMs) ? timeoutMs : 15_000);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } catch (err: any) {
+    const name = String(err?.name ?? '');
+    if (name.includes('Abort')) {
+      throw new Error('verifier_api_timeout');
+    }
+    throw err;
+  } finally {
+    clearTimeout(t);
+  }
+}
 
 export async function handleVerificationRequested(payload: any) {
   const submissionId = payload?.submissionId as string | undefined;
@@ -32,21 +49,25 @@ export async function handleVerificationRequested(payload: any) {
 
   const verifierInstanceId = process.env.VERIFIER_INSTANCE_ID ?? `verifier-${process.pid}`;
 
-  const claimResp = await fetch(`${API_BASE_URL}/api/verifier/claim`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${VERIFIER_TOKEN}`,
+  const claimResp = await fetchWithTimeout(
+    `${API_BASE_URL}/api/verifier/claim`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${VERIFIER_TOKEN}`,
+      },
+      body: JSON.stringify({
+        submissionId,
+        attemptNo,
+        messageId: `msg_${Date.now()}`,
+        idempotencyKey: `idem_${submissionId}_${attemptNo}`,
+        verifierInstanceId,
+        claimTtlSec: 600,
+      }),
     },
-    body: JSON.stringify({
-      submissionId,
-      attemptNo,
-      messageId: `msg_${Date.now()}`,
-      idempotencyKey: `idem_${submissionId}_${attemptNo}`,
-      verifierInstanceId,
-      claimTtlSec: 600,
-    }),
-  });
+    VERIFIER_API_TIMEOUT_MS
+  );
   if (!claimResp.ok) {
     throw new Error(`claim_failed:${claimResp.status}`);
   }
@@ -60,25 +81,29 @@ export async function handleVerificationRequested(payload: any) {
     submission: claim.submission,
   });
 
-  const verdictResp = await fetch(`${API_BASE_URL}/api/verifier/verdict`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${VERIFIER_TOKEN}`,
+  const verdictResp = await fetchWithTimeout(
+    `${API_BASE_URL}/api/verifier/verdict`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${VERIFIER_TOKEN}`,
+      },
+      body: JSON.stringify({
+        verificationId: claim.verificationId,
+        claimToken: claim.claimToken,
+        submissionId,
+        jobId: claim.jobSpec?.jobId,
+        attemptNo,
+        verdict: gateway.verdict,
+        reason: gateway.reason,
+        scorecard: gateway.scorecard,
+        evidenceArtifacts: gateway.evidenceArtifacts ?? claim.submission?.artifactIndex ?? [],
+        runMetadata: { worker: 'verification-runner', ...(gateway.runMetadata ?? {}) },
+      }),
     },
-    body: JSON.stringify({
-      verificationId: claim.verificationId,
-      claimToken: claim.claimToken,
-      submissionId,
-      jobId: claim.jobSpec?.jobId,
-      attemptNo,
-      verdict: gateway.verdict,
-      reason: gateway.reason,
-      scorecard: gateway.scorecard,
-      evidenceArtifacts: gateway.evidenceArtifacts ?? claim.submission?.artifactIndex ?? [],
-      runMetadata: { worker: 'verification-runner', ...(gateway.runMetadata ?? {}) },
-    }),
-  });
+    VERIFIER_API_TIMEOUT_MS
+  );
   if (!verdictResp.ok) {
     throw new Error(`verdict_failed:${verdictResp.status}`);
   }

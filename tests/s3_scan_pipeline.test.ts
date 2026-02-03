@@ -187,11 +187,10 @@ const enabled = process.env.RUN_S3_SCAN_TESTS === '1' && (process.env.STORAGE_BA
     expect(art.bucket_kind).toBe('quarantine');
 
     const dl = await request(app.server).get(`/api/artifacts/${upload.artifactId}/download`).set('Authorization', `Bearer ${token}`).send();
-    expect(dl.status).toBe(409);
+    expect(dl.status).toBe(422);
 
     // Object exists in quarantine bucket.
     const quarantineBucket = process.env.S3_BUCKET_QUARANTINE ?? 'proofwork-quarantine';
     await s3.send(new HeadObjectCommand({ Bucket: quarantineBucket, Key: art.storage_key as string }));
   });
 });
-

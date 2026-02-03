@@ -219,6 +219,14 @@ export function buildServer() {
     inc('requests_total', 1);
   });
 
+  function enforceHttpsForApi(): boolean {
+    // Default: enforce HTTPS for /api/* in production, unless explicitly disabled (router-mode / dev).
+    const raw = String(process.env.ENFORCE_HTTPS ?? '').trim().toLowerCase();
+    if (raw === 'false' || raw === '0' || raw === 'no') return false;
+    if (raw === 'true' || raw === '1' || raw === 'yes') return true;
+    return process.env.NODE_ENV === 'production';
+  }
+
   // CORS + HTTPS enforcement (production)
   app.addHook('onRequest', async (request: any, reply: any) => {
     const origin = request.headers['origin'] as string | undefined;
@@ -239,7 +247,7 @@ export function buildServer() {
       }
     }
 
-    if (process.env.NODE_ENV === 'production') {
+    if (enforceHttpsForApi()) {
       const proto = String(request.headers['x-forwarded-proto'] ?? '').split(',')[0].trim();
       if (request.url?.startsWith('/api') && !request.url.startsWith('/api/webhooks/') && proto && proto !== 'https') {
         reply.code(400).send({ error: { code: 'https_required', message: 'HTTPS required' } });
@@ -258,7 +266,14 @@ export function buildServer() {
     if (ct.includes('text/html')) {
       reply.header('content-security-policy', "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'");
     }
-    if (process.env.NODE_ENV === 'production') {
+    const proto = String((request as any)?.headers?.['x-forwarded-proto'] ?? '').split(',')[0].trim();
+    const debugHeaders = ['true', '1', 'yes'].includes(String(process.env.DEBUG_RESPONSE_HEADERS ?? '').trim().toLowerCase());
+    if (debugHeaders) {
+      reply.header('x-debug-x-forwarded-proto', proto || '(none)');
+      reply.header('x-debug-enforce-https', enforceHttpsForApi() ? '1' : '0');
+      reply.header('x-debug-node-env', String(process.env.NODE_ENV ?? ''));
+    }
+    if (process.env.NODE_ENV === 'production' && proto === 'https') {
       reply.header('strict-transport-security', 'max-age=31536000; includeSubDomains');
     }
     return payload;
@@ -465,8 +480,25 @@ export function buildServer() {
     const art = await getArtifactAccessInfo(artifactId);
     if (!art || art.deletedAt) return reply.code(404).send({ error: { code: 'not_found', message: 'artifact not found' } });
     if (!art.storageKey) return reply.code(409).send({ error: { code: 'not_ready', message: 'artifact missing storage key' } });
+    if (art.status === 'blocked') {
+      return reply.code(422).send({
+        error: {
+          code: 'blocked',
+          message: 'artifact blocked by scanner',
+          status: art.status,
+          scanReason: art.scanReason ?? null,
+        },
+      });
+    }
     if (art.status !== 'scanned' && art.status !== 'accepted') {
-      return reply.code(409).send({ error: { code: 'not_ready', message: 'artifact not scanned yet' } });
+      return reply.code(409).send({
+        error: {
+          code: 'not_ready',
+          message: 'artifact not scanned yet',
+          status: art.status,
+          scanReason: art.scanReason ?? null,
+        },
+      });
     }
 
     // Authz
@@ -501,6 +533,48 @@ export function buildServer() {
     }
   });
 
+  // Artifact status (authorized). Useful for debugging scan backlog / blocked artifacts.
+  app.get('/api/artifacts/:artifactId', async (request: any, reply) => {
+    const auth = request.headers['authorization'];
+    const token = auth?.startsWith('Bearer ') ? auth.slice(7).trim() : undefined;
+    if (!token) return reply.code(401).send({ error: { code: 'unauthorized', message: 'Missing bearer token' } });
+
+    const isVerifier = VERIFIER_TOKEN_HASH ? hmacSha256Hex(token, VERIFIER_TOKEN_PEPPER) === VERIFIER_TOKEN_HASH : token === VERIFIER_TOKEN;
+    const isAdmin = ADMIN_TOKEN_HASH ? hmacSha256Hex(token, ADMIN_TOKEN_PEPPER) === ADMIN_TOKEN_HASH : token === ADMIN_TOKEN;
+
+    const worker = !isVerifier && !isAdmin ? await getWorkerByToken(token) : undefined;
+    const apiKey = !isVerifier && !isAdmin && !worker ? await getApiKey(token) : undefined;
+    if (!isVerifier && !isAdmin && !worker && !apiKey) {
+      return reply.code(401).send({ error: { code: 'unauthorized', message: 'Invalid token' } });
+    }
+
+    const artifactId = request.params.artifactId as string;
+    const art = await getArtifactAccessInfo(artifactId);
+    if (!art || art.deletedAt) return reply.code(404).send({ error: { code: 'not_found', message: 'artifact not found' } });
+
+    // Authz (mirror /download)
+    if (worker) {
+      if (!art.workerId || art.workerId !== worker.id) return reply.code(403).send({ error: { code: 'forbidden', message: 'forbidden' } });
+    } else if (apiKey) {
+      if (!art.orgId || art.orgId !== apiKey.orgId) return reply.code(403).send({ error: { code: 'forbidden', message: 'forbidden' } });
+    } else {
+      // admin/verifier allowed
+    }
+
+    return {
+      id: art.id,
+      status: art.status,
+      contentType: art.contentType,
+      sizeBytes: art.sizeBytes,
+      bucketKind: art.bucketKind,
+      scanEngine: art.scanEngine,
+      scanStartedAt: art.scanStartedAt,
+      scanFinishedAt: art.scanFinishedAt,
+      scanReason: art.scanReason,
+      // Note: never return storage keys here (internal).
+    };
+  });
+
   // Lease reaper endpoint (manual trigger for tests/ops)
   app.post('/api/internal/reap-leases', async () => {
     const expired = await reapExpiredLeases();
@@ -515,7 +589,16 @@ export function buildServer() {
     if (!user) return reply.code(401).send({ error: { code: 'unauthorized', message: 'invalid credentials' } });
     const { createSession } = await import('./auth/sessions.js');
     const sess = await createSession({ userId: user.id, orgId: user.orgId, role: user.role });
-    const secure = process.env.NODE_ENV === 'production';
+    const proto = String((request.headers as any)?.['x-forwarded-proto'] ?? '').split(',')[0].trim();
+    const secureEnv = String(process.env.SESSION_COOKIE_SECURE ?? '').trim().toLowerCase();
+    const secure =
+      secureEnv === 'true' || secureEnv === '1'
+        ? true
+        : secureEnv === 'false' || secureEnv === '0'
+          ? false
+          : process.env.NODE_ENV === 'production'
+            ? proto === 'https'
+            : false;
     reply.header('set-cookie', `pw_sess=${sess.cookieValue}; Path=/; HttpOnly; SameSite=Lax; ${secure ? 'Secure; ' : ''}Max-Age=${7 * 24 * 3600}`);
     return { ok: true, orgId: user.orgId, role: user.role, email: user.email, csrfToken: csrfToken(sess.csrfSecret) };
   });
@@ -1187,6 +1270,8 @@ export function buildServer() {
     const q = request.query || {};
     const capabilityTag =
       isTaskDescriptorEnabled() && typeof q.capability_tag === 'string' ? q.capability_tag : undefined;
+    const taskType =
+      isTaskDescriptorEnabled() && typeof q.task_type === 'string' ? q.task_type : undefined;
     const supportedCapabilityTags =
       isTaskDescriptorEnabled() && typeof q.capability_tags === 'string'
         ? q.capability_tags
@@ -1226,7 +1311,7 @@ export function buildServer() {
         return envelope('idle', [`Scanner backlog high (${Math.round(age)}s); wait and retry later.`], {}, {}, {});
       }
     }
-    const claimable = await findClaimableJob(worker, { capabilityTag, supportedCapabilityTags, minPayoutCents });
+    const claimable = await findClaimableJob(worker, { capabilityTag, supportedCapabilityTags, minPayoutCents, taskType });
     if (!claimable) {
       return envelope('idle', ['No jobs available right now. Reply HEARTBEAT_OK.'], {}, {}, {});
     }

@@ -3,8 +3,9 @@ resource "aws_secretsmanager_secret" "database_url" {
 }
 
 resource "aws_secretsmanager_secret_version" "database_url" {
-  secret_id     = aws_secretsmanager_secret.database_url.id
-  secret_string = "postgresql://${var.db_username}:${random_password.db.result}@${aws_db_instance.postgres.address}:5432/${var.db_name}"
+  secret_id = aws_secretsmanager_secret.database_url.id
+  # random_password can contain URL-reserved characters; URL-encode to keep DATABASE_URL parseable.
+  secret_string = "postgresql://${var.db_username}:${urlencode(random_password.db.result)}@${aws_db_instance.postgres.address}:5432/${var.db_name}"
 }
 
 resource "aws_secretsmanager_secret" "stripe_secret_key" {
@@ -74,4 +75,3 @@ resource "aws_secretsmanager_secret_version" "session_secret" {
   secret_id     = aws_secretsmanager_secret.session_secret.id
   secret_string = var.session_secret
 }
-

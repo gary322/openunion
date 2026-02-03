@@ -111,9 +111,24 @@ describe('Multi-tenant isolation', () => {
     const dlOrg2 = await request(app.server).get(`/api/artifacts/${artifactId}/download`).set('Authorization', `Bearer ${org2Token}`);
     expect(dlOrg2.status).toBe(200);
 
+    // Org2 buyer token can view artifact status.
+    const stOrg2 = await request(app.server).get(`/api/artifacts/${artifactId}`).set('Authorization', `Bearer ${org2Token}`);
+    expect(stOrg2.status).toBe(200);
+    expect(stOrg2.body?.id).toBe(artifactId);
+    expect(stOrg2.body?.status).toBe('scanned');
+
     // Org1 buyer token cannot download org2 artifact.
     const dlOrg1 = await request(app.server).get(`/api/artifacts/${artifactId}/download`).set('Authorization', `Bearer ${org1Token}`);
     expect(dlOrg1.status).toBe(403);
+
+    // Org1 buyer token cannot view org2 artifact status.
+    const stOrg1 = await request(app.server).get(`/api/artifacts/${artifactId}`).set('Authorization', `Bearer ${org1Token}`);
+    expect(stOrg1.status).toBe(403);
+
+    // Worker who uploaded can view artifact status.
+    const stWorker = await request(app.server).get(`/api/artifacts/${artifactId}`).set('Authorization', `Bearer ${workerToken}`);
+    expect(stWorker.status).toBe(200);
+    expect(stWorker.body?.status).toBe('scanned');
 
     await app.close();
   });

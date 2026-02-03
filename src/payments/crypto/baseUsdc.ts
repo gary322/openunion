@@ -26,11 +26,17 @@ export function computePayoutSplitCents(
   if (!Number.isFinite(proofworkFeeBps) || proofworkFeeBps < 0 || proofworkFeeBps > 10_000) throw new Error('invalid_proofwork_fee_bps');
   if (platformFeeBps + proofworkFeeBps > 10_000) throw new Error('fee_bps_sum_exceeds_100pct');
 
+  // Platform fee is taken from the gross bounty payout first. Proofwork's fee is taken from
+  // the amount that would otherwise go to the worker (i.e., after the platform cut).
   const platformFeeCents = Math.floor((grossCents * platformFeeBps) / 10_000);
-  const proofworkFeeCents = Math.floor((grossCents * proofworkFeeBps) / 10_000);
-  const total = platformFeeCents + proofworkFeeCents;
-  if (total > grossCents) throw new Error('fee_exceeds_gross');
-  return { platformFeeCents, proofworkFeeCents, netCents: grossCents - total };
+  const workerGrossCents = grossCents - platformFeeCents;
+  if (workerGrossCents < 0) throw new Error('fee_exceeds_gross');
+
+  const proofworkFeeCents = Math.floor((workerGrossCents * proofworkFeeBps) / 10_000);
+  const netCents = workerGrossCents - proofworkFeeCents;
+  if (netCents < 0) throw new Error('fee_exceeds_gross');
+
+  return { platformFeeCents, proofworkFeeCents, netCents };
 }
 
 export function centsToUsdcBaseUnits(cents: number): bigint {

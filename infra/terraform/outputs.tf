@@ -1,5 +1,26 @@
+output "public_url" {
+  value       = local.public_base_url
+  description = "Public base URL for the API (ALB DNS, CloudFront (router mode), router DNS, or explicit public_base_url)."
+}
+
 output "alb_dns_name" {
-  value = aws_lb.api.dns_name
+  value       = var.enable_alb ? aws_lb.api[0].dns_name : null
+  description = "ALB DNS name when enable_alb=true."
+}
+
+output "cloudfront_domain" {
+  value       = local.cloudfront_enabled ? aws_cloudfront_distribution.router[0].domain_name : null
+  description = "CloudFront distribution domain when enable_cloudfront=true and enable_router_instance=true."
+}
+
+output "router_public_ip" {
+  value       = var.enable_router_instance ? aws_eip.router[0].public_ip : null
+  description = "Router Elastic IP when enable_router_instance=true."
+}
+
+output "router_public_dns" {
+  value       = var.enable_router_instance ? aws_instance.router[0].public_dns : null
+  description = "Router EC2 public DNS (may change on replacement); prefer router_public_ip or public_url."
 }
 
 output "rds_endpoint" {
@@ -25,4 +46,3 @@ output "ecs_cluster_name" {
 output "migrate_task_definition_arn" {
   value = aws_ecs_task_definition.migrate.arn
 }
-

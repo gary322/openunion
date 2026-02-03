@@ -130,7 +130,7 @@ export async function renderPrometheusMetrics(): Promise<string> {
   out += promLine('proofwork_jobs_stale', Number(staleJobs.rows[0]?.c ?? 0));
 
   const scanAge = await pool.query<{ age: string | null }>(
-    "SELECT extract(epoch from (now() - min(created_at)))::text as age FROM artifacts WHERE status='uploaded'"
+    "SELECT extract(epoch from (now() - min(created_at)))::text as age FROM artifacts WHERE status IN ('uploaded','scan_failed')"
   );
   out += '# TYPE proofwork_artifact_scan_backlog_age_seconds gauge\n';
   out += promLine('proofwork_artifact_scan_backlog_age_seconds', Number(scanAge.rows[0]?.age ?? 0));

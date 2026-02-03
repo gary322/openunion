@@ -22,8 +22,10 @@ describe('Platform fee split', () => {
       proofworkFeeBps: 100, // 1%
     });
     expect(platformFeeCents).toBe(120);
-    expect(proofworkFeeCents).toBe(12);
-    expect(netCents).toBe(1068);
+    // Proofwork fee is taken from the worker portion (after the platform fee).
+    // gross=1200, platform=120 => worker gross=1080, proofwork=10 => net=1070.
+    expect(proofworkFeeCents).toBe(10);
+    expect(netCents).toBe(1070);
     expect(platformFeeCents + proofworkFeeCents + netCents).toBe(1200);
   });
 

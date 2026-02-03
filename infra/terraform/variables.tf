@@ -26,7 +26,37 @@ variable "image_uri" {
 variable "public_base_url" {
   type        = string
   default     = ""
-  description = "Public base URL for API (used in artifact finalUrl), e.g. https://api.example.com. If empty, defaults to the created ALB DNS name (http://...)."
+  description = "Public base URL for API (used in artifact finalUrl), e.g. https://api.example.com. If empty, defaults to the created ALB DNS name (http://...) when enable_alb=true, or the router instance DNS when enable_router_instance=true."
+}
+
+variable "enable_alb" {
+  type        = bool
+  default     = true
+  description = "Whether to create an AWS ALB in front of the API service. Some AWS accounts may be restricted from creating ELB/ALB."
+}
+
+variable "enable_router_instance" {
+  type        = bool
+  default     = false
+  description = "Fallback when enable_alb=false: create a small EC2 reverse-proxy (nginx) that forwards to the internal ECS service discovery name, avoiding ALB."
+}
+
+variable "enable_cloudfront" {
+  type        = bool
+  default     = false
+  description = "When enable_router_instance=true, optionally create a CloudFront distribution to provide HTTPS and a stable public endpoint."
+}
+
+variable "cloudfront_price_class" {
+  type        = string
+  default     = "PriceClass_100"
+  description = "CloudFront price class when enable_cloudfront=true."
+}
+
+variable "router_instance_type" {
+  type        = string
+  default     = "t3.micro"
+  description = "Instance type for the optional router reverse-proxy."
 }
 
 variable "vpc_id" {
@@ -111,6 +141,12 @@ variable "desired_count_api" {
 variable "desired_count_workers" {
   type    = number
   default = 1
+}
+
+variable "payments_provider" {
+  type        = string
+  default     = "mock"
+  description = "Payment provider for payout worker: mock|http|crypto_base_usdc|crypto_evm_local. Use mock for staging if you don't have on-chain payout config yet."
 }
 
 variable "verifier_gateway_image_uri" {
@@ -225,6 +261,12 @@ variable "cors_allow_origins" {
   type        = string
   default     = ""
   description = "Comma-separated list of allowed CORS origins for the API."
+}
+
+variable "debug_response_headers" {
+  type        = bool
+  default     = false
+  description = "If true, the API will include x-debug-* headers (staging only; do not enable in production)."
 }
 
 variable "platform_fee_bps" {

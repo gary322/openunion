@@ -31,6 +31,7 @@ data "aws_iam_policy_document" "execution_secrets" {
       aws_secretsmanager_secret.worker_token_pepper.arn,
       aws_secretsmanager_secret.buyer_token_pepper.arn,
       aws_secretsmanager_secret.verifier_token_hash.arn,
+      aws_secretsmanager_secret.verifier_token.arn,
       aws_secretsmanager_secret.admin_token_hash.arn,
       aws_secretsmanager_secret.session_secret.arn
     ]
@@ -61,6 +62,7 @@ data "aws_iam_policy_document" "task_policy" {
       aws_secretsmanager_secret.worker_token_pepper.arn,
       aws_secretsmanager_secret.buyer_token_pepper.arn,
       aws_secretsmanager_secret.verifier_token_hash.arn,
+      aws_secretsmanager_secret.verifier_token.arn,
       aws_secretsmanager_secret.admin_token_hash.arn,
       aws_secretsmanager_secret.session_secret.arn
     ]
@@ -89,4 +91,3 @@ resource "aws_iam_role_policy" "task_inline" {
   role   = aws_iam_role.task.id
   policy = data.aws_iam_policy_document.task_policy.json
 }
-

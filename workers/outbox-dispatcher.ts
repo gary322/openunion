@@ -10,12 +10,13 @@ import {
   handleArtifactScanRequested,
   handlePayoutConfirmRequested,
   handlePayoutRequested,
-  handleVerificationRequested,
 } from './handlers.js';
 import { startWorkerHealthServer } from './health.js';
 
 const workerId = process.env.WORKER_ID ?? `outbox-dispatcher-${process.pid}`;
-const topics = ['verification.requested', 'payout.requested', 'payout.confirm.requested', 'artifact.scan.requested', 'artifact.delete.requested'];
+// NOTE: verification.requested is handled by the dedicated verification-runner so it can be
+// configured with VERIFIER_GATEWAY_URL and scaled independently.
+const topics = ['payout.requested', 'payout.confirm.requested', 'artifact.scan.requested', 'artifact.delete.requested'];
 
 (async () => {
   await runMigrations();
@@ -27,7 +28,6 @@ const topics = ['verification.requested', 'payout.requested', 'payout.confirm.re
     workerId,
     pollIntervalMs: 500,
     handler: async (evt) => {
-      if (evt.topic === 'verification.requested') return await handleVerificationRequested(evt.payload);
       if (evt.topic === 'payout.requested') return await handlePayoutRequested(evt.payload);
       if (evt.topic === 'payout.confirm.requested') return await handlePayoutConfirmRequested(evt.payload);
       if (evt.topic === 'artifact.scan.requested') return await handleArtifactScanRequested(evt.payload);
@@ -39,4 +39,3 @@ const topics = ['verification.requested', 'payout.requested', 'payout.confirm.re
   console.error(err);
   process.exitCode = 1;
 });
-

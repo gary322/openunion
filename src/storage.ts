@@ -479,6 +479,11 @@ export async function getArtifactAccessInfo(artifactId: string): Promise<
       storageKey: string | null;
       contentType: string | null;
       bucketKind: string | null;
+      scanEngine: string | null;
+      scanStartedAt: Date | null;
+      scanFinishedAt: Date | null;
+      scanReason: string | null;
+      sizeBytes: number | null;
       workerId: string | null;
       orgId: string | null;
     }
@@ -513,6 +518,11 @@ export async function getArtifactAccessInfo(artifactId: string): Promise<
     storageKey: artifact.storage_key ?? null,
     contentType: artifact.content_type ?? null,
     bucketKind: (artifact as any).bucket_kind ?? null,
+    scanEngine: (artifact as any).scan_engine ?? null,
+    scanStartedAt: (artifact as any).scan_started_at ?? null,
+    scanFinishedAt: (artifact as any).scan_finished_at ?? null,
+    scanReason: (artifact as any).scan_reason ?? null,
+    sizeBytes: (artifact as any).size_bytes ?? null,
     workerId: artifact.worker_id ?? null,
     orgId,
   };
@@ -569,6 +579,28 @@ async function deleteStorageObject(storageKey: string) {
     await s3Client().send(new DeleteObjectCommand({ Bucket: bucket, Key: storageKey }));
     return;
   }
+}
+
+function isDeterministicBlockReason(reason: string | undefined): boolean {
+  const r = String(reason ?? '').toLowerCase();
+  if (!r) return false;
+  // Deterministic blocks: malformed bytes for declared content-type, explicit infected verdicts,
+  // or other permanent policy failures.
+  if (r === 'empty_file') return true;
+  if (r.startsWith('content_type_mismatch_')) return true;
+  if (r.includes('infected')) return true;
+  if (r.includes('malware_detected')) return true;
+  return false;
+}
+
+function isScannerErrorReason(reason: string | undefined): boolean {
+  const r = String(reason ?? '').toLowerCase();
+  if (!r) return true;
+  // Treat scanner connectivity/timeouts/parsing as retryable (do not quarantine).
+  if (r.startsWith('clamd_') && !r.includes('infected')) return true;
+  if (r.startsWith('clamav_error')) return true;
+  if (r.startsWith('clamav_spawn_error')) return true;
+  return false;
 }
 
 export async function scanArtifactObject(artifactId: string) {
@@ -640,7 +672,28 @@ export async function scanArtifactObject(artifactId: string) {
       return;
     }
 
-    // Infected: move to quarantine.
+    const reason = scan.reason ?? 'scan_failed';
+    const deterministicBlock = isDeterministicBlockReason(reason);
+    const scannerError = isScannerErrorReason(reason);
+
+    // Scanner engine failures (timeouts/connection errors) must be retryable; do not quarantine.
+    if (!deterministicBlock && scannerError) {
+      await db
+        .updateTable('artifacts')
+        .set({
+          status: 'scan_failed',
+          bucket_kind: 'staging',
+          scan_engine: process.env.SCANNER_ENGINE ?? 'basic',
+          scan_finished_at: scanFinishedAt,
+          scan_reason: reason,
+          quarantine_key: null,
+        })
+        .where('id', '=', artifactId)
+        .execute();
+      throw new Error(reason);
+    }
+
+    // Permanent failure: move to quarantine and block.
     await s3Client().send(
       new CopyObjectCommand({
         Bucket: quarantineBucket,
@@ -659,23 +712,37 @@ export async function scanArtifactObject(artifactId: string) {
         bucket_kind: 'quarantine',
         scan_engine: process.env.SCANNER_ENGINE ?? 'basic',
         scan_finished_at: scanFinishedAt,
-        scan_reason: scan.reason ?? 'malware_detected',
+        scan_reason: reason,
         quarantine_key: row.storage_key,
       })
       .where('id', '=', artifactId)
       .execute();
-    throw new Error(scan.reason ?? 'malware_detected');
+    throw new Error(reason);
   }
 
   // Local backend: just mark scanned.
   if (!scan.ok) {
+    const reason = scan.reason ?? 'scan_failed';
+    const deterministicBlock = isDeterministicBlockReason(reason);
+    const scannerError = isScannerErrorReason(reason);
+
+    // Retryable scan engine error: keep the object and retry.
+    if (!deterministicBlock && scannerError) {
+      await db
+        .updateTable('artifacts')
+        .set({ status: 'scan_failed', scan_engine: process.env.SCANNER_ENGINE ?? 'basic', scan_finished_at: scanFinishedAt, scan_reason: reason })
+        .where('id', '=', artifactId)
+        .execute();
+      throw new Error(reason);
+    }
+
     await deleteStorageObject(row.storage_key);
     await db
       .updateTable('artifacts')
-      .set({ status: 'blocked', scan_engine: process.env.SCANNER_ENGINE ?? 'basic', scan_finished_at: scanFinishedAt, scan_reason: scan.reason ?? 'malware_detected' })
+      .set({ status: 'blocked', scan_engine: process.env.SCANNER_ENGINE ?? 'basic', scan_finished_at: scanFinishedAt, scan_reason: reason })
       .where('id', '=', artifactId)
       .execute();
-    throw new Error(scan.reason ?? 'malware_detected');
+    throw new Error(reason);
   }
 
   await db

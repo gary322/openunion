@@ -405,6 +405,66 @@ describe('Proofwork API happy path', () => {
     expect(match.body.state).toBe('claimable');
     expect(match.body.data.job.taskDescriptor.capability_tags).toContain('ffmpeg');
   });
+
+  it('supports task_type filter for universal workers (task_type query param)', async () => {
+    const app = buildServer();
+    await app.ready();
+
+    const keyResp = await request(app.server).post('/api/org/api-keys').send({ email: 'buyer@example.com', password: 'password', name: 'ci' });
+    const buyerToken = keyResp.body.token;
+
+    const bountyA = await request(app.server)
+      .post('/api/bounties')
+      .set('Authorization', `Bearer ${buyerToken}`)
+      .send({
+        title: 'Type A bounty',
+        description: 'type filter A',
+        allowedOrigins: ['https://example.com'],
+        payoutCents: 1000,
+        requiredProofs: 1,
+        fingerprintClassesRequired: ['desktop_us'],
+        taskDescriptor: { schema_version: 'v1', type: 'type_a', capability_tags: ['http'], input_spec: {}, output_spec: {} },
+      });
+    expect(bountyA.status).toBe(200);
+    await request(app.server).post(`/api/bounties/${bountyA.body.id}/publish`).set('Authorization', `Bearer ${buyerToken}`).send();
+
+    const bountyB = await request(app.server)
+      .post('/api/bounties')
+      .set('Authorization', `Bearer ${buyerToken}`)
+      .send({
+        title: 'Type B bounty',
+        description: 'type filter B',
+        allowedOrigins: ['https://example.com'],
+        payoutCents: 1000,
+        requiredProofs: 1,
+        fingerprintClassesRequired: ['desktop_us'],
+        taskDescriptor: { schema_version: 'v1', type: 'type_b', capability_tags: ['http'], input_spec: {}, output_spec: {} },
+      });
+    expect(bountyB.status).toBe(200);
+    await request(app.server).post(`/api/bounties/${bountyB.body.id}/publish`).set('Authorization', `Bearer ${buyerToken}`).send();
+
+    // Keep only these two bounties' jobs.
+    await pool.query('DELETE FROM jobs WHERE bounty_id NOT IN ($1, $2)', [bountyA.body.id, bountyB.body.id]);
+
+    const reg = await request(app.server).post('/api/workers/register').send({ displayName: 'type_filter', capabilities: { browser: true } });
+    const token = reg.body.token;
+
+    const nextA = await request(app.server)
+      .get('/api/jobs/next')
+      .query({ task_type: 'type_a', capability_tag: 'http' })
+      .set('Authorization', `Bearer ${token}`);
+    expect(nextA.status).toBe(200);
+    expect(nextA.body.state).toBe('claimable');
+    expect(nextA.body.data.job.taskDescriptor.type).toBe('type_a');
+
+    const nextB = await request(app.server)
+      .get('/api/jobs/next')
+      .query({ task_type: 'type_b', capability_tag: 'http' })
+      .set('Authorization', `Bearer ${token}`);
+    expect(nextB.status).toBe(200);
+    expect(nextB.body.state).toBe('claimable');
+    expect(nextB.body.data.job.taskDescriptor.type).toBe('type_b');
+  });
 });
 
 describe('Buyer bounty lifecycle', () => {

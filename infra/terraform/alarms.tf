@@ -3,6 +3,7 @@ locals {
 }
 
 resource "aws_cloudwatch_metric_alarm" "alb_target_5xx" {
+  count               = var.enable_alb ? 1 : 0
   alarm_name          = "${local.name}-alb-target-5xx"
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 5
@@ -14,7 +15,7 @@ resource "aws_cloudwatch_metric_alarm" "alb_target_5xx" {
   alarm_description   = "ALB target 5xx responses are elevated."
 
   dimensions = {
-    LoadBalancer = aws_lb.api.arn_suffix
+    LoadBalancer = aws_lb.api[0].arn_suffix
     TargetGroup  = aws_lb_target_group.api.arn_suffix
   }
 
@@ -23,6 +24,7 @@ resource "aws_cloudwatch_metric_alarm" "alb_target_5xx" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "alb_target_response_time" {
+  count               = var.enable_alb ? 1 : 0
   alarm_name          = "${local.name}-alb-latency"
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 5
@@ -34,7 +36,7 @@ resource "aws_cloudwatch_metric_alarm" "alb_target_response_time" {
   alarm_description   = "ALB target response time is elevated."
 
   dimensions = {
-    LoadBalancer = aws_lb.api.arn_suffix
+    LoadBalancer = aws_lb.api[0].arn_suffix
     TargetGroup  = aws_lb_target_group.api.arn_suffix
   }
 
@@ -99,4 +101,3 @@ resource "aws_cloudwatch_metric_alarm" "rds_free_storage_low" {
   alarm_actions = local.alarm_actions
   ok_actions    = local.alarm_actions
 }
-

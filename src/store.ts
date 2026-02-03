@@ -329,13 +329,13 @@ async function workerDuplicateRate(workerId: string, window = 100): Promise<numb
 
 export async function findClaimableJob(
   worker: Worker,
-  opts: { capabilityTag?: string; supportedCapabilityTags?: string[]; minPayoutCents?: number } = {}
+  opts: { capabilityTag?: string; supportedCapabilityTags?: string[]; minPayoutCents?: number; taskType?: string } = {}
 ): Promise<{ job: Job; bounty: Bounty } | undefined> {
   const now = new Date();
   const rep = await expectedPassRate(worker.id);
   const dupRate = await workerDuplicateRate(worker.id);
 
-  const candidates = await db
+  let q = db
     .selectFrom('jobs')
     .innerJoin('bounties', 'bounties.id', 'jobs.bounty_id')
     .select([
@@ -379,8 +379,19 @@ export async function findClaimableJob(
     .orderBy('bounties.priority', 'desc')
     .orderBy('bounties.payout_cents', 'desc')
     .orderBy('jobs.created_at', 'asc')
-    .limit(50)
-    .execute();
+    .limit(50);
+
+  if (opts.taskType) {
+    // When provided, restrict candidates to tasks with a matching descriptor type
+    // (either on the job override or the bounty default).
+    q = q.where(
+      sql<string>`coalesce(jobs.task_descriptor->>'type', bounties.task_descriptor->>'type')`,
+      '=',
+      opts.taskType
+    );
+  }
+
+  const candidates = await q.execute();
 
   let best: { score: number; job: Job; bounty: Bounty } | undefined;
 

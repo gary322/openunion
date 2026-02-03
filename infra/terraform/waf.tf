@@ -60,8 +60,7 @@ resource "aws_wafv2_web_acl" "alb" {
 }
 
 resource "aws_wafv2_web_acl_association" "alb" {
-  count        = var.enable_waf ? 1 : 0
-  resource_arn = aws_lb.api.arn
+  count        = var.enable_waf && var.enable_alb ? 1 : 0
+  resource_arn = aws_lb.api[0].arn
   web_acl_arn  = aws_wafv2_web_acl.alb[0].arn
 }
-

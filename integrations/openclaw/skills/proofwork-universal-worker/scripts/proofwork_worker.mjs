@@ -103,6 +103,69 @@ async function ensureWorkerToken() {
   return { token, workerId };
 }
 
+function rewriteArtifactFinalUrlToApiBase(finalUrl) {
+  // If PUBLIC_BASE_URL differs from this skill's configured API base URL, rewrite the origin
+  // for /api/artifacts/* URLs so we can poll scan readiness reliably.
+  try {
+    const u = new URL(String(finalUrl));
+    if (!u.pathname.startsWith("/api/artifacts/")) return String(finalUrl);
+    const api = new URL(API_BASE_URL);
+    u.protocol = api.protocol;
+    u.hostname = api.hostname;
+    u.port = api.port;
+    return u.toString();
+  } catch {
+    const s = String(finalUrl);
+    if (s.startsWith("/api/artifacts/")) return `${API_BASE_URL}${s}`;
+    return s;
+  }
+}
+
+async function waitForArtifactScanned({ token, finalUrl }) {
+  const url = rewriteArtifactFinalUrlToApiBase(finalUrl);
+  const headers = { Authorization: `Bearer ${token}` };
+  const debug =
+    String(process.env.PROOFWORK_ARTIFACT_WAIT_DEBUG ?? process.env.ARTIFACT_WAIT_DEBUG ?? "")
+      .trim()
+      .toLowerCase() === "true" ||
+    String(process.env.PROOFWORK_ARTIFACT_WAIT_DEBUG ?? process.env.ARTIFACT_WAIT_DEBUG ?? "")
+      .trim() === "1";
+  let lastStatus = null;
+  for (let i = 0; i < 300; i++) {
+    const resp = await fetch(url, { method: "GET", headers, redirect: "manual" });
+    // Avoid buffering large artifacts. For 422 we may read a small JSON body with scanReason.
+    if (resp.status !== 422) resp.body?.cancel?.();
+    if (debug && (lastStatus !== resp.status || i % 20 === 0)) {
+      console.log(`[artifact_wait] i=${i} status=${resp.status}`);
+      lastStatus = resp.status;
+    }
+    if (resp.status === 401 || resp.status === 403) throw new Error(`artifact_download_unauthorized:${resp.status}`);
+    if (resp.status === 422) {
+      let reason = "";
+      try {
+        const txt = await resp.text();
+        const json = txt ? JSON.parse(txt) : null;
+        reason = String(json?.error?.scanReason ?? json?.error?.reason ?? "");
+      } catch {
+        // ignore
+      }
+      throw new Error(`artifact_blocked${reason ? `:${reason}` : ""}`);
+    }
+    if (resp.status === 409) {
+      await sleep(1000);
+      continue;
+    }
+    if (resp.ok || (resp.status >= 300 && resp.status < 400)) return;
+    if (resp.status === 404) throw new Error("artifact_not_found");
+    if (resp.status === 429) {
+      await sleep(2000);
+      continue;
+    }
+    await sleep(1000);
+  }
+  throw new Error("artifact_scan_timeout");
+}
+
 async function uploadArtifact(input) {
   const presign = await apiFetch("/api/uploads/presign", {
     method: "POST",
@@ -163,6 +226,9 @@ async function uploadArtifact(input) {
     body: { artifactId: up.artifactId, sha256: sha, sizeBytes: input.bytes.byteLength },
   });
   if (!complete.resp.ok) throw new Error(`upload_complete_failed:${complete.resp.status}`);
+
+  // S3 backend scans asynchronously; wait until download is available so submission can attach.
+  await waitForArtifactScanned({ token: input.token, finalUrl: up.finalUrl });
 
   return {
     kind: input.kind,
@@ -941,7 +1007,11 @@ async function submitJob(input) {
   });
   const text = await resp.text();
   const json = text ? JSON.parse(text) : null;
-  if (!resp.ok) throw new Error(`submit_failed:${resp.status}:${json?.error?.code ?? ""}`);
+  if (!resp.ok) {
+    const code = String(json?.error?.code ?? "");
+    const msg = String(json?.error?.message ?? "").slice(0, 200);
+    throw new Error(`submit_failed:${resp.status}:${code}:${msg}`);
+  }
   return json;
 }
 
@@ -958,6 +1028,8 @@ async function loop() {
   const { token, workerId } = await ensureWorkerToken();
   const supported = supportedCapabilityTags();
   const prefer = String(process.env.PROOFWORK_PREFER_CAPABILITY_TAG ?? "").trim() || undefined;
+  const requireTaskType =
+    String(process.env.PROOFWORK_REQUIRE_TASK_TYPE ?? process.env.REQUIRE_TASK_TYPE ?? "").trim() || undefined;
   const minPayoutCents = process.env.PROOFWORK_MIN_PAYOUT_CENTS
     ? Number(process.env.PROOFWORK_MIN_PAYOUT_CENTS)
     : undefined;
@@ -968,6 +1040,7 @@ async function loop() {
       query: {
         capability_tags: supported.join(","),
         ...(prefer ? { capability_tag: prefer } : {}),
+        ...(requireTaskType ? { task_type: requireTaskType } : {}),
         ...(minPayoutCents ? { min_payout_cents: minPayoutCents } : {}),
       },
     });
@@ -1005,6 +1078,15 @@ async function loop() {
     const td = claimedJob?.taskDescriptor ?? {};
     const tags = Array.isArray(td?.capability_tags) ? td.capability_tags : [];
     const browserFlow = getBrowserFlowSpec(claimedJob);
+    const requiredArtifacts = Array.isArray(td?.output_spec?.required_artifacts)
+      ? td.output_spec.required_artifacts
+      : [];
+    const wantsHttpModule =
+      tags.includes("http") &&
+      (td?.output_spec?.http_response === true ||
+        requiredArtifacts.some(
+          (r) => r && typeof r === "object" && String(r.kind ?? "") === "log" && String(r.label ?? "") === "report_http",
+        ));
 
     const artifacts = [];
 
@@ -1027,8 +1109,10 @@ async function loop() {
       }
     }
 
-    const httpArt = await runHttpModule({ token, job: claimedJob });
-    if (httpArt) artifacts.push(httpArt);
+    if (wantsHttpModule) {
+      const httpArt = await runHttpModule({ token, job: claimedJob });
+      if (httpArt) artifacts.push(httpArt);
+    }
 
     const clipArt = await runFfmpegClipModule({ token, job: claimedJob });
     if (clipArt) artifacts.push(clipArt);

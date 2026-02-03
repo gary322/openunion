@@ -78,10 +78,27 @@ resource "aws_service_discovery_service" "verifier_gateway" {
 locals {
   api_internal_base = "http://api.${aws_service_discovery_private_dns_namespace.internal.name}:3000"
   verifier_url      = "http://verifier-gateway.${aws_service_discovery_private_dns_namespace.internal.name}:4010/run"
-  public_base_url   = var.public_base_url != "" ? var.public_base_url : "http://${aws_lb.api.dns_name}"
+  # PUBLIC_BASE_URL is used by the API to generate absolute artifact URLs.
+  # Prefer explicit var.public_base_url. Otherwise:
+  # - when enable_alb=true: use the ALB DNS name
+  # - when enable_router_instance=true: use the router EC2 public DNS
+  public_base_url = var.public_base_url != "" ? var.public_base_url : (
+    var.enable_alb ? (
+      var.acm_certificate_arn != "" ? "https://${aws_lb.api[0].dns_name}" : "http://${aws_lb.api[0].dns_name}"
+    ) : (
+      local.cloudfront_enabled ? "https://${aws_cloudfront_distribution.router[0].domain_name}" : (
+        var.enable_router_instance ? "http://${aws_eip.router[0].public_ip}" : ""
+      )
+    )
+  )
 
   common_env = [
     { name = "NODE_ENV", value = "production" },
+    # Router mode is HTTP-only (no ALB/CloudFront in some AWS accounts). Disable HTTPS enforcement
+    # at the app layer unless an ACM-backed ALB is configured.
+    { name = "ENFORCE_HTTPS", value = var.enable_alb && var.acm_certificate_arn != "" ? "true" : "false" },
+    { name = "DEBUG_RESPONSE_HEADERS", value = var.debug_response_headers ? "true" : "false" },
+    { name = "DB_SSL", value = "true" },
     { name = "PUBLIC_BASE_URL", value = local.public_base_url },
     { name = "STORAGE_BACKEND", value = "s3" },
     { name = "S3_REGION", value = var.aws_region },
@@ -160,10 +177,13 @@ resource "aws_ecs_service" "api" {
     assign_public_ip = var.ecs_assign_public_ip
   }
 
-  load_balancer {
-    target_group_arn = aws_lb_target_group.api.arn
-    container_name   = "api"
-    container_port   = 3000
+  dynamic "load_balancer" {
+    for_each = var.enable_alb ? [1] : []
+    content {
+      target_group_arn = aws_lb_target_group.api.arn
+      container_name   = "api"
+      container_port   = 3000
+    }
   }
 
   service_registries {
@@ -171,6 +191,8 @@ resource "aws_ecs_service" "api" {
     container_name = "api"
   }
 
+  # Keep a static depends_on so Terraform can order ALB listener creation ahead of the ECS service
+  # when enable_alb=true. When enable_alb=false, the listener resources have count=0 and this is a no-op.
   depends_on = [aws_lb_listener.http, aws_lb_listener.https]
 }
 
@@ -251,7 +273,7 @@ locals {
       log_group = aws_cloudwatch_log_group.payout.name
       extra_env = [
         { name = "PAYOUT_HEALTH_PORT", value = "9103" },
-        { name = "PAYMENTS_PROVIDER", value = "crypto_base_usdc" },
+        { name = "PAYMENTS_PROVIDER", value = var.payments_provider },
         { name = "API_BASE_URL", value = local.api_internal_base },
         { name = "KMS_PAYOUT_KEY_ID", value = aws_kms_key.payout_signer.key_id },
         { name = "BASE_RPC_URL", value = var.base_rpc_url },
@@ -382,7 +404,8 @@ resource "aws_ecs_task_definition" "migrate" {
       essential = true
       command   = ["node", "dist/db/migrate.js"]
       environment = [
-        { name = "NODE_ENV", value = "production" }
+        { name = "NODE_ENV", value = "production" },
+        { name = "DB_SSL", value = "true" }
       ]
       secrets = local.base_secrets
       logConfiguration = {

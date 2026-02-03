@@ -172,10 +172,12 @@ describe('Crypto payout E2E (local chain)', () => {
     const payoutRow = await db.selectFrom('payouts').selectAll().where('id', '=', payout.id).executeTakeFirstOrThrow();
     expect(payoutRow.status).toBe('paid');
     expect(payoutRow.amount_cents).toBe(1200);
-    expect(payoutRow.net_amount_cents).toBe(1068);
+    // Platform fee is taken from gross first; Proofwork fee is taken from the worker portion.
+    // gross=1200, platform=120 => worker gross=1080, proofwork=10 => net=1070.
+    expect(payoutRow.net_amount_cents).toBe(1070);
     expect(payoutRow.platform_fee_cents).toBe(120);
     expect(payoutRow.platform_fee_wallet_address).toBe(platformWallet.address);
-    expect((payoutRow as any).proofwork_fee_cents).toBe(12);
+    expect((payoutRow as any).proofwork_fee_cents).toBe(10);
     expect((payoutRow as any).proofwork_fee_wallet_address).toBe(proofworkWallet.address);
 
     const transfers = await db.selectFrom('payout_transfers').selectAll().where('payout_id', '=', payout.id).orderBy('kind', 'asc').execute();
@@ -194,11 +196,11 @@ describe('Crypto payout E2E (local chain)', () => {
     const platformBal = (await usdc.balanceOf(platformWallet.address)) as bigint;
     const proofworkBal = (await usdc.balanceOf(proofworkWallet.address)) as bigint;
 
-    // 1068 cents => 10,680,000 base units.
+    // 1070 cents => 10,700,000 base units.
     // 120 cents => 1,200,000 base units.
-    // 12 cents => 120,000 base units.
-    expect(workerBal).toBe(10_680_000n);
+    // 10 cents => 100,000 base units.
+    expect(workerBal).toBe(10_700_000n);
     expect(platformBal).toBe(1_200_000n);
-    expect(proofworkBal).toBe(120_000n);
+    expect(proofworkBal).toBe(100_000n);
   });
 });

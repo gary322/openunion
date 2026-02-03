@@ -147,8 +147,12 @@ export async function runOutboxLoop(input: {
         await markOutboxSent(evt.id);
       } catch (err) {
         const attemptNo = Number(evt.attempts ?? 1);
+        const msg = err instanceof Error ? err.message : String(err);
+        // Log only stable identifiers + a truncated error string; do not dump payloads.
+        console.error(`[outbox] handler_failed topic=${evt.topic} id=${evt.id} attempt=${attemptNo} err=${msg.slice(0, 500)}`);
         if (attemptNo >= MAX_OUTBOX_ATTEMPTS) {
           await markOutboxDead({ id: evt.id, error: err });
+          console.error(`[outbox] deadletter topic=${evt.topic} id=${evt.id} attempts=${attemptNo}`);
           continue;
         }
         await rescheduleOutbox({ id: evt.id, error: err, delaySec: backoffSeconds(attemptNo) });
@@ -156,4 +160,3 @@ export async function runOutboxLoop(input: {
     }
   }
 }
-

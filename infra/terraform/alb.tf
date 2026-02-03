@@ -47,6 +47,26 @@ resource "aws_security_group_rule" "ecs_ingress_from_alb" {
   source_security_group_id = aws_security_group.alb.id
 }
 
+# Allow ECS tasks to reach each other over the internal service discovery names (api.*, verifier-gateway.*).
+# Without this, workers cannot call the API or verifier-gateway via Cloud Map and verification will deadletter.
+resource "aws_security_group_rule" "ecs_ingress_from_self_api" {
+  type                     = "ingress"
+  security_group_id        = aws_security_group.ecs_tasks.id
+  from_port                = 3000
+  to_port                  = 3000
+  protocol                 = "tcp"
+  source_security_group_id = aws_security_group.ecs_tasks.id
+}
+
+resource "aws_security_group_rule" "ecs_ingress_from_self_verifier_gateway" {
+  type                     = "ingress"
+  security_group_id        = aws_security_group.ecs_tasks.id
+  from_port                = 4010
+  to_port                  = 4010
+  protocol                 = "tcp"
+  source_security_group_id = aws_security_group.ecs_tasks.id
+}
+
 resource "aws_security_group_rule" "ecs_egress" {
   type              = "egress"
   security_group_id = aws_security_group.ecs_tasks.id
@@ -57,6 +77,7 @@ resource "aws_security_group_rule" "ecs_egress" {
 }
 
 resource "aws_lb" "api" {
+  count              = var.enable_alb ? 1 : 0
   name               = "${local.name}-alb"
   load_balancer_type = "application"
   security_groups    = [aws_security_group.alb.id]
@@ -81,7 +102,8 @@ resource "aws_lb_target_group" "api" {
 }
 
 resource "aws_lb_listener" "http" {
-  load_balancer_arn = aws_lb.api.arn
+  count             = var.enable_alb ? 1 : 0
+  load_balancer_arn = aws_lb.api[0].arn
   port              = 80
   protocol          = "HTTP"
 
@@ -107,8 +129,8 @@ resource "aws_lb_listener" "http" {
 }
 
 resource "aws_lb_listener" "https" {
-  count             = var.acm_certificate_arn != "" ? 1 : 0
-  load_balancer_arn = aws_lb.api.arn
+  count             = var.enable_alb && var.acm_certificate_arn != "" ? 1 : 0
+  load_balancer_arn = aws_lb.api[0].arn
   port              = 443
   protocol          = "HTTPS"
   ssl_policy        = "ELBSecurityPolicy-TLS13-1-2-2021-06"
@@ -119,4 +141,3 @@ resource "aws_lb_listener" "https" {
     target_group_arn = aws_lb_target_group.api.arn
   }
 }
-

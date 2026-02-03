@@ -165,6 +165,73 @@ async function ensureWorkerToken(): Promise<{ token: string; workerId: string }>
   return { token, workerId };
 }
 
+function rewriteArtifactFinalUrlToApiBase(finalUrl: string): string {
+  // In some environments PUBLIC_BASE_URL can be misconfigured or derived from an internal host.
+  // If the URL targets this API's /api/artifacts/* endpoint, rewrite the origin to API_BASE_URL.
+  try {
+    const u = new URL(finalUrl);
+    if (!u.pathname.startsWith('/api/artifacts/')) return finalUrl;
+    const api = new URL(API_BASE_URL);
+    u.protocol = api.protocol;
+    u.hostname = api.hostname;
+    u.port = api.port;
+    return u.toString();
+  } catch {
+    if (finalUrl.startsWith('/api/artifacts/')) return `${API_BASE_URL}${finalUrl}`;
+    return finalUrl;
+  }
+}
+
+async function waitForArtifactScanned(input: { token: string; finalUrl: string }) {
+  const url = rewriteArtifactFinalUrlToApiBase(input.finalUrl);
+  const headers: Record<string, string> = { Authorization: `Bearer ${input.token}` };
+  const debug = envBool('ARTIFACT_WAIT_DEBUG', false);
+  let lastStatus: number | undefined;
+
+  // S3 backend is async-scanned: /api/artifacts/:id/download returns 409 until status is scanned/accepted.
+  for (let i = 0; i < 300; i++) {
+    const resp = await fetch(url, { method: 'GET', headers, redirect: 'manual' });
+    // Avoid buffering large artifacts in memory.
+    // Note: for blocked artifacts (422) we may read the small JSON body for the reason.
+    if (resp.status !== 422) resp.body?.cancel();
+
+    if (debug && (lastStatus !== resp.status || i % 20 === 0)) {
+      console.log(`[artifact_wait] i=${i} status=${resp.status}`);
+      lastStatus = resp.status;
+    }
+
+    if (resp.status === 401 || resp.status === 403) throw new Error(`artifact_download_unauthorized:${resp.status}`);
+    if (resp.status === 404) throw new Error('artifact_not_found');
+    if (resp.status === 422) {
+      // Blocked by scanner/quarantine. Include the reason if present.
+      let reason = '';
+      try {
+        const txt = await resp.text();
+        const json = txt ? JSON.parse(txt) : null;
+        reason = String(json?.error?.scanReason ?? json?.error?.reason ?? '');
+      } catch {
+        // ignore
+      }
+      throw new Error(`artifact_blocked${reason ? `:${reason}` : ''}`);
+    }
+
+    if (resp.status === 409) {
+      await sleep(1000);
+      continue;
+    }
+    if (resp.status === 429) {
+      // Respect the server-side per-route rate limit (default 60/min).
+      await sleep(2000);
+      continue;
+    }
+    // 200 (local proxy) or 3xx (presigned redirect) both indicate the artifact is ready.
+    if (resp.ok || (resp.status >= 300 && resp.status < 400)) return;
+    // Retry on transient failures.
+    await sleep(1000);
+  }
+  throw new Error('artifact_scan_timeout');
+}
+
 async function uploadArtifact(input: {
   token: string;
   jobId: string;
@@ -198,6 +265,10 @@ async function uploadArtifact(input: {
     body: { artifactId: up.artifactId, sha256: sha, sizeBytes: input.bytes.byteLength },
   });
   if (!complete.resp.ok) throw new Error(`upload_complete_failed:${complete.resp.status}`);
+
+  // For S3 backends, uploads are scanned asynchronously. Wait until the artifact becomes downloadable
+  // (i.e., scan completed) so /api/jobs/:jobId/submit can attach it deterministically.
+  await waitForArtifactScanned({ token: input.token, finalUrl: up.finalUrl });
 
   return {
     kind: input.kind,
@@ -764,7 +835,11 @@ async function submitJob(input: { token: string; workerId: string; job: any; art
   });
   const text = await resp.text();
   const json = text ? JSON.parse(text) : null;
-  if (!resp.ok) throw new Error(`submit_failed:${resp.status}:${json?.error?.code ?? ''}`);
+  if (!resp.ok) {
+    const code = String(json?.error?.code ?? '');
+    const msg = String(json?.error?.message ?? '').slice(0, 200);
+    throw new Error(`submit_failed:${resp.status}:${code}:${msg}`);
+  }
   return json;
 }
 
@@ -781,6 +856,7 @@ async function loop() {
   const { token, workerId } = await ensureWorkerToken();
   const supported = supportedCapabilityTags();
   const prefer = String(process.env.PREFER_CAPABILITY_TAG ?? '').trim() || undefined;
+  const requireTaskType = String(process.env.REQUIRE_TASK_TYPE ?? '').trim() || undefined;
   const minPayoutCents = process.env.MIN_PAYOUT_CENTS ? Number(process.env.MIN_PAYOUT_CENTS) : undefined;
 
   for (;;) {
@@ -789,6 +865,7 @@ async function loop() {
       query: {
         capability_tags: supported.join(','),
         ...(prefer ? { capability_tag: prefer } : {}),
+        ...(requireTaskType ? { task_type: requireTaskType } : {}),
         ...(minPayoutCents ? { min_payout_cents: minPayoutCents } : {}),
       },
     });
@@ -823,6 +900,11 @@ async function loop() {
     const td = claimedJob?.taskDescriptor ?? {};
     const tags: string[] = Array.isArray(td?.capability_tags) ? td.capability_tags : [];
     const browserFlow = getBrowserFlowSpec(claimedJob);
+    const requiredArtifacts: any[] = Array.isArray(td?.output_spec?.required_artifacts) ? td.output_spec.required_artifacts : [];
+    const wantsHttpModule =
+      tags.includes('http') &&
+      (td?.output_spec?.http_response === true ||
+        requiredArtifacts.some((r: any) => r && typeof r === 'object' && String(r.kind ?? '') === 'log' && String(r.label ?? '') === 'report_http'));
 
     const artifacts: ArtifactRef[] = [];
     let extracted: Record<string, any> = {};
@@ -835,8 +917,10 @@ async function loop() {
         artifacts.push(await runBrowserScreenshotModule({ token, job: claimedJob }));
       }
     }
-    const httpArt = await runHttpModule({ token, job: claimedJob });
-    if (httpArt) artifacts.push(httpArt);
+    if (wantsHttpModule) {
+      const httpArt = await runHttpModule({ token, job: claimedJob });
+      if (httpArt) artifacts.push(httpArt);
+    }
     const clipArt = await runFfmpegClipModule({ token, job: claimedJob });
     if (clipArt) artifacts.push(clipArt);
     const timelineArt = await runClipTimelineModule({ token, job: claimedJob });

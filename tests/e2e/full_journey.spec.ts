@@ -272,18 +272,20 @@ test('buyer → bounty → worker → upload → verify (gateway) → payout (lo
       )
       .then((r) => r.rows[0]);
     expect(paid.status).toBe('paid');
-    expect(paid.net_amount_cents).toBe(1780);
+    // Platform fee is taken from gross first; Proofwork fee is taken from the worker portion.
+    // gross=2000, platform=200 => worker gross=1800, proofwork=18 => net=1782.
+    expect(paid.net_amount_cents).toBe(1782);
     expect(paid.platform_fee_cents).toBe(200);
-    expect(paid.proofwork_fee_cents).toBe(20);
+    expect(paid.proofwork_fee_cents).toBe(18);
 
     // On-chain assertions: net to worker, fees to platform + proofwork.
     const usdcRead = new Contract(await usdc.getAddress(), ['function balanceOf(address) view returns (uint256)'], provider);
     const workerBal = (await usdcRead.balanceOf(workerWallet.address)) as bigint;
     const platformBal = (await usdcRead.balanceOf(platformWallet.address)) as bigint;
     const proofworkBal = (await usdcRead.balanceOf(proofworkWallet.address)) as bigint;
-    expect(workerBal).toBe(17_800_000n);
+    expect(workerBal).toBe(17_820_000n);
     expect(platformBal).toBe(2_000_000n);
-    expect(proofworkBal).toBe(200_000n);
+    expect(proofworkBal).toBe(180_000n);
   } finally {
     try {
       await pool?.end();
