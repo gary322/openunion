@@ -110,6 +110,99 @@ async function maybeGetArxivReferencesFromLlm(input: { idea: string }): Promise<
   }
 }
 
+function arxivApiBaseUrl(): string {
+  const env = String(process.env.ARXIV_API_BASE_URL ?? '').trim();
+  if (env) return env.replace(/\/$/, '');
+  return 'https://export.arxiv.org/api/query';
+}
+
+function arxivMaxResults(): number {
+  const raw = Number(process.env.ARXIV_MAX_RESULTS ?? 5);
+  if (!Number.isFinite(raw)) return 5;
+  return Math.max(1, Math.min(10, Math.floor(raw)));
+}
+
+function decodeXmlEntities(s: string): string {
+  return String(s)
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'");
+}
+
+function normalizeWs(s: string): string {
+  return String(s).replace(/\s+/g, ' ').trim();
+}
+
+function extractArxivId(raw: string): string | null {
+  let s = String(raw ?? '').trim();
+  if (!s) return null;
+
+  // Common forms:
+  // - http://arxiv.org/abs/2310.06825v1
+  // - https://arxiv.org/abs/hep-th/9901001v2
+  // - arxiv:2310.06825v1
+  // - 2310.06825v1
+  s = s.replace(/^arxiv:/i, '');
+  const mAbs = s.match(/\/abs\/([^?#]+)$/i);
+  const mPdf = s.match(/\/pdf\/([^?#]+)$/i);
+  if (mAbs?.[1]) s = mAbs[1];
+  else if (mPdf?.[1]) s = mPdf[1];
+  s = s.replace(/\.pdf$/i, '');
+  s = s.replace(/v\d+$/i, '');
+  s = s.trim();
+
+  if (!s) return null;
+  // New-style IDs: 2310.06825
+  if (/^\d{4}\.\d{4,5}$/.test(s)) return s;
+  // Old-style IDs: hep-th/9901001
+  if (/^[a-z-]+(\/[a-z-]+)*\/\d{7}$/i.test(s)) return s;
+  return null;
+}
+
+function parseArxivAtomFeed(xml: string): Array<{ id: string; title?: string }> {
+  const out: Array<{ id: string; title?: string }> = [];
+  const entries = String(xml).match(/<entry[\s>][\s\S]*?<\/entry>/gi) ?? [];
+  for (const entry of entries) {
+    const idMatch = entry.match(/<id>\s*([^<]+)\s*<\/id>/i);
+    const titleMatch = entry.match(/<title>\s*([\s\S]*?)\s*<\/title>/i);
+    const id = extractArxivId(idMatch?.[1] ?? '');
+    if (!id) continue;
+    const titleRaw = titleMatch?.[1] ? decodeXmlEntities(titleMatch[1]) : '';
+    const title = titleRaw ? normalizeWs(titleRaw) : undefined;
+    out.push({ id, title });
+  }
+  return out;
+}
+
+async function getArxivReferencesFromApi(input: { query: string }): Promise<Array<{ id: string; title?: string; url: string }>> {
+  const q = input.query.trim();
+  if (!q) return [];
+
+  const base = arxivApiBaseUrl();
+  const max = arxivMaxResults();
+  const ac = new AbortController();
+  const t = setTimeout(() => ac.abort(), 30_000);
+  t.unref?.();
+  try {
+    const url = new URL(base);
+    url.searchParams.set('search_query', `all:${q}`);
+    url.searchParams.set('start', '0');
+    url.searchParams.set('max_results', String(max));
+
+    const resp = await fetch(url.toString(), { method: 'GET', headers: { Accept: 'application/atom+xml' }, signal: ac.signal });
+    if (!resp.ok) return [];
+    const xml = await resp.text();
+    const parsed = parseArxivAtomFeed(xml).slice(0, max);
+    return parsed.map((p) => ({ id: `arxiv:${p.id}`, title: p.title, url: `https://arxiv.org/abs/${p.id}` }));
+  } catch {
+    return [];
+  } finally {
+    clearTimeout(t);
+  }
+}
+
 function supportedCapabilityTags(): string[] {
   // Keep ffmpeg opt-in; it requires ffmpeg/ffprobe to exist in the worker runtime.
   return (process.env.SUPPORTED_CAPABILITY_TAGS ?? 'browser,http,screenshot,llm_summarize')
@@ -722,6 +815,7 @@ async function runStructuredJsonOutputsModule(input: { token: string; job: any; 
   if (requiredOtherPrefixes.has('references') || outputSpec?.references === true || type.includes('arxiv')) {
     const idea = typeof inputSpec?.idea === 'string' ? inputSpec.idea : '';
     const llmRefs = type.includes('arxiv') ? await maybeGetArxivReferencesFromLlm({ idea }) : [];
+    const apiRefs = llmRefs.length === 0 && idea ? await getArxivReferencesFromApi({ query: idea }) : [];
     const extractedRefs = Array.isArray(extracted.references) ? extracted.references : null;
     await emit('references', {
       schema: 'references.v1',
@@ -730,9 +824,11 @@ async function runStructuredJsonOutputsModule(input: { token: string; job: any; 
       references:
         llmRefs.length > 0
           ? llmRefs
+          : apiRefs.length > 0
+            ? apiRefs
           : extractedRefs && extractedRefs.length
             ? extractedRefs
-            : [{ id: 'arxiv:0000.00000', title: 'Example paper', url: 'https://arxiv.org/abs/0000.00000' }],
+            : [],
     });
   }
 

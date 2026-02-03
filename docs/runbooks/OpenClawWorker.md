@@ -40,8 +40,9 @@ export OPENCLAW_THINKING="low"
 
 Optional (arXiv research quality):
 
-If you want `type=arxiv_*` jobs to produce **real arXiv references** (instead of the placeholder),
-install `llm` + `llm-arxiv` in the worker runtime and enable it:
+By default, the worker attempts to fetch real arXiv references via the arXiv API.
+If you want higher-quality, query-aware references (and you already run Python), you can also enable
+`llm` + `llm-arxiv`:
 
 ```bash
 # in the same environment as the worker script
@@ -51,6 +52,13 @@ llm install llm-arxiv
 export LLM_ARXIV_ENABLED="true"
 export LLM_ARXIV_MAX_RESULTS="5"
 export LLM_BIN="llm"
+```
+
+To override the arXiv API endpoint (for tests or mirrors):
+
+```bash
+export ARXIV_API_BASE_URL="https://export.arxiv.org/api/query"
+export ARXIV_MAX_RESULTS="5"
 ```
 
 ## Run

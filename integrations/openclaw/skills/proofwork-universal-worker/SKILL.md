@@ -62,7 +62,17 @@ export PROOFWORK_CANARY_PERCENT="10"
 
 4. (Optional) Better arXiv references:
 
-If you publish `type=arxiv_*` jobs and want real arXiv IDs/titles in `references.json`, install `llm` + `llm-arxiv` and enable:
+By default, the worker fetches real arXiv references via the arXiv API.
+
+You can override the API endpoint/results count (useful for tests or self-hosted mirrors):
+
+```bash
+export ARXIV_API_BASE_URL="https://export.arxiv.org/api/query"
+export ARXIV_MAX_RESULTS="5"
+```
+
+If you publish `type=arxiv_*` jobs and want more query-aware references (and you already run Python),
+install `llm` + `llm-arxiv` and enable:
 
 ```bash
 pip install llm llm-arxiv
