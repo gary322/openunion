@@ -190,6 +190,35 @@
         </div>
 
         <div class="card">
+          <h2>Quotas (safety caps)</h2>
+          <div class="sub">Optional spend and concurrency caps per org. Helps prevent runaway costs.</div>
+          <div class="row">
+            <div>
+              <label>Daily spend limit (cents, optional)</label>
+              <input id="quotaDailySpend" placeholder="e.g. 100000 (=$1000)" />
+            </div>
+            <div>
+              <label>Monthly spend limit (cents, optional)</label>
+              <input id="quotaMonthlySpend" placeholder="e.g. 1000000 (=$10k)" />
+            </div>
+          </div>
+          <div class="row">
+            <div>
+              <label>Max open jobs (optional)</label>
+              <input id="quotaMaxOpenJobs" placeholder="e.g. 100" />
+            </div>
+            <div></div>
+          </div>
+          <div class="btnrow">
+            <button id="btnGetQuotas">GET /api/org/quotas</button>
+            <button id="btnSetQuotas" class="primary">PUT /api/org/quotas</button>
+          </div>
+          <div id="quotaStatus" class="status"></div>
+          <label>Response</label>
+          <pre id="quotaOut">{}</pre>
+        </div>
+
+        <div class="card">
           <h2>Origins</h2>
           <label>Origin URL (must be absolute)</label>
           <input id="originUrl" value="https://example.com" />

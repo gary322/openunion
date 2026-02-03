@@ -269,6 +269,44 @@ async function onListPayouts() {
   setStatus('payoutStatusMsg', `ok (${json.payouts?.length ?? 0} payouts)`, 'good');
 }
 
+async function onPayoutMessage() {
+  setStatus('payoutAddrStatus', '', null);
+  const token = requireTokenUI();
+  const chain = $('payoutChain').value || 'base';
+  const address = $('payoutAddress').value.trim();
+  if (!address) {
+    setStatus('payoutAddrStatus', 'Missing payout address', 'bad');
+    return;
+  }
+
+  const { res, json } = await api('/api/worker/payout-address/message', { method: 'POST', token, body: { chain, address } });
+  $('payoutMessage').textContent = String(json?.message ?? '');
+  if (!res.ok) {
+    setStatus('payoutAddrStatus', `message failed (${res.status})`, 'bad');
+    return;
+  }
+  if (json?.address) $('payoutAddress').value = String(json.address);
+  setStatus('payoutAddrStatus', 'message ok (sign it and paste signature below)', 'good');
+}
+
+async function onSetPayoutAddress() {
+  setStatus('payoutAddrStatus', '', null);
+  const token = requireTokenUI();
+  const chain = $('payoutChain').value || 'base';
+  const address = $('payoutAddress').value.trim();
+  const signature = $('payoutSignature').value.trim();
+  if (!address) return setStatus('payoutAddrStatus', 'Missing payout address', 'bad');
+  if (!signature) return setStatus('payoutAddrStatus', 'Missing signature', 'bad');
+
+  const { res, json } = await api('/api/worker/payout-address', { method: 'POST', token, body: { chain, address, signature } });
+  if (!res.ok) {
+    $('payoutMessage').textContent = pretty(json);
+    setStatus('payoutAddrStatus', `verify failed (${res.status})`, 'bad');
+    return;
+  }
+  setStatus('payoutAddrStatus', 'verified', 'good');
+}
+
 $('btnRegister').addEventListener('click', () => onRegister().catch((e) => setStatus('authStatus', String(e), 'bad')));
 $('btnSaveToken').addEventListener('click', () => onSaveToken());
 $('btnMe').addEventListener('click', () => onMe().catch((e) => setStatus('authStatus', String(e), 'bad')));
@@ -276,6 +314,8 @@ $('btnNext').addEventListener('click', () => onNext().catch((e) => setStatus('jo
 $('btnClaim').addEventListener('click', () => onClaim().catch((e) => setStatus('jobStatus', String(e), 'bad')));
 $('btnUpload').addEventListener('click', () => onUpload().catch((e) => setStatus('uploadStatus', String(e), 'bad')));
 $('btnSubmit').addEventListener('click', () => onSubmit().catch((e) => setStatus('submitStatus', String(e), 'bad')));
+$('btnPayoutMessage').addEventListener('click', () => onPayoutMessage().catch((e) => setStatus('payoutAddrStatus', String(e), 'bad')));
+$('btnSetPayoutAddress').addEventListener('click', () => onSetPayoutAddress().catch((e) => setStatus('payoutAddrStatus', String(e), 'bad')));
 $('btnListPayouts').addEventListener('click', () => onListPayouts().catch((e) => setStatus('payoutStatusMsg', String(e), 'bad')));
 
 // Init

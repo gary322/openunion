@@ -8,6 +8,7 @@ import type {
   BillingAccountsTable,
   BillingEventsTable,
   BountyBudgetReservationsTable,
+  BlockedDomainsTable,
   JobsTable,
   OrgsTable,
   AppsTable,
@@ -23,6 +24,7 @@ import { sha256 } from './utils.js';
 import { normalizeOrigin, originAllowed } from './buyer.js';
 import { hmacSha256Hex } from './auth/tokens.js';
 import { computePayoutSplitCents, proofworkFeeBps } from './payments/crypto/baseUsdc.js';
+import { assertUrlNotBlocked, normalizeBlockedDomainInput } from './security/blockedDomains.js';
 import type { App, Bounty, Job, JobSpecResponse, Submission, Verification, Worker } from './types.js';
 
 const TOKEN_PREFIX_LEN = 12;
@@ -817,6 +819,8 @@ export async function createBounty(
 ): Promise<Bounty> {
   const id = nanoid(10);
   const allowedOrigins = input.allowedOrigins.map((o) => normalizeOrigin(o));
+  // Defense-in-depth: allowlisted origins must not be blocked by global policy.
+  await Promise.all(allowedOrigins.map((o) => assertUrlNotBlocked(o)));
   const defaultJourney = {
     startUrl: allowedOrigins[0] ?? 'about:blank',
     milestones: [],
@@ -871,6 +875,12 @@ export async function publishBounty(bountyId: string): Promise<Bounty> {
     const existing = await trx.selectFrom('bounties').selectAll().where('id', '=', bountyId).executeTakeFirst();
     if (!existing) throw new Error('Bounty not found');
 
+    const orgLimits = await trx
+      .selectFrom('orgs')
+      .select(['daily_spend_limit_cents', 'monthly_spend_limit_cents', 'max_open_jobs'])
+      .where('id', '=', existing.org_id)
+      .executeTakeFirst();
+
     // Reserve budget (idempotent per bounty).
     const fps = (existing.fingerprint_classes_json ?? []) as any;
     const jobCount = Array.isArray(fps) ? fps.length : 1;
@@ -902,6 +912,37 @@ export async function publishBounty(bountyId: string): Promise<Bounty> {
       .executeTakeFirst();
 
     if (!existingRes && reserveCents > 0) {
+      // Spend limits: best-effort guardrail for partner safety (in addition to balance checks).
+      const dailyLimit = orgLimits?.daily_spend_limit_cents ?? null;
+      if (dailyLimit !== null && dailyLimit !== undefined) {
+        const dayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0));
+        const row = await trx
+          .selectFrom('billing_events')
+          .select(({ fn }) => fn.coalesce(fn.sum<number>('amount_cents'), sql<number>`0`).as('s'))
+          .where('account_id', '=', account.id)
+          .where('event_type', 'in', ['bounty_budget_reserve', 'bounty_budget_release', 'dispute_refund'])
+          .where('created_at', '>=', dayStart)
+          .executeTakeFirstOrThrow();
+        const sum = Number((row as any).s ?? 0);
+        const spent = Math.max(0, -sum);
+        if (spent + reserveCents > Number(dailyLimit)) throw new Error('daily_spend_limit_exceeded');
+      }
+
+      const monthlyLimit = orgLimits?.monthly_spend_limit_cents ?? null;
+      if (monthlyLimit !== null && monthlyLimit !== undefined) {
+        const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0));
+        const row = await trx
+          .selectFrom('billing_events')
+          .select(({ fn }) => fn.coalesce(fn.sum<number>('amount_cents'), sql<number>`0`).as('s'))
+          .where('account_id', '=', account.id)
+          .where('event_type', 'in', ['bounty_budget_reserve', 'bounty_budget_release', 'dispute_refund'])
+          .where('created_at', '>=', monthStart)
+          .executeTakeFirstOrThrow();
+        const sum = Number((row as any).s ?? 0);
+        const spent = Math.max(0, -sum);
+        if (spent + reserveCents > Number(monthlyLimit)) throw new Error('monthly_spend_limit_exceeded');
+      }
+
       const debited = await trx
         .updateTable('billing_accounts')
         .set({
@@ -958,6 +999,19 @@ export async function publishBounty(bountyId: string): Promise<Bounty> {
     if (Number(existingJobs.c) === 0) {
       const fps2 = (updated.fingerprint_classes_json ?? []) as string[];
       if (fps2.length) {
+        const maxOpen = orgLimits?.max_open_jobs ?? null;
+        if (maxOpen !== null && maxOpen !== undefined) {
+          const openRow = await trx
+            .selectFrom('jobs')
+            .innerJoin('bounties', 'bounties.id', 'jobs.bounty_id')
+            .select(({ fn }) => fn.countAll<number>().as('c'))
+            .where('bounties.org_id', '=', existing.org_id)
+            .where('jobs.status', 'in', ['open', 'claimed', 'submitted', 'verifying'])
+            .executeTakeFirstOrThrow();
+          const openJobs = Number((openRow as any).c ?? 0);
+          if (openJobs + fps2.length > Number(maxOpen)) throw new Error('max_open_jobs_exceeded');
+        }
+
         await trx
           .insertInto('jobs')
           .values(
@@ -1240,6 +1294,7 @@ export async function resetStore() {
         'accepted_dedupe',
         'apps',
         'alarm_notifications',
+        'blocked_domains',
         'payouts',
         'payout_transfers',
         'crypto_nonces',
@@ -1593,6 +1648,62 @@ export async function adminSetAppStatus(appId: string, status: 'active' | 'disab
     .returningAll()
     .executeTakeFirst();
   return row ? appFromRow(row) : undefined;
+}
+
+export async function listBlockedDomainsAdmin(opts: { page?: number; limit?: number } = {}): Promise<{ rows: any[]; total: number }> {
+  const page = Math.max(1, Number(opts.page ?? 1));
+  const limit = Math.max(1, Math.min(200, Number(opts.limit ?? 50)));
+  const offset = (page - 1) * limit;
+
+  const base = db.selectFrom('blocked_domains');
+  const rows = await base.selectAll().orderBy('created_at', 'desc').offset(offset).limit(limit).execute();
+  const totalRow = await base.select(({ fn }) => fn.countAll<number>().as('c')).executeTakeFirst();
+
+  const mapped = rows.map((r: any) => ({
+    id: r.id,
+    domain: r.domain,
+    reason: r.reason ?? null,
+    createdAt: (r.created_at as Date).toISOString(),
+  }));
+  return { rows: mapped, total: Number(totalRow?.c ?? 0) };
+}
+
+export async function upsertBlockedDomainAdmin(input: { domain: string; reason?: string | null }): Promise<any> {
+  const domain = normalizeBlockedDomainInput(input.domain);
+  const id = nanoid(12);
+  const now = new Date();
+
+  // Upsert by domain (case-insensitive). Postgres cannot `ON CONFLICT` on the expression index
+  // we use for case-insensitive uniqueness, so handle the unique violation explicitly.
+  try {
+    const row = await db
+      .insertInto('blocked_domains')
+      .values({
+        id,
+        domain,
+        reason: input.reason ?? null,
+        created_at: now,
+      } satisfies Selectable<BlockedDomainsTable>)
+      .returningAll()
+      .executeTakeFirst();
+    if (!row) throw new Error('blocked_domain_upsert_failed');
+    return { id: row.id, domain: row.domain, reason: row.reason ?? null, createdAt: (row.created_at as Date).toISOString() };
+  } catch (err: any) {
+    if (String(err?.code ?? '') !== '23505') throw err;
+    const row = await db
+      .updateTable('blocked_domains')
+      .set({ reason: input.reason ?? null })
+      .where(sql<boolean>`lower(domain) = lower(${domain})`)
+      .returningAll()
+      .executeTakeFirst();
+    if (!row) throw new Error('blocked_domain_upsert_failed');
+    return { id: row.id, domain: row.domain, reason: row.reason ?? null, createdAt: (row.created_at as Date).toISOString() };
+  }
+}
+
+export async function deleteBlockedDomainAdmin(id: string): Promise<boolean> {
+  const row = await db.deleteFrom('blocked_domains').where('id', '=', id).returning(['id']).executeTakeFirst();
+  return Boolean(row?.id);
 }
 
 export async function insertAlarmNotification(input: {
@@ -2655,6 +2766,47 @@ export async function setOrgCorsAllowOrigins(orgId: string, origins: string[]): 
   if (!row) return undefined;
   const raw = (row as any).cors_allow_origins;
   return Array.isArray(raw) ? raw.filter((o: any) => typeof o === 'string' && o.length) : [];
+}
+
+export async function getOrgQuotaSettings(orgId: string): Promise<
+  | {
+      orgId: string;
+      dailySpendLimitCents: number | null;
+      monthlySpendLimitCents: number | null;
+      maxOpenJobs: number | null;
+    }
+  | undefined
+> {
+  const row = await db
+    .selectFrom('orgs')
+    .select(['id', 'daily_spend_limit_cents', 'monthly_spend_limit_cents', 'max_open_jobs'])
+    .where('id', '=', orgId)
+    .executeTakeFirst();
+  if (!row) return undefined;
+  return {
+    orgId: row.id,
+    dailySpendLimitCents: row.daily_spend_limit_cents ?? null,
+    monthlySpendLimitCents: row.monthly_spend_limit_cents ?? null,
+    maxOpenJobs: row.max_open_jobs ?? null,
+  };
+}
+
+export async function setOrgQuotaSettings(
+  orgId: string,
+  input: { dailySpendLimitCents?: number | null; monthlySpendLimitCents?: number | null; maxOpenJobs?: number | null }
+): Promise<{ orgId: string; dailySpendLimitCents: number | null; monthlySpendLimitCents: number | null; maxOpenJobs: number | null } | undefined> {
+  const patch: any = {};
+  if (Object.prototype.hasOwnProperty.call(input, 'dailySpendLimitCents')) patch.daily_spend_limit_cents = input.dailySpendLimitCents ?? null;
+  if (Object.prototype.hasOwnProperty.call(input, 'monthlySpendLimitCents')) patch.monthly_spend_limit_cents = input.monthlySpendLimitCents ?? null;
+  if (Object.prototype.hasOwnProperty.call(input, 'maxOpenJobs')) patch.max_open_jobs = input.maxOpenJobs ?? null;
+  const row = await db.updateTable('orgs').set(patch).where('id', '=', orgId).returning(['id', 'daily_spend_limit_cents', 'monthly_spend_limit_cents', 'max_open_jobs']).executeTakeFirst();
+  if (!row) return undefined;
+  return {
+    orgId: row.id,
+    dailySpendLimitCents: row.daily_spend_limit_cents ?? null,
+    monthlySpendLimitCents: row.monthly_spend_limit_cents ?? null,
+    maxOpenJobs: row.max_open_jobs ?? null,
+  };
 }
 
 export async function listAllCorsAllowOrigins(): Promise<string[]> {

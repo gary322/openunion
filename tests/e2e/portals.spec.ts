@@ -3,6 +3,7 @@ import { test, expect } from '@playwright/test';
 test('buyer portal loads', async ({ page }) => {
   await page.goto('/buyer/index.html');
   await expect(page.getByText('Buyer Portal', { exact: true })).toBeVisible();
+  await expect(page.getByText('Quotas (safety caps)', { exact: false })).toBeVisible();
 });
 
 test('worker portal loads', async ({ page }) => {

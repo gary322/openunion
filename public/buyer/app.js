@@ -179,6 +179,46 @@ async function onSetCorsAllowlist() {
   setStatus('corsStatus', 'saved', 'good');
 }
 
+function parseNullableIntInput(id) {
+  const raw = $(id).value.trim();
+  if (!raw) return null;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) return null;
+  return Math.floor(n);
+}
+
+async function onGetQuotas() {
+  setStatus('quotaStatus', '', null);
+  const token = $('buyerToken').value.trim();
+  const { res, json } = await api('/api/org/quotas', { method: 'GET', token: token || undefined });
+  $('quotaOut').textContent = pretty(json);
+  if (!res.ok) {
+    setStatus('quotaStatus', `load failed (${res.status})`, 'bad');
+    return;
+  }
+  $('quotaDailySpend').value = json.dailySpendLimitCents === null || json.dailySpendLimitCents === undefined ? '' : String(json.dailySpendLimitCents);
+  $('quotaMonthlySpend').value = json.monthlySpendLimitCents === null || json.monthlySpendLimitCents === undefined ? '' : String(json.monthlySpendLimitCents);
+  $('quotaMaxOpenJobs').value = json.maxOpenJobs === null || json.maxOpenJobs === undefined ? '' : String(json.maxOpenJobs);
+  setStatus('quotaStatus', 'ok', 'good');
+}
+
+async function onSetQuotas() {
+  setStatus('quotaStatus', '', null);
+  const token = $('buyerToken').value.trim();
+  const csrf = getCsrfToken();
+
+  const body = {
+    dailySpendLimitCents: parseNullableIntInput('quotaDailySpend'),
+    monthlySpendLimitCents: parseNullableIntInput('quotaMonthlySpend'),
+    maxOpenJobs: parseNullableIntInput('quotaMaxOpenJobs'),
+  };
+
+  const { res, json } = await api('/api/org/quotas', { method: 'PUT', token: token || undefined, csrf, body });
+  $('quotaOut').textContent = pretty(json);
+  if (!res.ok) return setStatus('quotaStatus', `save failed (${res.status})`, 'bad');
+  setStatus('quotaStatus', 'saved', 'good');
+}
+
 function onSaveToken() {
   const t = $('buyerToken').value.trim();
   if (!t) return setStatus('keyStatus', 'missing token', 'bad');
@@ -395,6 +435,9 @@ $('btnSetPlatformFee').addEventListener('click', () => onSetPlatformFee().catch(
 
 $('btnGetCors').addEventListener('click', () => onGetCorsAllowlist().catch((e) => setStatus('corsStatus', String(e), 'bad')));
 $('btnSetCors').addEventListener('click', () => onSetCorsAllowlist().catch((e) => setStatus('corsStatus', String(e), 'bad')));
+
+$('btnGetQuotas').addEventListener('click', () => onGetQuotas().catch((e) => setStatus('quotaStatus', String(e), 'bad')));
+$('btnSetQuotas').addEventListener('click', () => onSetQuotas().catch((e) => setStatus('quotaStatus', String(e), 'bad')));
 
 $('btnAddOrigin').addEventListener('click', () => onAddOrigin().catch((e) => setStatus('originStatus', String(e), 'bad')));
 $('btnListOrigins').addEventListener('click', () => onListOrigins().catch((e) => setStatus('originStatus', String(e), 'bad')));

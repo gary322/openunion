@@ -109,6 +109,11 @@ export const workerPayoutAddressSchema = z.object({
   signature: z.string(),
 });
 
+export const workerPayoutAddressMessageSchema = z.object({
+  chain: z.enum(['base']),
+  address: z.string(),
+});
+
 export const verifierClaimSchema = z.object({
   submissionId: z.string(),
   attemptNo: z.number().int().min(1),
@@ -146,6 +151,12 @@ export const orgPlatformFeeSchema = z.object({
 
 export const orgCorsAllowlistSchema = z.object({
   origins: z.array(z.string().min(1).max(300)).max(100),
+});
+
+export const orgQuotasSchema = z.object({
+  dailySpendLimitCents: z.number().int().min(0).nullable().optional(),
+  monthlySpendLimitCents: z.number().int().min(0).nullable().optional(),
+  maxOpenJobs: z.number().int().min(0).nullable().optional(),
 });
 
 export const orgRegisterSchema = z.object({
@@ -203,5 +214,14 @@ export const adminPayoutMarkSchema = z.object({
   status: z.enum(['paid', 'failed', 'refunded']),
   provider: z.string().max(120).optional().nullable(),
   providerRef: z.string().max(500).optional().nullable(),
+  reason: z.string().min(3).max(2000),
+});
+
+export const blockedDomainCreateSchema = z.object({
+  domain: z.string().min(1).max(200),
+  reason: z.string().min(1).max(2000).optional().nullable(),
+});
+
+export const adminArtifactQuarantineSchema = z.object({
   reason: z.string().min(3).max(2000),
 });

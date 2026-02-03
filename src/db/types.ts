@@ -149,6 +149,7 @@ export interface OrgApiKeysTable {
   key_prefix: string;
   key_hash: string;
   revoked_at: Timestamp | null;
+  last_used_at: Timestamp | null;
   created_at: Timestamp;
 }
 
@@ -161,6 +162,13 @@ export interface OriginsTable {
   token: string;
   verified_at: Timestamp | null;
   failure_reason: string | null;
+  created_at: Timestamp;
+}
+
+export interface BlockedDomainsTable {
+  id: string;
+  domain: string;
+  reason: string | null;
   created_at: Timestamp;
 }
 
@@ -389,6 +397,7 @@ export interface DB {
   orgs: OrgsTable;
   apps: AppsTable;
   alarm_notifications: AlarmNotificationsTable;
+  blocked_domains: BlockedDomainsTable;
   bounties: BountiesTable;
   jobs: JobsTable;
   submissions: SubmissionsTable;
