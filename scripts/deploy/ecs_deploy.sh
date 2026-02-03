@@ -133,9 +133,20 @@ run_migrations() {
     exit 1
   fi
 
-  log "running migrate task ($migrate_td)..."
+  # Ensure migrations run from the *new* app image (so new SQL files are present in the container).
+  log "registering migrate task definition revision with new app image..."
+  local migrate_td_json
+  migrate_td_json="$(render_new_taskdef "$migrate_td" "$APP_IMAGE_URI")"
+  local migrate_td_new
+  migrate_td_new="$(aws ecs register-task-definition --cli-input-json "$migrate_td_json" --query 'taskDefinition.taskDefinitionArn' --output text)"
+  if [[ -z "$migrate_td_new" || "$migrate_td_new" == "None" ]]; then
+    echo "[deploy] failed to register migrate task definition revision" >&2
+    exit 1
+  fi
+
+  log "running migrate task ($migrate_td_new)..."
   local task_arn
-  task_arn="$(aws ecs run-task --cluster "$CLUSTER" --launch-type FARGATE --task-definition "$migrate_td" --network-configuration "$net" --count 1 --query 'tasks[0].taskArn' --output text)"
+  task_arn="$(aws ecs run-task --cluster "$CLUSTER" --launch-type FARGATE --task-definition "$migrate_td_new" --network-configuration "$net" --count 1 --query 'tasks[0].taskArn' --output text)"
   if [[ -z "$task_arn" || "$task_arn" == "None" ]]; then
     echo "[deploy] run-task returned empty taskArn for migrate" >&2
     exit 1
@@ -186,4 +197,3 @@ main() {
 }
 
 main "$@"
-
