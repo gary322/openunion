@@ -52,6 +52,9 @@ export async function renderPrometheusMetrics(): Promise<string> {
   out += '# TYPE proofwork_artifact_blocked_total counter\n';
   out += promLine('proofwork_artifact_blocked_total', counters.get('artifact_blocked_total') ?? 0);
 
+  out += '# TYPE proofwork_alarm_notifications_ingested_total counter\n';
+  out += promLine('proofwork_alarm_notifications_ingested_total', counters.get('alarm_notifications_ingested_total') ?? 0);
+
   out += '# TYPE proofwork_platform_fee_cents_total counter\n';
   out += promLine('proofwork_platform_fee_cents_total', counters.get('platform_fee_cents_total') ?? 0);
 

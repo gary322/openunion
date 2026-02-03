@@ -198,3 +198,10 @@ export const disputeResolveSchema = z.object({
 export const adminAppStatusSchema = z.object({
   status: z.enum(['active', 'disabled']),
 });
+
+export const adminPayoutMarkSchema = z.object({
+  status: z.enum(['paid', 'failed', 'refunded']),
+  provider: z.string().max(120).optional().nullable(),
+  providerRef: z.string().max(500).optional().nullable(),
+  reason: z.string().min(3).max(2000),
+});

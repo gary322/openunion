@@ -37,6 +37,11 @@ resource "aws_cloudwatch_log_group" "retention" {
   retention_in_days = 14
 }
 
+resource "aws_cloudwatch_log_group" "alarm_inbox" {
+  name              = "/ecs/${local.name}/alarm-inbox"
+  retention_in_days = 14
+}
+
 resource "aws_service_discovery_private_dns_namespace" "internal" {
   name        = "${local.name}.local"
   description = "Internal service discovery"
@@ -255,65 +260,80 @@ resource "aws_ecs_service" "verifier_gateway" {
 }
 
 locals {
-  worker_defs = {
-    outbox = {
-      command         = ["node", "dist/workers/outbox-dispatcher.js"]
-      log_group       = aws_cloudwatch_log_group.outbox.name
-      extra_env       = [{ name = "OUTBOX_HEALTH_PORT", value = "9101" }]
-      extra_secrets   = []
-      health_port_env = "OUTBOX_HEALTH_PORT"
-    }
-    verification = {
-      command         = ["node", "dist/workers/verification-runner.js"]
-      log_group       = aws_cloudwatch_log_group.verification.name
-      extra_env       = [{ name = "VERIFICATION_HEALTH_PORT", value = "9102" }, { name = "VERIFIER_GATEWAY_URL", value = local.verifier_url }]
-      extra_secrets   = []
-      health_port_env = "VERIFICATION_HEALTH_PORT"
-    }
-    payout = {
-      command   = ["node", "dist/workers/payout-runner.js"]
-      log_group = aws_cloudwatch_log_group.payout.name
-      extra_env = [
-        { name = "PAYOUT_HEALTH_PORT", value = "9103" },
-        { name = "PAYMENTS_PROVIDER", value = var.payments_provider },
-        { name = "API_BASE_URL", value = local.api_internal_base },
-        { name = "KMS_PAYOUT_KEY_ID", value = aws_kms_key.payout_signer.key_id },
-        { name = "BASE_RPC_URL", value = var.base_rpc_url },
-        { name = "BASE_PAYOUT_SPLITTER_ADDRESS", value = var.base_payout_splitter_address },
-        { name = "BASE_CONFIRMATIONS_REQUIRED", value = tostring(var.base_confirmations_required) },
-        { name = "PROOFWORK_FEE_BPS", value = tostring(var.platform_fee_bps) },
-        { name = "PROOFWORK_FEE_WALLET_BASE", value = var.platform_fee_wallet_base },
-        # Backwards-compat for older code/scripts that still use PLATFORM_* envs.
-        { name = "PLATFORM_FEE_BPS", value = tostring(var.platform_fee_bps) },
-        { name = "PLATFORM_FEE_WALLET_BASE", value = var.platform_fee_wallet_base }
-      ]
-      extra_secrets   = []
-      health_port_env = "PAYOUT_HEALTH_PORT"
-    }
-    scanner = {
-      command   = ["node", "dist/workers/scanner-runner.js"]
-      log_group = aws_cloudwatch_log_group.scanner.name
-      extra_env = [
-        { name = "SCANNER_HEALTH_PORT", value = "9104" },
-        { name = "SCANNER_ENGINE", value = "clamd" },
-        # In ECS/Fargate awsvpc mode, containers do not share 127.0.0.1; prefer the unix socket.
-        { name = "CLAMD_SOCKET", value = "/tmp/clamd.sock" },
-        { name = "CLAMD_HOST", value = "127.0.0.1" },
-        { name = "CLAMD_PORT", value = "3310" }
-      ]
-      extra_secrets   = []
-      health_port_env = "SCANNER_HEALTH_PORT"
-      cpu             = 512
-      memory          = 1024
-    }
-    retention = {
-      command         = ["node", "dist/workers/retention-runner.js"]
-      log_group       = aws_cloudwatch_log_group.retention.name
-      extra_env       = [{ name = "RETENTION_HEALTH_PORT", value = "9105" }]
-      extra_secrets   = []
-      health_port_env = "RETENTION_HEALTH_PORT"
-    }
-  }
+  worker_defs = merge(
+    {
+      outbox = {
+        command         = ["node", "dist/workers/outbox-dispatcher.js"]
+        log_group       = aws_cloudwatch_log_group.outbox.name
+        extra_env       = [{ name = "OUTBOX_HEALTH_PORT", value = "9101" }]
+        extra_secrets   = []
+        health_port_env = "OUTBOX_HEALTH_PORT"
+      }
+      verification = {
+        command         = ["node", "dist/workers/verification-runner.js"]
+        log_group       = aws_cloudwatch_log_group.verification.name
+        extra_env       = [{ name = "VERIFICATION_HEALTH_PORT", value = "9102" }, { name = "VERIFIER_GATEWAY_URL", value = local.verifier_url }]
+        extra_secrets   = []
+        health_port_env = "VERIFICATION_HEALTH_PORT"
+      }
+      payout = {
+        command   = ["node", "dist/workers/payout-runner.js"]
+        log_group = aws_cloudwatch_log_group.payout.name
+        extra_env = [
+          { name = "PAYOUT_HEALTH_PORT", value = "9103" },
+          { name = "PAYMENTS_PROVIDER", value = var.payments_provider },
+          { name = "API_BASE_URL", value = local.api_internal_base },
+          { name = "KMS_PAYOUT_KEY_ID", value = aws_kms_key.payout_signer.key_id },
+          { name = "BASE_RPC_URL", value = var.base_rpc_url },
+          { name = "BASE_PAYOUT_SPLITTER_ADDRESS", value = var.base_payout_splitter_address },
+          { name = "BASE_CONFIRMATIONS_REQUIRED", value = tostring(var.base_confirmations_required) },
+          { name = "PROOFWORK_FEE_BPS", value = tostring(var.platform_fee_bps) },
+          { name = "PROOFWORK_FEE_WALLET_BASE", value = var.platform_fee_wallet_base },
+          # Backwards-compat for older code/scripts that still use PLATFORM_* envs.
+          { name = "PLATFORM_FEE_BPS", value = tostring(var.platform_fee_bps) },
+          { name = "PLATFORM_FEE_WALLET_BASE", value = var.platform_fee_wallet_base }
+        ]
+        extra_secrets   = []
+        health_port_env = "PAYOUT_HEALTH_PORT"
+      }
+      scanner = {
+        command   = ["node", "dist/workers/scanner-runner.js"]
+        log_group = aws_cloudwatch_log_group.scanner.name
+        extra_env = [
+          { name = "SCANNER_HEALTH_PORT", value = "9104" },
+          { name = "SCANNER_ENGINE", value = "clamd" },
+          # In ECS/Fargate awsvpc mode, containers do not share 127.0.0.1; prefer the unix socket.
+          { name = "CLAMD_SOCKET", value = "/tmp/clamd.sock" },
+          { name = "CLAMD_HOST", value = "127.0.0.1" },
+          { name = "CLAMD_PORT", value = "3310" }
+        ]
+        extra_secrets   = []
+        health_port_env = "SCANNER_HEALTH_PORT"
+        cpu             = 512
+        memory          = 1024
+      }
+      retention = {
+        command         = ["node", "dist/workers/retention-runner.js"]
+        log_group       = aws_cloudwatch_log_group.retention.name
+        extra_env       = [{ name = "RETENTION_HEALTH_PORT", value = "9105" }]
+        extra_secrets   = []
+        health_port_env = "RETENTION_HEALTH_PORT"
+      }
+    },
+    local.alarm_inbox_enabled ? {
+      alarm_inbox = {
+        command   = ["node", "dist/workers/alarm-inbox-runner.js"]
+        log_group = aws_cloudwatch_log_group.alarm_inbox.name
+        extra_env = [
+          { name = "ALARM_INBOX_HEALTH_PORT", value = "9106" },
+          { name = "ALARM_INBOX_QUEUE_URL", value = aws_sqs_queue.alarm_inbox[0].url },
+          { name = "ENVIRONMENT", value = var.environment }
+        ]
+        extra_secrets   = []
+        health_port_env = "ALARM_INBOX_HEALTH_PORT"
+      }
+    } : {}
+  )
 }
 
 resource "aws_ecs_task_definition" "workers" {

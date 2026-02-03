@@ -63,7 +63,7 @@ CLUSTER="${CLUSTER:-${PREFIX}-cluster}"
 API_SERVICE="${API_SERVICE:-${PREFIX}-api}"
 VERIFIER_SERVICE="${VERIFIER_SERVICE:-${PREFIX}-verifier-gateway}"
 MIGRATE_TASK_FAMILY="${MIGRATE_TASK_FAMILY:-${PREFIX}-migrate}"
-WORKER_SERVICES="${WORKER_SERVICES:-${PREFIX}-outbox,${PREFIX}-verification,${PREFIX}-payout,${PREFIX}-scanner,${PREFIX}-retention}"
+WORKER_SERVICES="${WORKER_SERVICES:-${PREFIX}-outbox,${PREFIX}-verification,${PREFIX}-payout,${PREFIX}-scanner,${PREFIX}-retention,${PREFIX}-alarm_inbox}"
 
 SKIP_MIGRATIONS="${SKIP_MIGRATIONS:-false}"
 CLAMAV_IMAGE="${CLAMAV_IMAGE:-clamav/clamav-debian:latest}"

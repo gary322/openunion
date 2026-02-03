@@ -310,6 +310,20 @@ export interface AppsTable {
   updated_at: Timestamp;
 }
 
+export interface AlarmNotificationsTable {
+  id: string;
+  environment: string;
+  topic_arn: string;
+  sns_message_id: string | null;
+  alarm_name: string | null;
+  old_state_value: string | null;
+  new_state_value: string | null;
+  state_reason: string | null;
+  state_change_time: Timestamp | null;
+  raw_json: unknown;
+  received_at: Timestamp;
+}
+
 export interface PayoutTransfersTable {
   id: string;
   payout_id: string;
@@ -374,6 +388,7 @@ export interface DB {
   workers: WorkersTable;
   orgs: OrgsTable;
   apps: AppsTable;
+  alarm_notifications: AlarmNotificationsTable;
   bounties: BountiesTable;
   jobs: JobsTable;
   submissions: SubmissionsTable;
