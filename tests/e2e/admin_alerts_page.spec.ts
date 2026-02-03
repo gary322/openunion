@@ -5,5 +5,10 @@ test('admin alerts page loads', async ({ page }) => {
   await expect(page.getByText('Alerts', { exact: true })).toBeVisible();
   await expect(page.getByText('Internal alarm inbox', { exact: false })).toBeVisible();
   await expect(page.locator('#adminToken')).toBeVisible();
-});
 
+  // Exercise the real API call so Postgres-only query issues are caught in CI.
+  await page.fill('#adminToken', 'pw_adm_internal');
+  await page.click('#btnList');
+  await expect(page.locator('#listStatus')).toContainText('ok');
+  await expect(page.locator('#out')).toContainText('"alerts"');
+});
