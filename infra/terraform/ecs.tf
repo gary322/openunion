@@ -296,6 +296,8 @@ locals {
       extra_env = [
         { name = "SCANNER_HEALTH_PORT", value = "9104" },
         { name = "SCANNER_ENGINE", value = "clamd" },
+        # In ECS/Fargate awsvpc mode, containers do not share 127.0.0.1; prefer the unix socket.
+        { name = "CLAMD_SOCKET", value = "/tmp/clamd.sock" },
         { name = "CLAMD_HOST", value = "127.0.0.1" },
         { name = "CLAMD_PORT", value = "3310" }
       ]
@@ -324,6 +326,13 @@ resource "aws_ecs_task_definition" "workers" {
   execution_role_arn       = aws_iam_role.execution.arn
   task_role_arn            = aws_iam_role.task.arn
 
+  dynamic "volume" {
+    for_each = each.key == "scanner" ? [1] : []
+    content {
+      name = "clamd-tmp"
+    }
+  }
+
   container_definitions = jsonencode(
     concat(
       [
@@ -336,6 +345,9 @@ resource "aws_ecs_task_definition" "workers" {
             { name = "API_BASE_URL", value = local.api_internal_base }
           ], each.value.extra_env)
           secrets = local.base_secrets
+          mountPoints = each.key == "scanner" ? [
+            { sourceVolume = "clamd-tmp", containerPath = "/tmp", readOnly = false }
+          ] : []
           healthCheck = {
             command     = ["CMD-SHELL", format("wget -q -O - http://127.0.0.1:$%s/health >/dev/null 2>&1 || exit 1", each.value.health_port_env)]
             interval    = 30
@@ -358,6 +370,9 @@ resource "aws_ecs_task_definition" "workers" {
           name      = "clamd"
           image     = var.clamav_image
           essential = true
+          mountPoints = [
+            { sourceVolume = "clamd-tmp", containerPath = "/tmp", readOnly = false }
+          ]
           portMappings = [
             { containerPort = 3310, hostPort = 3310, protocol = "tcp" }
           ]

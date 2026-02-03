@@ -116,6 +116,30 @@ deploy_service() {
   # Use a known-good image by default, and allow override via CLAMAV_IMAGE.
   if [[ "$service" == "${PREFIX}-scanner" ]]; then
     new_td_json="$(jq --arg IMG "$CLAMAV_IMAGE" '(.containerDefinitions[] | select(.name=="clamd") | .image) = $IMG' <<<"$new_td_json")"
+
+    # Ensure scanner can talk to clamd in ECS/Fargate.
+    #
+    # In awsvpc mode, 127.0.0.1 is container-local. Rather than rely on TCP, share clamd's unix
+    # socket via an ephemeral task volume mounted at /tmp in both containers.
+    new_td_json="$(jq '
+      .volumes = (.volumes // [])
+      | if ([.volumes[]? | select(.name=="clamd-tmp")] | length) == 0 then .volumes += [{name:"clamd-tmp"}] else . end
+      | (.containerDefinitions[] | select(.name=="scanner") | .mountPoints) =
+          ((.containerDefinitions[] | select(.name=="scanner") | .mountPoints // []) as $m
+            | if ([ $m[]? | select(.sourceVolume=="clamd-tmp" and .containerPath=="/tmp") ] | length) == 0
+              then $m + [{sourceVolume:"clamd-tmp",containerPath:"/tmp",readOnly:false}]
+              else $m
+            end)
+      | (.containerDefinitions[] | select(.name=="clamd") | .mountPoints) =
+          ((.containerDefinitions[] | select(.name=="clamd") | .mountPoints // []) as $m
+            | if ([ $m[]? | select(.sourceVolume=="clamd-tmp" and .containerPath=="/tmp") ] | length) == 0
+              then $m + [{sourceVolume:"clamd-tmp",containerPath:"/tmp",readOnly:false}]
+              else $m
+            end)
+      | (.containerDefinitions[] | select(.name=="scanner") | .environment) =
+          ((.containerDefinitions[] | select(.name=="scanner") | .environment // [])
+            | map(select(.name!="CLAMD_SOCKET")) + [{name:"CLAMD_SOCKET",value:"/tmp/clamd.sock"}])
+    ' <<<"$new_td_json")"
   fi
   local new_td_arn
   new_td_arn="$(aws ecs register-task-definition --cli-input-json "$new_td_json" --query 'taskDefinition.taskDefinitionArn' --output text)"
