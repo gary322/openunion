@@ -71,6 +71,7 @@ import {
   createDispute,
   cancelDispute,
   resolveDisputeAdmin,
+  listAlarmNotificationsAdmin,
 } from './store.js';
 import { db } from './db/client.js';
 import { runMigrations } from './db/migrate.js';
@@ -104,6 +105,7 @@ import {
   disputeCreateSchema,
   disputeResolveSchema,
   adminAppStatusSchema,
+  adminPayoutMarkSchema,
 } from './schemas.js';
 import { Envelope, Submission, Verification, Worker } from './types.js';
 import { nanoid } from 'nanoid';
@@ -2613,6 +2615,59 @@ export function buildServer() {
     return { ok: true };
   });
 
+  // Break-glass payout reconciliation: allow an admin to force payout status (paid/failed/refunded)
+  // with an audit trail. This should be used rarely (e.g., provider outage / manual treasury ops).
+  app.post(
+    '/api/admin/payouts/:payoutId/mark',
+    { preHandler: (app as any).authenticateAdmin, schema: { body: adminPayoutMarkSchema } },
+    async (request: any, reply) => {
+      const payoutId = String(request.params.payoutId ?? '');
+      const body = request.body as any;
+      const payout = await getPayout(payoutId);
+      if (!payout) return reply.code(404).send({ error: { code: 'not_found', message: 'payout not found' } });
+
+      const status = String(body.status ?? '');
+      if (!['paid', 'failed', 'refunded'].includes(status)) {
+        return reply.code(400).send({ error: { code: 'invalid', message: 'status must be paid|failed|refunded' } });
+      }
+
+      const provider = body.provider === null || body.provider === undefined ? 'manual' : String(body.provider);
+      const providerRef = body.providerRef === null || body.providerRef === undefined ? null : String(body.providerRef);
+      const reason = String(body.reason ?? '').trim();
+      if (!reason) return reply.code(400).send({ error: { code: 'invalid', message: 'reason required' } });
+
+      const now = new Date();
+
+      await markPayoutStatus(payoutId, status as any, { provider, providerRef });
+
+      // Stop any pending payout execution outbox event for this payout.
+      await db
+        .updateTable('outbox_events')
+        .set({ status: 'sent', sent_at: now, locked_at: null, locked_by: null, last_error: null })
+        .where('topic', '=', 'payout.requested')
+        .where('idempotency_key', '=', `payout:${payoutId}`)
+        .execute();
+
+      // Best-effort mirror status into submissions.payout_status for UI/debugging.
+      const subStatus =
+        status === 'paid' ? 'paid' :
+        status === 'failed' ? 'failed' :
+        'reversed';
+      await db.updateTable('submissions').set({ payout_status: subStatus }).where('id', '=', payout.submissionId).execute();
+
+      await writeAuditEvent({
+        actorType: 'admin_token',
+        actorId: null,
+        action: 'payout.mark_status',
+        targetType: 'payout',
+        targetId: payoutId,
+        metadata: { status, provider, providerRef, reason },
+      });
+
+      return { ok: true };
+    }
+  );
+
   app.get('/api/admin/disputes', { preHandler: (app as any).authenticateAdmin }, async (request: any) => {
     const q = (request.query ?? {}) as any;
     const page = Math.max(1, Number(q.page ?? 1));
@@ -2729,6 +2784,18 @@ export function buildServer() {
 
     const events = await query.execute();
     return { events };
+  });
+
+  // Alarm inbox (admin): internal notification surface for CloudWatch -> SNS -> SQS deliveries.
+  app.get('/api/admin/alerts', { preHandler: (app as any).authenticateAdmin }, async (request: any) => {
+    const q = (request.query ?? {}) as any;
+    const page = Math.max(1, Number(q.page ?? 1));
+    const limit = Math.max(1, Math.min(200, Number(q.limit ?? 50)));
+    const environment = typeof q.environment === 'string' ? q.environment : typeof q.env === 'string' ? q.env : undefined;
+    const alarmName = typeof q.alarmName === 'string' ? q.alarmName : typeof q.alarm_name === 'string' ? q.alarm_name : undefined;
+
+    const res = await listAlarmNotificationsAdmin({ page, limit, environment, alarmName });
+    return { alerts: res.rows, page, limit, total: res.total };
   });
 
   // Apps registry (admin): list all apps (including disabled/non-public) for moderation.

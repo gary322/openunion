@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Proofwork • Admin • Payouts</title>
+    <title>Proofwork • Admin • Alerts</title>
     <style>
       :root {
         --bg: #0b1220;
@@ -21,7 +21,7 @@
         margin: 0;
         font-family: var(--sans);
         background: radial-gradient(1200px 800px at 10% 10%, rgba(251, 191, 36, 0.14), transparent 55%),
-          radial-gradient(1000px 700px at 80% 0%, rgba(125, 211, 252, 0.12), transparent 55%),
+          radial-gradient(1000px 700px at 80% 0%, rgba(52, 211, 153, 0.10), transparent 55%),
           var(--bg);
         color: var(--text);
       }
@@ -32,7 +32,7 @@
       .card { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 16px; }
       .card h2 { margin: 0 0 10px 0; font-size: 14px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; }
       label { display: block; font-size: 12px; color: var(--muted); margin: 10px 0 6px; }
-      input, textarea, select {
+      input, textarea {
         width: 100%;
         box-sizing: border-box;
         padding: 10px 12px;
@@ -57,9 +57,9 @@
   </head>
   <body>
     <div class="wrap">
-      <div class="title">Payouts</div>
+      <div class="title">Alerts</div>
       <div class="sub">
-        Admin reconciliation tools. <a href="/admin/index.html">Admin console</a> · <a href="/admin/disputes.html">Disputes</a> · <a href="/admin/apps.html">Apps</a>
+        Internal alarm inbox (CloudWatch → SNS → SQS). <a href="/admin/index.html">Admin console</a> · <a href="/admin/apps.html">Apps</a> · <a href="/admin/payouts.html">Payouts</a>
       </div>
 
       <div class="grid">
@@ -77,71 +77,28 @@
           <h2>List</h2>
           <div class="row">
             <div>
-              <label>Status</label>
-              <input id="statusFilter" placeholder="pending|paid|failed|refunded" />
+              <label>Environment (optional)</label>
+              <input id="envFilter" placeholder="staging|production" />
             </div>
             <div>
-              <label>Org ID (optional)</label>
-              <input id="orgIdFilter" placeholder="org_..." />
+              <label>Alarm name (optional)</label>
+              <input id="alarmFilter" placeholder="proofwork-...-api-cpu-high" />
             </div>
           </div>
           <div class="btnrow">
-            <button id="btnList" class="primary">GET /api/admin/payouts</button>
+            <button id="btnList" class="primary">GET /api/admin/alerts</button>
           </div>
           <div id="listStatus" class="status"></div>
         </div>
 
-        <div class="card">
-          <h2>Retry payout</h2>
-          <label>Payout ID</label>
-          <input id="payoutId" placeholder="payoutId" />
-          <div class="btnrow">
-            <button id="btnRetry" class="primary">POST /api/admin/payouts/:id/retry</button>
-          </div>
-          <div id="retryStatus" class="status"></div>
-        </div>
-
-        <div class="card">
-          <h2>Mark payout status (break-glass)</h2>
-          <label>Payout ID</label>
-          <input id="markPayoutId" placeholder="payoutId" />
-          <div class="row">
-            <div>
-              <label>Status</label>
-              <select id="markStatus">
-                <option value="paid">paid</option>
-                <option value="failed">failed</option>
-                <option value="refunded">refunded</option>
-              </select>
-            </div>
-            <div>
-              <label>Provider (optional)</label>
-              <input id="markProvider" placeholder="manual" />
-            </div>
-          </div>
-          <div class="row">
-            <div>
-              <label>Provider ref (optional)</label>
-              <input id="markProviderRef" placeholder="tx hash / receipt / note" />
-            </div>
-            <div>
-              <label>Reason</label>
-              <input id="markReason" placeholder="why are we marking this manually?" />
-            </div>
-          </div>
-          <div class="btnrow">
-            <button id="btnMark" class="primary">POST /api/admin/payouts/:id/mark</button>
-          </div>
-          <div id="markStatusMsg" class="status"></div>
-        </div>
-
-        <div class="card">
+        <div class="card" style="grid-column: 1 / -1;">
           <h2>Response</h2>
           <pre id="out">{}</pre>
         </div>
       </div>
     </div>
 
-    <script src="./payouts.js"></script>
+    <script src="./alerts.js"></script>
   </body>
 </html>
+

@@ -71,9 +71,31 @@ async function onRetry() {
   setStatus('retryStatus', 'ok', 'good');
 }
 
+async function onMark() {
+  setStatus('markStatusMsg', '', null);
+  const token = requireToken();
+  const payoutId = $('markPayoutId').value.trim();
+  if (!payoutId) return setStatus('markStatusMsg', 'missing payoutId', 'bad');
+
+  const status = $('markStatus').value;
+  const provider = $('markProvider').value.trim() || null;
+  const providerRef = $('markProviderRef').value.trim() || null;
+  const reason = $('markReason').value.trim();
+  if (!reason) return setStatus('markStatusMsg', 'missing reason', 'bad');
+
+  const { res, json } = await api(`/api/admin/payouts/${encodeURIComponent(payoutId)}/mark`, {
+    method: 'POST',
+    token,
+    body: { status, provider, providerRef, reason },
+  });
+  $('out').textContent = pretty(json);
+  if (!res.ok) return setStatus('markStatusMsg', `mark failed (${res.status})`, 'bad');
+  setStatus('markStatusMsg', 'ok', 'good');
+}
+
 $('btnSave').addEventListener('click', () => onSave());
 $('btnList').addEventListener('click', () => onList().catch((e) => setStatus('listStatus', String(e), 'bad')));
 $('btnRetry').addEventListener('click', () => onRetry().catch((e) => setStatus('retryStatus', String(e), 'bad')));
+$('btnMark').addEventListener('click', () => onMark().catch((e) => setStatus('markStatusMsg', String(e), 'bad')));
 
 setToken(getToken());
-

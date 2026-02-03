@@ -242,6 +242,18 @@ variable "alarm_https_subscriptions" {
   description = "List of HTTPS endpoints to subscribe to the created alarm SNS topic (PagerDuty/Opsgenie/webhook)."
 }
 
+variable "enable_alarm_inbox" {
+  type        = bool
+  default     = true
+  description = "If true, create an internal SNS->SQS alarm inbox and run an ECS worker that stores notifications in Postgres for the admin UI."
+}
+
+variable "alarm_inbox_retention_seconds" {
+  type        = number
+  default     = 1209600 # 14 days
+  description = "SQS retention for the alarm inbox queue."
+}
+
 variable "stripe_secret_key" {
   type        = string
   sensitive   = true

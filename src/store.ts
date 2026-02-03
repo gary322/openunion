@@ -1239,6 +1239,7 @@ export async function resetStore() {
       [
         'accepted_dedupe',
         'apps',
+        'alarm_notifications',
         'payouts',
         'payout_transfers',
         'crypto_nonces',
@@ -1592,6 +1593,78 @@ export async function adminSetAppStatus(appId: string, status: 'active' | 'disab
     .returningAll()
     .executeTakeFirst();
   return row ? appFromRow(row) : undefined;
+}
+
+export async function insertAlarmNotification(input: {
+  environment: string;
+  topicArn: string;
+  snsMessageId?: string | null;
+  alarmName?: string | null;
+  oldStateValue?: string | null;
+  newStateValue?: string | null;
+  stateReason?: string | null;
+  stateChangeTime?: Date | null;
+  raw: any;
+}): Promise<{ id: string }> {
+  const id = nanoid(12);
+  const now = new Date();
+  await db
+    .insertInto('alarm_notifications')
+    .values({
+      id,
+      environment: input.environment,
+      topic_arn: input.topicArn,
+      sns_message_id: input.snsMessageId ?? null,
+      alarm_name: input.alarmName ?? null,
+      old_state_value: input.oldStateValue ?? null,
+      new_state_value: input.newStateValue ?? null,
+      state_reason: input.stateReason ?? null,
+      state_change_time: input.stateChangeTime ?? null,
+      raw_json: input.raw ?? {},
+      received_at: now,
+    })
+    .onConflict((oc) => oc.columns(['topic_arn', 'sns_message_id']).doNothing())
+    .execute();
+  return { id };
+}
+
+export async function listAlarmNotificationsAdmin(
+  opts: { page?: number; limit?: number; environment?: string; alarmName?: string } = {}
+): Promise<{ rows: any[]; total: number }> {
+  const page = Math.max(1, Number(opts.page ?? 1));
+  const limit = Math.max(1, Math.min(200, Number(opts.limit ?? 50)));
+  const offset = (page - 1) * limit;
+
+  let q = db.selectFrom('alarm_notifications').selectAll();
+  if (opts.environment) q = q.where('environment', '=', opts.environment);
+  if (opts.alarmName) q = q.where('alarm_name', '=', opts.alarmName);
+
+  const rows = await q.orderBy('received_at', 'desc').offset(offset).limit(limit).execute();
+  const totalRow = await q.select(({ fn }) => fn.countAll<number>().as('c')).executeTakeFirst();
+
+  const mapped = rows.map((r: any) => ({
+    id: r.id,
+    environment: r.environment,
+    topicArn: r.topic_arn,
+    snsMessageId: r.sns_message_id ?? null,
+    alarmName: r.alarm_name ?? null,
+    oldStateValue: r.old_state_value ?? null,
+    newStateValue: r.new_state_value ?? null,
+    stateReason: r.state_reason ?? null,
+    stateChangeTime: r.state_change_time ? (r.state_change_time as Date).toISOString() : null,
+    receivedAt: (r.received_at as Date).toISOString(),
+    raw: r.raw_json ?? {},
+  }));
+
+  return { rows: mapped, total: Number(totalRow?.c ?? 0) };
+}
+
+export async function pruneAlarmNotifications(opts: { maxAgeDays: number }): Promise<{ deleted: number }> {
+  const days = Number(opts.maxAgeDays);
+  if (!Number.isFinite(days) || days <= 0) return { deleted: 0 };
+  const cutoff = new Date(Date.now() - Math.floor(days) * 24 * 60 * 60 * 1000);
+  const res = await db.deleteFrom('alarm_notifications').where('received_at', '<', cutoff).executeTakeFirst();
+  return { deleted: Number((res as any)?.numDeletedRows ?? 0) };
 }
 
 export async function markOutboxSent(id: string) {

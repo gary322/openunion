@@ -84,6 +84,19 @@ data "aws_iam_policy_document" "task_policy" {
     ]
     resources = [aws_kms_key.payout_signer.arn]
   }
+
+  dynamic "statement" {
+    for_each = local.alarm_inbox_enabled ? [1] : []
+    content {
+      actions = [
+        "sqs:ReceiveMessage",
+        "sqs:DeleteMessage",
+        "sqs:GetQueueAttributes",
+        "sqs:ChangeMessageVisibility"
+      ]
+      resources = [aws_sqs_queue.alarm_inbox[0].arn]
+    }
+  }
 }
 
 resource "aws_iam_role_policy" "task_inline" {

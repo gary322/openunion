@@ -51,3 +51,13 @@ output "alarm_sns_topic_arn" {
   value       = local.effective_alarm_topic_arn != "" ? local.effective_alarm_topic_arn : null
   description = "SNS topic ARN used for CloudWatch alarm notifications (BYO alarm_sns_topic_arn or created when create_alarm_sns_topic=true)."
 }
+
+output "alarm_inbox_queue_url" {
+  value       = local.alarm_inbox_enabled ? aws_sqs_queue.alarm_inbox[0].url : null
+  description = "SQS queue URL for the internal alarm inbox (SNS->SQS)."
+}
+
+output "alarm_inbox_queue_arn" {
+  value       = local.alarm_inbox_enabled ? aws_sqs_queue.alarm_inbox[0].arn : null
+  description = "SQS queue ARN for the internal alarm inbox (SNS->SQS)."
+}
