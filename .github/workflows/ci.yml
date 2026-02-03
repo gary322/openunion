@@ -49,6 +49,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: CI guardrails (deploy env names)
+        run: bash scripts/ci/check_deploy_workflow_envs.sh
+
+      - name: Secret scan (tracked files)
+        run: bash scripts/ci/secret_scan.sh
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
@@ -180,4 +186,3 @@ jobs:
 
       - name: Verifier gateway (Playwright) tests
         run: npx vitest run tests/verifier_playwright_harness.test.ts
-

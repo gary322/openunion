@@ -43,3 +43,14 @@ Run the migration task **once** per deploy before rolling services:
   - build/push `services/verifier-gateway/Dockerfile` and set `verifier_gateway_image_uri`
 - Malware scanning:
   - Scanner workers run `SCANNER_ENGINE=clamd` and include a `clamd` sidecar (image configurable via `clamav_image`)
+
+## Alarm notifications (SNS)
+By default, the module creates CloudWatch alarms but does not wire them to a notification target.
+
+You have two options:
+- Bring your own SNS topic: set `alarm_sns_topic_arn`
+- Let the module create an SNS topic: set `create_alarm_sns_topic=true` and provide subscriptions:
+  - `alarm_email_subscriptions=["you@example.com"]` (requires clicking the email confirmation)
+  - `alarm_https_subscriptions=["https://events.pagerduty.com/integration/.../enqueue"]` (or other webhook)
+
+After apply, the effective topic ARN is output as `alarm_sns_topic_arn`.

@@ -1,5 +1,5 @@
 locals {
-  alarm_actions = var.alarm_sns_topic_arn != "" ? [var.alarm_sns_topic_arn] : []
+  alarm_actions = local.effective_alarm_topic_arn != "" ? [local.effective_alarm_topic_arn] : []
 }
 
 resource "aws_cloudwatch_metric_alarm" "alb_target_5xx" {

@@ -218,6 +218,30 @@ variable "alarm_sns_topic_arn" {
   description = "Optional SNS topic ARN to notify on CloudWatch alarms."
 }
 
+variable "create_alarm_sns_topic" {
+  type        = bool
+  default     = false
+  description = "If true (and alarm_sns_topic_arn is empty), create an SNS topic for CloudWatch alarm notifications."
+}
+
+variable "alarm_sns_topic_name" {
+  type        = string
+  default     = ""
+  description = "Optional SNS topic name for alarm notifications (defaults to <project>-<env>-alarms)."
+}
+
+variable "alarm_email_subscriptions" {
+  type        = list(string)
+  default     = []
+  description = "List of email addresses to subscribe to the created alarm SNS topic (requires email confirmation)."
+}
+
+variable "alarm_https_subscriptions" {
+  type        = list(string)
+  default     = []
+  description = "List of HTTPS endpoints to subscribe to the created alarm SNS topic (PagerDuty/Opsgenie/webhook)."
+}
+
 variable "stripe_secret_key" {
   type        = string
   sensitive   = true

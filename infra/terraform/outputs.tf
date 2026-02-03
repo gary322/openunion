@@ -46,3 +46,8 @@ output "ecs_cluster_name" {
 output "migrate_task_definition_arn" {
   value = aws_ecs_task_definition.migrate.arn
 }
+
+output "alarm_sns_topic_arn" {
+  value       = local.effective_alarm_topic_arn != "" ? local.effective_alarm_topic_arn : null
+  description = "SNS topic ARN used for CloudWatch alarm notifications (BYO alarm_sns_topic_arn or created when create_alarm_sns_topic=true)."
+}
