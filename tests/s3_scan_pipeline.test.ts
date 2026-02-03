@@ -193,4 +193,62 @@ const enabled = process.env.RUN_S3_SCAN_TESTS === '1' && (process.env.STORAGE_BA
     const quarantineBucket = process.env.S3_BUCKET_QUARANTINE ?? 'proofwork-quarantine';
     await s3.send(new HeadObjectCommand({ Bucket: quarantineBucket, Key: art.storage_key as string }));
   });
+
+  it('supports admin quarantine clean→quarantine and blocks download', async () => {
+    const s3 = testS3Client();
+    const app = buildServer();
+    await app.ready();
+
+    const reg = await request(app.server).post('/api/workers/register').send({ displayName: 'W', capabilities: { browser: true } });
+    expect(reg.status).toBe(200);
+    const token = reg.body.token as string;
+
+    const next = await request(app.server).get('/api/jobs/next').set('Authorization', `Bearer ${token}`);
+    expect(next.status).toBe(200);
+    expect(next.body.state).toBe('claimable');
+    const jobId = next.body.data.job.jobId as string;
+
+    const claim = await request(app.server).post(`/api/jobs/${jobId}/claim`).set('Authorization', `Bearer ${token}`).send();
+    expect(claim.status).toBe(200);
+
+    const bytes = Buffer.from('admin quarantine\n', 'utf8');
+    const presign = await request(app.server)
+      .post('/api/uploads/presign')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ jobId, files: [{ filename: 'hello.txt', contentType: 'text/plain', sizeBytes: bytes.byteLength }] });
+    expect(presign.status).toBe(200);
+    const upload = presign.body.uploads[0];
+
+    const putRes = await fetch(upload.url, { method: 'PUT', headers: upload.headers, body: bytes });
+    expect(putRes.status).toBe(200);
+
+    await request(app.server)
+      .post('/api/uploads/complete')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ artifactId: upload.artifactId, sha256: sha256Hex(bytes), sizeBytes: bytes.byteLength });
+
+    const { handleArtifactScanRequested } = await import('../workers/handlers.js');
+    await handleArtifactScanRequested({ artifactId: upload.artifactId });
+
+    const art = await db.selectFrom('artifacts').selectAll().where('id', '=', upload.artifactId).executeTakeFirstOrThrow();
+    expect(art.status).toBe('scanned');
+    expect(art.bucket_kind).toBe('clean');
+
+    const adminToken = process.env.ADMIN_TOKEN || 'pw_adm_internal';
+    const q = await request(app.server)
+      .post(`/api/admin/artifacts/${encodeURIComponent(upload.artifactId)}/quarantine`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ reason: 'policy' });
+    expect(q.status).toBe(200);
+
+    const art2 = await db.selectFrom('artifacts').selectAll().where('id', '=', upload.artifactId).executeTakeFirstOrThrow();
+    expect(art2.status).toBe('blocked');
+    expect(art2.bucket_kind).toBe('quarantine');
+
+    const dl = await request(app.server).get(`/api/artifacts/${upload.artifactId}/download`).set('Authorization', `Bearer ${token}`).send();
+    expect(dl.status).toBe(422);
+
+    const quarantineBucket = process.env.S3_BUCKET_QUARANTINE ?? 'proofwork-quarantine';
+    await s3.send(new HeadObjectCommand({ Bucket: quarantineBucket, Key: art.storage_key as string }));
+  });
 });

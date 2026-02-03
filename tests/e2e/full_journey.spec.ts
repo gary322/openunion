@@ -194,7 +194,7 @@ test('buyer → bounty → worker → upload → verify (gateway) → payout (lo
     const workerToken = await page.locator('#token').inputValue();
     expect(workerToken).toMatch(/^pw_wk_/);
 
-    // Register payout address (signed proof).
+    // Register payout address (signed proof) via the Worker UI.
     const me = await request.get('/api/worker/me', { headers: { Authorization: `Bearer ${workerToken}` } });
     expect(me.ok()).toBeTruthy();
     const meJson = await me.json();
@@ -202,13 +202,17 @@ test('buyer → bounty → worker → upload → verify (gateway) → payout (lo
 
     const workerWallet = Wallet.createRandom();
     const normalized = getAddress(workerWallet.address);
-    const message = `Proofwork payout address verification\nworkerId=${workerId}\nchain=base\naddress=${normalized}`;
+
+    await page.selectOption('#payoutChain', 'base');
+    await page.fill('#payoutAddress', normalized);
+    await page.click('#btnPayoutMessage');
+    await expect(page.locator('#payoutAddrStatus')).toContainText('message ok');
+    const message = (await page.locator('#payoutMessage').textContent()) || '';
+    expect(message).toContain(`workerId=${workerId}`);
     const signature = await workerWallet.signMessage(message);
-    const setAddr = await request.post('/api/worker/payout-address', {
-      headers: { Authorization: `Bearer ${workerToken}` },
-      data: { chain: 'base', address: normalized, signature },
-    });
-    expect(setAddr.ok()).toBeTruthy();
+    await page.fill('#payoutSignature', signature);
+    await page.click('#btnSetPayoutAddress');
+    await expect(page.locator('#payoutAddrStatus')).toContainText('verified');
 
     await page.click('#btnNext');
     await expect(page.locator('#jobStatus')).toContainText('state=claimable');

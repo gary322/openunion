@@ -55,6 +55,8 @@ import {
   setOrgPlatformFeeSettings,
   getOrgCorsAllowOrigins,
   setOrgCorsAllowOrigins,
+  getOrgQuotaSettings,
+  setOrgQuotaSettings,
   listAllCorsAllowOrigins,
   listAppsByOrg,
   listAllAppsAdmin,
@@ -72,6 +74,9 @@ import {
   cancelDispute,
   resolveDisputeAdmin,
   listAlarmNotificationsAdmin,
+  listBlockedDomainsAdmin,
+  upsertBlockedDomainAdmin,
+  deleteBlockedDomainAdmin,
 } from './store.js';
 import { db } from './db/client.js';
 import { runMigrations } from './db/migrate.js';
@@ -94,11 +99,13 @@ import {
   uploadCompleteSchema,
   submitJobSchema,
   workerPayoutAddressSchema,
+  workerPayoutAddressMessageSchema,
   verifierClaimSchema,
   verifierVerdictSchema,
   taskDescriptorSchema,
   orgPlatformFeeSchema,
   orgCorsAllowlistSchema,
+  orgQuotasSchema,
   orgRegisterSchema,
   appCreateSchema,
   appUpdateSchema,
@@ -106,11 +113,14 @@ import {
   disputeResolveSchema,
   adminAppStatusSchema,
   adminPayoutMarkSchema,
+  blockedDomainCreateSchema,
+  adminArtifactQuarantineSchema,
 } from './schemas.js';
 import { Envelope, Submission, Verification, Worker } from './types.js';
 import { nanoid } from 'nanoid';
 import { sha256, isLeaseExpired } from './utils.js';
 import { rateLimit } from './ratelimit.js';
+import { assertUrlNotBlocked } from './security/blockedDomains.js';
 import {
   attachSubmissionArtifacts,
   getArtifactAccessInfo,
@@ -121,6 +131,8 @@ import {
   presignVerifierUploads,
   putLocalUpload,
   putVerifierLocalUpload,
+  quarantineArtifactObjectAdmin,
+  deleteArtifactObject,
 } from './storage.js';
 import { writeAuditEvent } from './audit.js';
 import { hmacSha256Hex } from './auth/tokens.js';
@@ -423,6 +435,13 @@ export function buildServer() {
   app.register(fastifyStatic, {
     root: path.resolve(process.cwd(), 'contracts'),
     prefix: '/contracts/',
+    decorateReply: false,
+    index: false,
+  });
+  // Serve runbooks/docs (read-only static). Useful for third-party onboarding and ops.
+  app.register(fastifyStatic, {
+    root: path.resolve(process.cwd(), 'docs'),
+    prefix: '/docs/',
     decorateReply: false,
     index: false,
   });
@@ -857,6 +876,9 @@ export function buildServer() {
       return { origin: rec, verification: { token: rec.token, instructions: `Add proof token ${rec.token} via method ${method}` } };
     } catch (err: any) {
       const msg = String(err?.message ?? err);
+      if (msg.startsWith('blocked_domain:')) {
+        return reply.code(403).send({ error: { code: 'blocked_domain', message: msg } });
+      }
       return reply.code(400).send({ error: { code: 'invalid', message: msg } });
     }
   });
@@ -1281,6 +1303,44 @@ export function buildServer() {
     }
   );
 
+  // Org settings (buyer): quotas / spend limits.
+  app.get('/api/org/quotas', { preHandler: (app as any).authenticateBuyer }, async (request: any, reply) => {
+    const settings = await getOrgQuotaSettings(request.orgId);
+    if (!settings) return reply.code(404).send({ error: { code: 'not_found', message: 'org not found' } });
+    return settings;
+  });
+
+  app.put(
+    '/api/org/quotas',
+    { preHandler: (app as any).authenticateBuyer, schema: { body: orgQuotasSchema } },
+    async (request: any, reply) => {
+      const role = request.role as string | undefined;
+      if (role && !['owner', 'admin'].includes(role)) {
+        return reply.code(403).send({ error: { code: 'forbidden', message: 'requires owner/admin' } });
+      }
+
+      const body = request.body as any;
+      const patch: any = {};
+      if (Object.prototype.hasOwnProperty.call(body, 'dailySpendLimitCents')) patch.dailySpendLimitCents = body.dailySpendLimitCents;
+      if (Object.prototype.hasOwnProperty.call(body, 'monthlySpendLimitCents')) patch.monthlySpendLimitCents = body.monthlySpendLimitCents;
+      if (Object.prototype.hasOwnProperty.call(body, 'maxOpenJobs')) patch.maxOpenJobs = body.maxOpenJobs;
+
+      const updated = await setOrgQuotaSettings(request.orgId, patch);
+      if (!updated) return reply.code(404).send({ error: { code: 'not_found', message: 'org not found' } });
+
+      await writeAuditEvent({
+        actorType: request.sessionId ? 'buyer_session' : 'buyer_api_key',
+        actorId: request.sessionId ?? request.apiKeyId ?? null,
+        action: 'org.quotas.update',
+        targetType: 'org',
+        targetId: request.orgId,
+        metadata: { patchKeys: Object.keys(patch) },
+      });
+
+      return updated;
+    }
+  );
+
   // Apps registry (buyer): self-serve app definitions (no admin approval required).
   app.get('/api/org/apps', { preHandler: (app as any).authenticateBuyer }, async (request: any) => {
     const q = (request.query ?? {}) as any;
@@ -1564,10 +1624,36 @@ export function buildServer() {
       }
       taskDescriptor = parsed.data;
     }
+
+    // Enforce app/task_type ownership so other orgs cannot spoof another platform's task type.
+    if (taskDescriptor?.type) {
+      const type = String(taskDescriptor.type);
+      const appRec = await getAppByTaskType(type);
+      if (!appRec) {
+        return reply.code(400).send({ error: { code: 'app_not_registered', message: 'taskDescriptor.type is not registered; create an app first' } });
+      }
+      if (appRec.status === 'disabled') {
+        return reply.code(409).send({ error: { code: 'app_disabled', message: 'app is disabled' } });
+      }
+      const ownerOrgId = appRec.ownerOrgId;
+      if (ownerOrgId !== request.orgId && ownerOrgId !== 'org_system') {
+        return reply.code(403).send({ error: { code: 'forbidden', message: 'task type belongs to another org' } });
+      }
+    }
+
     // verify allowed origins belong to org
     const checks = await Promise.all(body.allowedOrigins.map((o: string) => originAllowed(request.orgId, o)));
     const allVerified = checks.every(Boolean);
     if (!allVerified) return reply.code(400).send({ error: { code: 'origin_not_verified', message: 'allowedOrigins must be verified' } });
+
+    // Defense-in-depth: block global disallowed domains even if an origin was previously verified.
+    try {
+      await Promise.all(body.allowedOrigins.map((o: string) => assertUrlNotBlocked(o)));
+    } catch (err: any) {
+      const msg = String(err?.message ?? err);
+      if (msg.startsWith('blocked_domain:')) return reply.code(403).send({ error: { code: 'blocked_domain', message: msg } });
+      return reply.code(400).send({ error: { code: 'invalid', message: msg } });
+    }
 
     const payoutCents = Number(body.payoutCents ?? body.payout_cents ?? 1000);
     if (!Number.isFinite(payoutCents) || payoutCents <= 0) {
@@ -1578,7 +1664,16 @@ export function buildServer() {
       return reply.code(400).send({ error: { code: 'min_payout', message: `payoutCents must be >= ${minPayoutCents}` } });
     }
 
-    const bounty = await createBounty({ ...body, payoutCents, taskDescriptor, orgId: request.orgId });
+    let bounty: any;
+    try {
+      bounty = await createBounty({ ...body, payoutCents, taskDescriptor, orgId: request.orgId });
+    } catch (err: any) {
+      const msg = String(err?.message ?? err);
+      if (msg.startsWith('blocked_domain:')) {
+        return reply.code(403).send({ error: { code: 'blocked_domain', message: msg } });
+      }
+      return reply.code(400).send({ error: { code: 'invalid', message: msg } });
+    }
     await writeAuditEvent({
       actorType: 'buyer_api_key',
       actorId: request.apiKeyId ?? null,
@@ -1598,12 +1693,30 @@ export function buildServer() {
     const checks = await Promise.all(bounty.allowedOrigins.map((o) => originAllowed(bounty.orgId, o)));
     const allVerified = checks.every(Boolean);
     if (!allVerified) return reply.code(400).send({ error: { code: 'origin_not_verified', message: 'allowedOrigins must be verified' } });
+
+    try {
+      await Promise.all(bounty.allowedOrigins.map((o) => assertUrlNotBlocked(o)));
+    } catch (err: any) {
+      const msg = String(err?.message ?? err);
+      if (msg.startsWith('blocked_domain:')) return reply.code(403).send({ error: { code: 'blocked_domain', message: msg } });
+      return reply.code(400).send({ error: { code: 'invalid', message: msg } });
+    }
+
     try {
       await publishBounty(bounty.id);
     } catch (err: any) {
       const msg = String(err?.message ?? err);
       if (msg === 'insufficient_funds') {
         return reply.code(409).send({ error: { code: 'insufficient_funds', message: 'Insufficient bounty budget' } });
+      }
+      if (msg === 'daily_spend_limit_exceeded') {
+        return reply.code(409).send({ error: { code: 'daily_spend_limit_exceeded', message: 'Daily spend limit exceeded' } });
+      }
+      if (msg === 'monthly_spend_limit_exceeded') {
+        return reply.code(409).send({ error: { code: 'monthly_spend_limit_exceeded', message: 'Monthly spend limit exceeded' } });
+      }
+      if (msg === 'max_open_jobs_exceeded') {
+        return reply.code(409).send({ error: { code: 'max_open_jobs_exceeded', message: 'Max open jobs exceeded' } });
       }
       throw err;
     }
@@ -1667,7 +1780,7 @@ export function buildServer() {
     if (!request.sessionId) return reply.code(403).send({ error: { code: 'forbidden', message: 'session required' } });
     const rows = await db
       .selectFrom('org_api_keys')
-      .select(['id', 'name', 'key_prefix', 'created_at', 'revoked_at'])
+      .select(['id', 'name', 'key_prefix', 'created_at', 'revoked_at', 'last_used_at'])
       .where('org_id', '=', request.orgId)
       .orderBy('created_at', 'desc')
       .execute();
@@ -1678,6 +1791,7 @@ export function buildServer() {
         keyPrefix: r.key_prefix,
         createdAt: r.created_at,
         revokedAt: r.revoked_at ?? null,
+        lastUsedAt: r.last_used_at ?? null,
       })),
     };
   });
@@ -1728,10 +1842,47 @@ export function buildServer() {
 
   app.get('/api/worker/me', { preHandler: (app as any).authenticateWorker }, async (request: any) => {
     const worker: Worker = request.worker;
-    return { workerId: worker.id, status: worker.status, displayName: worker.displayName, capabilities: worker.capabilities };
+    const row = await db
+      .selectFrom('workers')
+      .select(['payout_chain', 'payout_address', 'payout_address_verified_at'])
+      .where('id', '=', worker.id)
+      .executeTakeFirst();
+    return {
+      workerId: worker.id,
+      status: worker.status,
+      displayName: worker.displayName,
+      capabilities: worker.capabilities,
+      payout: {
+        chain: row?.payout_chain ?? null,
+        address: row?.payout_address ?? null,
+        verifiedAt: row?.payout_address_verified_at ?? null,
+      },
+    };
   });
 
   // Worker payout address registration (Base)
+  app.post(
+    '/api/worker/payout-address/message',
+    { preHandler: (app as any).authenticateWorker, schema: { body: workerPayoutAddressMessageSchema } },
+    async (request: any, reply) => {
+      const worker: Worker = request.worker;
+      const body = request.body as any;
+      const chain = String(body.chain);
+      const address = String(body.address);
+
+      if (chain !== 'base') return reply.code(400).send({ error: { code: 'invalid', message: 'Unsupported chain' } });
+      let normalized: string;
+      try {
+        normalized = getAddress(address);
+      } catch {
+        return reply.code(400).send({ error: { code: 'invalid', message: 'Invalid address' } });
+      }
+
+      const message = `Proofwork payout address verification\nworkerId=${worker.id}\nchain=${chain}\naddress=${normalized}`;
+      return { ok: true, chain, address: normalized, message };
+    }
+  );
+
   app.post(
     '/api/worker/payout-address',
     { preHandler: (app as any).authenticateWorker, schema: { body: workerPayoutAddressSchema } },
@@ -2796,6 +2947,96 @@ export function buildServer() {
 
     const res = await listAlarmNotificationsAdmin({ page, limit, environment, alarmName });
     return { alerts: res.rows, page, limit, total: res.total };
+  });
+
+  // Governance: global blocked domains (admin-managed).
+  app.get('/api/admin/blocked-domains', { preHandler: (app as any).authenticateAdmin }, async (request: any) => {
+    const q = (request.query ?? {}) as any;
+    const page = Math.max(1, Number(q.page ?? 1));
+    const limit = Math.max(1, Math.min(200, Number(q.limit ?? 50)));
+    const res = await listBlockedDomainsAdmin({ page, limit });
+    return { blockedDomains: res.rows, page, limit, total: res.total };
+  });
+
+  app.post(
+    '/api/admin/blocked-domains',
+    { preHandler: (app as any).authenticateAdmin, schema: { body: blockedDomainCreateSchema } },
+    async (request: any, reply) => {
+      const body = request.body as any;
+      try {
+        const rec = await upsertBlockedDomainAdmin({ domain: body.domain, reason: body.reason ?? null });
+        await writeAuditEvent({
+          actorType: 'admin_token',
+          actorId: null,
+          action: 'blocked_domain.upsert',
+          targetType: 'blocked_domain',
+          targetId: rec.id,
+          metadata: { domain: rec.domain },
+        });
+        return { blockedDomain: rec };
+      } catch (err: any) {
+        const msg = String(err?.message ?? err);
+        return reply.code(400).send({ error: { code: 'invalid', message: msg } });
+      }
+    }
+  );
+
+  app.delete('/api/admin/blocked-domains/:id', { preHandler: (app as any).authenticateAdmin }, async (request: any, reply) => {
+    const id = String(request.params.id ?? '');
+    const ok = await deleteBlockedDomainAdmin(id);
+    if (!ok) return reply.code(404).send({ error: { code: 'not_found', message: 'blocked domain not found' } });
+    await writeAuditEvent({
+      actorType: 'admin_token',
+      actorId: null,
+      action: 'blocked_domain.delete',
+      targetType: 'blocked_domain',
+      targetId: id,
+      metadata: {},
+    });
+    return { ok: true };
+  });
+
+  // Artifact quarantine/delete (admin): break-glass moderation tools.
+  app.post(
+    '/api/admin/artifacts/:artifactId/quarantine',
+    { preHandler: (app as any).authenticateAdmin, schema: { body: adminArtifactQuarantineSchema } },
+    async (request: any, reply) => {
+      const artifactId = String(request.params.artifactId ?? '');
+      const body = request.body as any;
+      try {
+        await quarantineArtifactObjectAdmin({ artifactId, reason: String(body.reason ?? '') });
+      } catch (err: any) {
+        const msg = String(err?.message ?? err);
+        const code = msg.includes('not_found') ? 404 : 400;
+        return reply.code(code).send({ error: { code: 'invalid', message: msg } });
+      }
+
+      await writeAuditEvent({
+        actorType: 'admin_token',
+        actorId: null,
+        action: 'artifact.quarantine',
+        targetType: 'artifact',
+        targetId: artifactId,
+        metadata: {},
+      });
+      return { ok: true };
+    }
+  );
+
+  app.post('/api/admin/artifacts/:artifactId/delete', { preHandler: (app as any).authenticateAdmin }, async (request: any, reply) => {
+    const artifactId = String(request.params.artifactId ?? '');
+    const art = await getArtifactAccessInfo(artifactId);
+    if (!art || art.deletedAt) return reply.code(404).send({ error: { code: 'not_found', message: 'artifact not found' } });
+    await deleteArtifactObject(artifactId);
+    await writeAuditEvent({
+      actorType: 'admin_token',
+      actorId: null,
+      action: 'artifact.delete',
+      targetType: 'artifact',
+      targetId: artifactId,
+      metadata: {},
+    });
+    return { ok: true };
   });
 
   // Apps registry (admin): list all apps (including disabled/non-public) for moderation.

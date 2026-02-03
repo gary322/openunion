@@ -246,6 +246,13 @@ describe('Proofwork API happy path', () => {
     const keyResp = await request(app.server).post('/api/org/api-keys').send({ email: 'buyer@example.com', password: 'password', name: 'ci' });
     const buyerToken = keyResp.body.token;
 
+    // Register the task type in the app registry so the bounty can be created.
+    const regApp = await request(app.server)
+      .post('/api/org/apps')
+      .set('Authorization', `Bearer ${buyerToken}`)
+      .send({ slug: `drops-${Date.now()}`, taskType: 'drops', name: 'Drops' });
+    expect(regApp.status).toBe(200);
+
     const bountyResp = await request(app.server)
       .post('/api/bounties')
       .set('Authorization', `Bearer ${buyerToken}`)
@@ -297,6 +304,13 @@ describe('Proofwork API happy path', () => {
 
     const keyResp = await request(app.server).post('/api/org/api-keys').send({ email: 'buyer@example.com', password: 'password', name: 'ci' });
     const buyerToken = keyResp.body.token;
+
+    // Register the task type in the app registry so the bounty can be created.
+    const regApp = await request(app.server)
+      .post('/api/org/apps')
+      .set('Authorization', `Bearer ${buyerToken}`)
+      .send({ slug: `marketplace-${Date.now()}`, taskType: 'marketplace', name: 'Marketplace' });
+    expect(regApp.status).toBe(200);
 
     const bountyResp = await request(app.server)
       .post('/api/bounties')
@@ -370,6 +384,13 @@ describe('Proofwork API happy path', () => {
     const keyResp = await request(app.server).post('/api/org/api-keys').send({ email: 'buyer@example.com', password: 'password', name: 'ci' });
     const buyerToken = keyResp.body.token;
 
+    // Register the task type in the app registry so the bounty can be created.
+    const regApp = await request(app.server)
+      .post('/api/org/apps')
+      .set('Authorization', `Bearer ${buyerToken}`)
+      .send({ slug: `clips-${Date.now()}`, taskType: 'clips', name: 'Clips' });
+    expect(regApp.status).toBe(200);
+
     const bountyResp = await request(app.server)
       .post('/api/bounties')
       .set('Authorization', `Bearer ${buyerToken}`)
@@ -382,6 +403,7 @@ describe('Proofwork API happy path', () => {
         fingerprintClassesRequired: ['desktop_us'],
         taskDescriptor: { schema_version: 'v1', type: 'clips', capability_tags: ['ffmpeg'], input_spec: {}, output_spec: {} },
       });
+    expect(bountyResp.status).toBe(200);
     await request(app.server).post(`/api/bounties/${bountyResp.body.id}/publish`).set('Authorization', `Bearer ${buyerToken}`).send();
 
     // Keep only the ffmpeg-tagged job.
@@ -412,6 +434,18 @@ describe('Proofwork API happy path', () => {
 
     const keyResp = await request(app.server).post('/api/org/api-keys').send({ email: 'buyer@example.com', password: 'password', name: 'ci' });
     const buyerToken = keyResp.body.token;
+
+    // Register task types in the app registry so bounties can be created.
+    const regA = await request(app.server)
+      .post('/api/org/apps')
+      .set('Authorization', `Bearer ${buyerToken}`)
+      .send({ slug: `type-a-${Date.now()}`, taskType: 'type_a', name: 'Type A' });
+    expect(regA.status).toBe(200);
+    const regB = await request(app.server)
+      .post('/api/org/apps')
+      .set('Authorization', `Bearer ${buyerToken}`)
+      .send({ slug: `type-b-${Date.now()}`, taskType: 'type_b', name: 'Type B' });
+    expect(regB.status).toBe(200);
 
     const bountyA = await request(app.server)
       .post('/api/bounties')

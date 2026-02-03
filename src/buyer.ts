@@ -5,6 +5,7 @@ import { hmacSha256Hex } from './auth/tokens.js';
 import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 import { lookup, resolveTxt } from 'node:dns/promises';
 import { isIP } from 'node:net';
+import { assertUrlNotBlocked } from './security/blockedDomains.js';
 
 export type OrgRole = 'owner' | 'admin' | 'editor' | 'viewer';
 export interface User {
@@ -405,6 +406,7 @@ export async function createOrgApiKey(orgId: string, name: string) {
       key_prefix: rec.keyPrefix,
       key_hash: rec.keyHash,
       revoked_at: null,
+      last_used_at: null,
       created_at: new Date(),
     })
     .execute();
@@ -424,6 +426,19 @@ export async function getApiKey(token: string) {
     .where('revoked_at', 'is', null)
     .executeTakeFirst();
   if (!rec) return undefined;
+
+  // Best-effort key usage tracking (avoid excessive writes under load).
+  // We update at most once per minute per key.
+  try {
+    const last = (rec as any).last_used_at as Date | null;
+    const tooOld = !last || Date.now() - last.getTime() > 60_000;
+    if (tooOld) {
+      await db.updateTable('org_api_keys').set({ last_used_at: new Date() }).where('id', '=', rec.id).execute();
+    }
+  } catch {
+    // ignore (non-critical)
+  }
+
   return {
     id: rec.id,
     orgId: rec.org_id,
@@ -443,6 +458,8 @@ export async function addOrigin(orgId: string, origin: string, method: Origin['m
   const id = nanoid(10);
   const token = `pw_verify_${nanoid(12)}`;
   const rec: Origin = { id, orgId, origin: normalizeOrigin(origin), status: 'pending', method, token };
+
+  await assertUrlNotBlocked(rec.origin);
 
   await db
     .insertInto('origins')

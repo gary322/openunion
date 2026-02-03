@@ -771,3 +771,81 @@ export async function deleteArtifactObject(artifactId: string) {
 
   await db.updateTable('artifacts').set({ status: 'deleted', deleted_at: new Date() }).where('id', '=', artifactId).execute();
 }
+
+export async function quarantineArtifactObjectAdmin(input: { artifactId: string; reason: string }) {
+  const artifactId = String(input.artifactId ?? '');
+  const reason = String(input.reason ?? '').trim();
+  if (!artifactId) throw new Error('artifact_not_found');
+  if (!reason) throw new Error('invalid_reason');
+
+  const row = await db.selectFrom('artifacts').selectAll().where('id', '=', artifactId).executeTakeFirst();
+  if (!row || row.deleted_at) throw new Error('artifact_not_found');
+  if (!row.storage_key) throw new Error('artifact_missing_storage_key');
+
+  const scanReasonRaw = `admin_quarantine:${reason}`;
+  const scanReason = scanReasonRaw.length > 2000 ? scanReasonRaw.slice(0, 2000) : scanReasonRaw;
+  const now = new Date();
+
+  // Idempotent: if already blocked, keep it blocked and update scan_reason best-effort.
+  if (row.status === 'blocked') {
+    await db
+      .updateTable('artifacts')
+      .set({ scan_reason: scanReason, scan_finished_at: now })
+      .where('id', '=', artifactId)
+      .execute();
+    return;
+  }
+
+  if (STORAGE_BACKEND === 's3') {
+    const kind = ((row as any).bucket_kind as BucketKind | null) ?? 'staging';
+    if (kind === 'quarantine') {
+      await db
+        .updateTable('artifacts')
+        .set({ status: 'blocked', scan_reason: scanReason, scan_finished_at: now })
+        .where('id', '=', artifactId)
+        .execute();
+      return;
+    }
+
+    const sourceBucket = bucketForKind(kind === 'clean' ? 'clean' : 'staging');
+    const quarantineBucket = bucketForKind('quarantine');
+
+    // Copy to quarantine bucket and delete from source.
+    await s3Client().send(
+      new CopyObjectCommand({
+        Bucket: quarantineBucket,
+        Key: row.storage_key,
+        CopySource: `${sourceBucket}/${row.storage_key}`,
+        ContentType: row.content_type ?? undefined,
+        MetadataDirective: 'COPY',
+      })
+    );
+    await s3Client().send(new DeleteObjectCommand({ Bucket: sourceBucket, Key: row.storage_key }));
+
+    await db
+      .updateTable('artifacts')
+      .set({
+        status: 'blocked',
+        bucket_kind: 'quarantine',
+        scan_engine: (row as any).scan_engine ?? 'admin',
+        scan_finished_at: now,
+        scan_reason: scanReason,
+        quarantine_key: row.storage_key,
+      })
+      .where('id', '=', artifactId)
+      .execute();
+    return;
+  }
+
+  // Local backend: keep the bytes on disk but block access via the API.
+  await db
+    .updateTable('artifacts')
+    .set({
+      status: 'blocked',
+      scan_engine: (row as any).scan_engine ?? 'admin',
+      scan_finished_at: now,
+      scan_reason: scanReason,
+    })
+    .where('id', '=', artifactId)
+    .execute();
+}
