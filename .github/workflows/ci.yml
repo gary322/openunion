@@ -55,6 +55,9 @@ jobs:
       - name: Unit/integration tests
         run: npm test
 
+      - name: Typecheck/build (tsc)
+        run: npm run build
+
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
 
