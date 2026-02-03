@@ -1,0 +1,165 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      deploy_production:
+        description: "Deploy to production after staging succeeds"
+        required: false
+        default: "false"
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-east-1
+  ACCOUNT_ID: "542672133063"
+  ECR_APP_REPO: 542672133063.dkr.ecr.us-east-1.amazonaws.com/proofwork
+  ECR_VERIFIER_REPO: 542672133063.dkr.ecr.us-east-1.amazonaws.com/proofwork-verifier-gateway
+  STAGING_BASE_URL: http://34.227.117.192
+  PROD_BASE_URL: http://3.95.152.254
+  STAGING_ROLE_ARN: arn:aws:iam::542672133063:role/openunion-github-staging-deploy
+  PROD_ROLE_ARN: arn:aws:iam::542672133063:role/openunion-github-prod-deploy
+
+jobs:
+  build_and_push:
+    name: Build + Push Images
+    runs-on: ubuntu-latest
+    environment: staging
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      app_image: ${{ steps.meta.outputs.app_image }}
+      verifier_image: ${{ steps.meta.outputs.verifier_image }}
+      sha7: ${{ steps.meta.outputs.sha7 }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.STAGING_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Compute image tags
+        id: meta
+        run: |
+          set -euo pipefail
+          SHA7="${GITHUB_SHA::7}"
+          echo "sha7=$SHA7" >> "$GITHUB_OUTPUT"
+          echo "app_image=${ECR_APP_REPO}:sha-${SHA7}" >> "$GITHUB_OUTPUT"
+          echo "verifier_image=${ECR_VERIFIER_REPO}:sha-${SHA7}" >> "$GITHUB_OUTPUT"
+
+      - name: Build + push app image
+        run: |
+          set -euo pipefail
+          docker build -t "${{ steps.meta.outputs.app_image }}" .
+          docker push "${{ steps.meta.outputs.app_image }}"
+
+      - name: Build + push verifier-gateway image
+        run: |
+          set -euo pipefail
+          docker build -f services/verifier-gateway/Dockerfile -t "${{ steps.meta.outputs.verifier_image }}" .
+          docker push "${{ steps.meta.outputs.verifier_image }}"
+
+  deploy_staging:
+    name: Deploy Staging + Smoke
+    runs-on: ubuntu-latest
+    needs: build_and_push
+    environment: staging
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node (for smoke script)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies (for smoke script)
+        run: npm ci
+
+      - name: Install Playwright chromium (for Universal Worker smoke)
+        run: npx playwright install --with-deps chromium
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.STAGING_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Deploy ECS (staging)
+        run: |
+          set -euo pipefail
+          chmod +x scripts/deploy/ecs_deploy.sh
+          ENVIRONMENT=staging \
+          APP_IMAGE_URI="${{ needs.build_and_push.outputs.app_image }}" \
+          VERIFIER_IMAGE_URI="${{ needs.build_and_push.outputs.verifier_image }}" \
+          AWS_REGION="${AWS_REGION}" \
+          bash scripts/deploy/ecs_deploy.sh
+
+      - name: Smoke test (staging)
+        env:
+          BASE_URL: ${{ env.STAGING_BASE_URL }}
+        run: |
+          set -euo pipefail
+          export SMOKE_ADMIN_TOKEN
+          SMOKE_ADMIN_TOKEN="$(aws secretsmanager get-secret-value --region "${AWS_REGION}" --secret-id "proofwork-staging/ADMIN_TOKEN" --query SecretString --output text)"
+          npm run smoke:remote
+
+  deploy_production:
+    name: Deploy Production + Smoke
+    runs-on: ubuntu-latest
+    needs: [deploy_staging, build_and_push]
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy_production == 'true' }}
+    environment: production
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node (for smoke script)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies (for smoke script)
+        run: npm ci
+
+      - name: Install Playwright chromium (for Universal Worker smoke)
+        run: npx playwright install --with-deps chromium
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.PROD_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Deploy ECS (production)
+        run: |
+          set -euo pipefail
+          chmod +x scripts/deploy/ecs_deploy.sh
+          ENVIRONMENT=production \
+          APP_IMAGE_URI="${{ needs.build_and_push.outputs.app_image }}" \
+          VERIFIER_IMAGE_URI="${{ needs.build_and_push.outputs.verifier_image }}" \
+          AWS_REGION="${AWS_REGION}" \
+          bash scripts/deploy/ecs_deploy.sh
+
+      - name: Smoke test (production)
+        env:
+          BASE_URL: ${{ env.PROD_BASE_URL }}
+        run: |
+          set -euo pipefail
+          export SMOKE_ADMIN_TOKEN
+          SMOKE_ADMIN_TOKEN="$(aws secretsmanager get-secret-value --region "${AWS_REGION}" --secret-id "proofwork-prod/ADMIN_TOKEN" --query SecretString --output text)"
+          npm run smoke:remote
