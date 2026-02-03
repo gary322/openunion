@@ -21,20 +21,6 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 20
-      minio:
-        image: minio/minio:latest
-        env:
-          MINIO_ROOT_USER: minioadmin
-          MINIO_ROOT_PASSWORD: minioadmin
-        ports:
-          - 9000:9000
-          - 9001:9001
-        options: >-
-          --health-cmd "curl -f http://localhost:9000/minio/health/live || exit 1"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 20
-        command: server /data --console-address ":9001"
 
     env:
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/proofwork
@@ -91,20 +77,6 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 20
-      minio:
-        image: minio/minio:latest
-        env:
-          MINIO_ROOT_USER: minioadmin
-          MINIO_ROOT_PASSWORD: minioadmin
-        ports:
-          - 9000:9000
-          - 9001:9001
-        options: >-
-          --health-cmd "curl -f http://localhost:9000/minio/health/live || exit 1"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 20
-        command: server /data --console-address ":9001"
       clamav:
         image: clamav/clamav:stable
         ports:
@@ -139,6 +111,32 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
+
+      - name: Start MinIO (local S3)
+        run: |
+          set -euo pipefail
+          docker run -d --name minio \
+            -p 9000:9000 -p 9001:9001 \
+            -e MINIO_ROOT_USER=minioadmin \
+            -e MINIO_ROOT_PASSWORD=minioadmin \
+            minio/minio:latest server /data --console-address ":9001"
+          for i in {1..60}; do
+            if curl -fsS http://localhost:9000/minio/health/live >/dev/null; then
+              echo "minio ok"
+              break
+            fi
+            sleep 1
+          done
+
+      - name: Create MinIO buckets
+        run: |
+          set -euo pipefail
+          docker run --rm --network host minio/mc:latest sh -c '
+            mc alias set local http://localhost:9000 minioadmin minioadmin;
+            mc mb -p local/proofwork-staging || true;
+            mc mb -p local/proofwork-clean || true;
+            mc mb -p local/proofwork-quarantine || true;
+          '
 
       - name: Install dependencies
         run: npm ci
