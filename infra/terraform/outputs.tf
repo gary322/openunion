@@ -14,8 +14,8 @@ output "cloudfront_domain" {
 }
 
 output "router_public_ip" {
-  value       = var.enable_router_instance ? aws_eip.router[0].public_ip : null
-  description = "Router Elastic IP when enable_router_instance=true."
+  value       = var.enable_router_instance ? (var.router_use_eip ? aws_eip.router[0].public_ip : aws_instance.router[0].public_ip) : null
+  description = "Router public IP when enable_router_instance=true (EIP if router_use_eip=true, otherwise the instance public IP)."
 }
 
 output "router_public_dns" {

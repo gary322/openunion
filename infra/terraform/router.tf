@@ -58,8 +58,10 @@ resource "aws_instance" "router" {
   # Prefer the 2nd subnet if present (commonly us-east-1a in default VPCs).
   subnet_id = length(local.public_subnet_ids) > 1 ? local.public_subnet_ids[1] : local.public_subnet_ids[0]
 
-  vpc_security_group_ids      = [aws_security_group.router[0].id]
-  associate_public_ip_address = false
+  vpc_security_group_ids = [aws_security_group.router[0].id]
+  # When using an EIP, we don't need an ephemeral public IP. If the account is out of EIPs,
+  # fall back to the instance public IP (set router_use_eip=false).
+  associate_public_ip_address = var.router_use_eip ? false : true
 
   metadata_options {
     http_tokens = "required"
@@ -139,7 +141,7 @@ systemctl restart nginx
 }
 
 resource "aws_eip" "router" {
-  count  = var.enable_router_instance ? 1 : 0
+  count  = var.enable_router_instance && var.router_use_eip ? 1 : 0
   domain = "vpc"
 
   tags = {
@@ -148,7 +150,7 @@ resource "aws_eip" "router" {
 }
 
 resource "aws_eip_association" "router" {
-  count         = var.enable_router_instance ? 1 : 0
+  count         = var.enable_router_instance && var.router_use_eip ? 1 : 0
   instance_id   = aws_instance.router[0].id
   allocation_id = aws_eip.router[0].id
 }

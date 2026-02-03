@@ -59,6 +59,12 @@ variable "router_instance_type" {
   description = "Instance type for the optional router reverse-proxy."
 }
 
+variable "router_use_eip" {
+  type        = bool
+  default     = true
+  description = "When enable_router_instance=true, whether to allocate and attach an Elastic IP. If your account has EIP quota limits, set this to false and use the instance public IP."
+}
+
 variable "vpc_id" {
   type        = string
   default     = ""

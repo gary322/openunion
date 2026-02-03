@@ -87,7 +87,9 @@ locals {
       var.acm_certificate_arn != "" ? "https://${aws_lb.api[0].dns_name}" : "http://${aws_lb.api[0].dns_name}"
       ) : (
       local.cloudfront_enabled ? "https://${aws_cloudfront_distribution.router[0].domain_name}" : (
-        var.enable_router_instance ? "http://${aws_eip.router[0].public_ip}" : ""
+        var.enable_router_instance ? (
+          var.router_use_eip ? "http://${aws_eip.router[0].public_ip}" : "http://${aws_instance.router[0].public_ip}"
+        ) : ""
       )
     )
   )
