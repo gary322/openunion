@@ -32,6 +32,13 @@ DEPLOYER_PRIVATE_KEY=0x... \\
 npx tsx contracts/scripts/deploy-splitter.ts
 ```
 
+Secure option (deploy from AWS KMS key, no private key at rest):
+```bash
+RPC_URL=https://mainnet.base.org \\
+KMS_PAYOUT_KEY_ID=... \\
+npx tsx contracts/scripts/deploy-splitter-kms.ts
+```
+
 Record the output field:
 - `payoutSplitter` → set this as `BASE_PAYOUT_SPLITTER_ADDRESS`.
 

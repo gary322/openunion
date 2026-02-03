@@ -193,8 +193,9 @@ export async function signAndBroadcastTx(input: {
   gasLimit: bigint;
   maxFeePerGas: bigint;
   maxPriorityFeePerGas: bigint;
-  to: string;
+  to?: string | null;
   data: string;
+  value?: bigint;
 }): Promise<{ from: string; txHash: string; signedTx: string }> {
   const chainId = input.chainId ?? evmChainId();
   const from = await input.signer.getAddress();
@@ -202,12 +203,12 @@ export async function signAndBroadcastTx(input: {
   const tx = Transaction.from({
     type: 2,
     chainId,
-    to: input.to,
+    to: input.to ?? undefined,
     nonce: Number(input.nonce),
     gasLimit: input.gasLimit,
     maxFeePerGas: input.maxFeePerGas,
     maxPriorityFeePerGas: input.maxPriorityFeePerGas,
-    value: 0n,
+    value: input.value ?? 0n,
     data: input.data,
   });
 
