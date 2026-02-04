@@ -3,8 +3,9 @@ import { spawn } from 'child_process';
 import { execFileSync } from 'child_process';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { Contract, HDNodeWallet, JsonRpcProvider, Wallet } from 'ethers';
+import { Contract, HDNodeWallet, JsonRpcProvider, Wallet, getAddress } from 'ethers';
 import { nanoid } from 'nanoid';
+import request from 'supertest';
 import { buildServer } from '../src/server.js';
 import { db } from '../src/db/client.js';
 import { resetStore, addPayout, addSubmission, createWorker } from '../src/store.js';
@@ -107,13 +108,13 @@ describe('Crypto payout E2E (local chain)', () => {
     process.env.BASE_PAYOUT_SPLITTER_ADDRESS = deployed.payoutSplitter;
     process.env.BASE_CONFIRMATIONS_REQUIRED = '1';
 
-    // Proofwork fee = 1% (default), paid to hardhat account 2.
+    // Proofwork fee = 1% (default), paid to a fresh wallet per test to avoid state bleed across tests.
     process.env.PROOFWORK_FEE_BPS = '100';
-    const proofworkWallet = HDNodeWallet.fromPhrase(HARDHAT_MNEMONIC, undefined, "m/44'/60'/0'/0/2");
+    const proofworkWallet = Wallet.createRandom();
     process.env.PROOFWORK_FEE_WALLET_BASE = proofworkWallet.address;
 
-    // Platform fee wallet = funded hardhat account 1 (set per org).
-    const platformWallet = HDNodeWallet.fromPhrase(HARDHAT_MNEMONIC, undefined, "m/44'/60'/0'/0/1");
+    // Platform fee wallet = fresh wallet per test (set per org).
+    const platformWallet = Wallet.createRandom();
 
     // Start API to seed demo bounty/org tables etc.
     const app = buildServer();
@@ -203,5 +204,107 @@ describe('Crypto payout E2E (local chain)', () => {
     expect(workerBal).toBe(10_700_000n);
     expect(platformBal).toBe(1_200_000n);
     expect(proofworkBal).toBe(100_000n);
+  });
+
+  it('blocks payouts until worker payout address is verified, then unblocks/requeues and pays', async () => {
+    if (!deployed) throw new Error('missing_deploy');
+
+    // Configure payout worker for local chain.
+    process.env.PAYMENTS_PROVIDER = 'crypto_evm_local';
+    process.env.BASE_RPC_URL = HARDHAT_RPC;
+    process.env.EVM_CHAIN_ID = '31337';
+    process.env.BASE_USDC_ADDRESS = deployed.usdc;
+    process.env.BASE_PAYOUT_SPLITTER_ADDRESS = deployed.payoutSplitter;
+    process.env.BASE_CONFIRMATIONS_REQUIRED = '1';
+
+    process.env.PROOFWORK_FEE_BPS = '100';
+    const proofworkWallet = Wallet.createRandom();
+    process.env.PROOFWORK_FEE_WALLET_BASE = proofworkWallet.address;
+
+    const platformWallet = Wallet.createRandom();
+
+    const app = buildServer();
+    await app.ready();
+
+    await db
+      .updateTable('orgs')
+      .set({ platform_fee_bps: 1000, platform_fee_wallet_address: platformWallet.address })
+      .where('id', '=', 'org_demo')
+      .execute();
+
+    const w = await createWorker('w', { browser: true });
+    const jobRow = await db.selectFrom('jobs').select(['id', 'bounty_id', 'fingerprint_class']).limit(1).executeTakeFirstOrThrow();
+
+    const submissionId = nanoid(12);
+    await addSubmission({
+      id: submissionId,
+      jobId: jobRow.id,
+      workerId: w.worker.id,
+      manifest: { manifestVersion: '1.0', jobId: jobRow.id, bountyId: jobRow.bounty_id, result: { expected: 'x', observed: 'y' } },
+      artifactIndex: [],
+      status: 'accepted',
+      createdAt: Date.now(),
+      payoutStatus: 'none',
+    } as any);
+
+    const payout = await addPayout(submissionId, w.worker.id, 1200);
+    const { handlePayoutRequested, handlePayoutConfirmRequested } = await import('../workers/handlers.js');
+
+    // Payout should not throw; it should block until payout address is configured.
+    await handlePayoutRequested({ payoutId: payout.id });
+
+    const blocked = await db.selectFrom('payouts').select(['blocked_reason']).where('id', '=', payout.id).executeTakeFirstOrThrow();
+    expect(blocked.blocked_reason).toBe('worker_payout_address_missing');
+
+    const t0 = await db
+      .selectFrom('payout_transfers')
+      .select(({ fn }) => fn.countAll<number>().as('c'))
+      .where('payout_id', '=', payout.id)
+      .executeTakeFirstOrThrow();
+    expect(Number((t0 as any).c ?? 0)).toBe(0);
+
+    // Configure payout address via worker endpoint; it should unblock + requeue pending payouts.
+    const workerWallet = Wallet.createRandom();
+    const addr = getAddress(workerWallet.address);
+    const message = `Proofwork payout address verification\nworkerId=${w.worker.id}\nchain=base\naddress=${addr}`;
+    const signature = await workerWallet.signMessage(message);
+
+    const setRes = await request(app.server)
+      .post('/api/worker/payout-address')
+      .set('Authorization', `Bearer ${w.token}`)
+      .send({ chain: 'base', address: addr, signature });
+    expect(setRes.status).toBe(200);
+    expect(Number(setRes.body.unblockedPayouts ?? 0)).toBeGreaterThanOrEqual(1);
+
+    const unblocked = await db.selectFrom('payouts').select(['blocked_reason']).where('id', '=', payout.id).executeTakeFirstOrThrow();
+    expect(unblocked.blocked_reason).toBeNull();
+
+    const evt = await db
+      .selectFrom('outbox_events')
+      .select(['status'])
+      .where('topic', '=', 'payout.requested')
+      .where('idempotency_key', '=', `payout:${payout.id}`)
+      .executeTakeFirst();
+    expect(evt?.status).toBe('pending');
+
+    // Execute the payout now that payout address is verified.
+    await handlePayoutRequested({ payoutId: payout.id });
+
+    for (let i = 0; i < 20; i++) {
+      try {
+        await handlePayoutConfirmRequested({ payoutId: payout.id });
+        break;
+      } catch (err: any) {
+        const msg = String(err?.message ?? err);
+        if (msg.includes('tx_receipt_pending') || msg.includes('tx_not_enough_confirmations')) {
+          await wait(250);
+          continue;
+        }
+        throw err;
+      }
+    }
+
+    const payoutRow = await db.selectFrom('payouts').selectAll().where('id', '=', payout.id).executeTakeFirstOrThrow();
+    expect(payoutRow.status).toBe('paid');
   });
 });

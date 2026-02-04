@@ -44,14 +44,14 @@ describe('OpenClaw Proofwork Universal Worker integration', () => {
     await app.close();
   });
 
-  async function makeMockOpenClawBin(): Promise<string> {
-    const dir = await mkdtemp(join(tmpdir(), 'mock-openclaw-'));
-    const bin = join(dir, 'openclaw');
-    const pngBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00]);
-    const script = `#!/usr/bin/env node
-import fs from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
+	  async function makeMockOpenClawBin(): Promise<string> {
+	    const dir = await mkdtemp(join(tmpdir(), 'mock-openclaw-'));
+	    const bin = join(dir, 'openclaw');
+	    const jpegBytes = Buffer.from([0xff, 0xd8, 0xff, 0xdb, 0x00, 0x43, 0x00, 0x05, 0x05, 0x05, 0x05]);
+	    const script = `#!/usr/bin/env node
+	import fs from "node:fs/promises";
+	import os from "node:os";
+	import path from "node:path";
 
 const argv = process.argv.slice(2);
 
@@ -120,6 +120,14 @@ async function main() {
   const cmd = parsed.cmd;
   const rest = parsed.rest;
 
+  if (cmd === "create-profile") {
+    out({ ok: true });
+    return;
+  }
+  if (cmd === "start") {
+    out({ ok: true });
+    return;
+  }
   if (cmd === "open") {
     const url = rest[0] ?? "";
     await writeState(stateFile, { url });
@@ -178,18 +186,23 @@ async function main() {
     }
     out({ result: "ok" });
     return;
-  }
-  if (cmd === "screenshot") {
-    const outIdx = argv.indexOf("--out");
-    const outPath =
-      outIdx >= 0 && argv[outIdx + 1]
-        ? argv[outIdx + 1]
-        : path.join(os.tmpdir(), "mock_openclaw_" + Date.now() + "_" + Math.random().toString(16).slice(2) + ".png");
-    const bytes = Buffer.from([${Array.from(pngBytes).join(',')}]);
-    await fs.writeFile(outPath, bytes);
-    out({ path: outPath });
-    return;
-  }
+	  }
+	  if (cmd === "screenshot") {
+	    // Match OpenClaw's screenshot CLI: no --target-id and no --out.
+	    if (argv.includes("--target-id")) {
+	      console.error("error: unknown option '--target-id'");
+	      process.exit(1);
+	    }
+	    if (argv.includes("--out")) {
+	      console.error("error: unknown option '--out'");
+	      process.exit(1);
+	    }
+	    const outPath = path.join(os.tmpdir(), "mock_openclaw_" + Date.now() + "_" + Math.random().toString(16).slice(2) + ".jpg");
+	    const bytes = Buffer.from([${Array.from(jpegBytes).join(',')}]);
+	    await fs.writeFile(outPath, bytes);
+	    out({ path: outPath });
+	    return;
+	  }
   if (cmd === "close") {
     return;
   }

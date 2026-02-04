@@ -117,6 +117,32 @@ function sha256Hex(buf) {
   return createHash("sha256").update(buf).digest("hex");
 }
 
+function detectPngOrJpeg(bytes) {
+  if (!Buffer.isBuffer(bytes) || bytes.byteLength < 3) return null;
+
+  // PNG signature: 89 50 4E 47 0D 0A 1A 0A
+  if (
+    bytes.byteLength >= 8 &&
+    bytes[0] === 0x89 &&
+    bytes[1] === 0x50 &&
+    bytes[2] === 0x4e &&
+    bytes[3] === 0x47 &&
+    bytes[4] === 0x0d &&
+    bytes[5] === 0x0a &&
+    bytes[6] === 0x1a &&
+    bytes[7] === 0x0a
+  ) {
+    return { contentType: "image/png", ext: "png" };
+  }
+
+  // JPEG signature: FF D8 FF
+  if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+    return { contentType: "image/jpeg", ext: "jpg" };
+  }
+
+  return null;
+}
+
 let statusState = {};
 
 async function writeStatus(patch) {
@@ -384,6 +410,70 @@ async function ensureWorkerToken() {
   return { token, workerId };
 }
 
+async function maybeConfigurePayoutAddress({ token }) {
+  const addressRaw = String(process.env.PROOFWORK_PAYOUT_ADDRESS ?? "").trim();
+  if (!addressRaw) return;
+  const chain = String(process.env.PROOFWORK_PAYOUT_CHAIN ?? "base").trim() || "base";
+  const signature = String(process.env.PROOFWORK_PAYOUT_SIGNATURE ?? "").trim();
+
+  // If already configured, do nothing.
+  try {
+    const me = await apiFetch("/api/worker/me", { token });
+    const currentAddress = String(me.json?.payout?.address ?? "").trim();
+    const verifiedAt = me.json?.payout?.verifiedAt ?? null;
+    if (me.resp.ok && currentAddress && verifiedAt) {
+      await writeStatus({ payout: { configured: true, chain: me.json?.payout?.chain ?? null, address: currentAddress, verifiedAt } });
+      return;
+    }
+  } catch {
+    // ignore
+  }
+
+  if (!signature) {
+    try {
+      const msg = await apiFetch("/api/worker/payout-address/message", {
+        token,
+        method: "POST",
+        body: { chain, address: addressRaw },
+      });
+      const message = String(msg.json?.message ?? "").trim();
+      if (msg.resp.ok && message) {
+        console.error(
+          [
+            `[payout] payout address is not configured yet.`,
+            `[payout] Sign this message with ${addressRaw} and set PROOFWORK_PAYOUT_SIGNATURE (or plugin config payoutSignature):`,
+            message,
+          ].join("\n"),
+        );
+      } else {
+        console.error(`[payout] payout address is not configured yet (missing signature)`);
+      }
+    } catch {
+      console.error(`[payout] payout address is not configured yet (missing signature)`);
+    }
+    await writeStatus({ payout: { configured: false, chain, address: addressRaw, missingSignature: true } });
+    return;
+  }
+
+  try {
+    const set = await apiFetch("/api/worker/payout-address", {
+      token,
+      method: "POST",
+      body: { chain, address: addressRaw, signature },
+    });
+    if (!set.resp.ok) {
+      console.error(`[payout] payout address set failed status=${set.resp.status}`, set.json);
+      await writeStatus({ payout: { configured: false, chain, address: addressRaw, lastError: `set_failed:${set.resp.status}` } });
+      return;
+    }
+    console.log(`[payout] payout address verified: ${String(set.json?.address ?? addressRaw)}`);
+    await writeStatus({ payout: { configured: true, chain: set.json?.chain ?? chain, address: set.json?.address ?? addressRaw } });
+  } catch (err) {
+    console.error(`[payout] payout address set error: ${String(err?.message ?? err)}`);
+    await writeStatus({ payout: { configured: false, chain, address: addressRaw, lastError: String(err?.message ?? err) } });
+  }
+}
+
 function rewriteArtifactFinalUrlToApiBase(finalUrl) {
   // If PUBLIC_BASE_URL differs from this skill's configured API base URL, rewrite the origin
   // for /api/artifacts/* URLs so we can poll scan readiness reliably.
@@ -576,6 +666,29 @@ async function runBinary(cmd, args, opts = {}) {
   const code = await new Promise((resolve) => child.on("close", resolve));
   clearTimeout(timer);
   return { code: Number(code ?? 1), stdout, stderr };
+}
+
+let openclawBrowserReady = false;
+async function ensureOpenClawBrowserReady() {
+  if (openclawBrowserReady) return;
+  if (!OPENCLAW_BROWSER_PROFILE) return;
+
+  // Best-effort create profile (ignore errors: profile may already exist).
+  try {
+    await runOpenClaw(["browser", "create-profile", "--name", OPENCLAW_BROWSER_PROFILE, "--json"], { timeoutMs: 20_000 });
+  } catch (err) {
+    debugLog("openclaw create-profile ignored", String(err?.message ?? err));
+  }
+
+  // Start the browser control server for this profile (expected to be idempotent in OpenClaw).
+  try {
+    await runOpenClaw(["browser", "start", "--json"], { timeoutMs: 30_000 });
+  } catch (err) {
+    const msg = String(err?.message ?? err);
+    throw new Error(`openclaw_browser_start_failed:${msg.slice(0, 300)}`);
+  }
+
+  openclawBrowserReady = true;
 }
 
 function stripOsc52AndAnsi(s) {
@@ -824,6 +937,8 @@ async function runOpenClawBrowserFlowModule(input) {
       : String(input.job?.journey?.startUrl ?? "");
   if (!startUrl) throw new Error("missing_start_url");
 
+  await ensureOpenClawBrowserReady();
+
   const allowedOrigins = input.allowedOrigins ?? compileAllowedOrigins(input.job);
   const deadlineMs = Number.isFinite(Number(input.deadlineMs)) ? Number(input.deadlineMs) : Infinity;
 
@@ -912,30 +1027,37 @@ async function runOpenClawBrowserFlowModule(input) {
           const fullPage = step?.full_page === true || step?.fullPage === true;
           const label = typeof step?.label === "string" && step.label ? step.label : `flow_screenshot_${i}`;
           logs.push(`step ${i}: screenshot label=${label} fullPage=${fullPage}`);
-          const dir = await mkdtemp(join(tmpdir(), "proofwork-openclaw-shot-"));
-          const outPath = join(dir, `${label}.png`);
+          const args = ["browser", "screenshot"];
+          if (fullPage) args.push("--full-page");
+          args.push("--type", "png", targetId, "--json");
+          const shot = await runOpenClaw(args, { timeoutMs: 45_000 });
+          let outPath = "";
           try {
-            const args = ["browser", "screenshot"];
-            if (fullPage) args.push("--full-page");
-            args.push("--target-id", targetId, "--out", outPath, "--json");
-            const shot = await runOpenClaw(args, { timeoutMs: 45_000 });
             const shotJson = parseJsonFromStdout(shot.stdout);
-            const out = String(shotJson?.path ?? outPath).trim() || outPath;
-            const bytes = await readFile(out);
-            artifacts.push(
-              await uploadArtifact({
-                token: input.token,
-                jobId: input.job.jobId,
-                filename: `${label}.png`,
-                contentType: "image/png",
-                bytes,
-                kind: "screenshot",
-                label,
-              }),
-            );
-          } finally {
-            await rm(dir, { recursive: true, force: true }).catch(() => undefined);
+            outPath = typeof shotJson?.path === "string" ? shotJson.path : "";
+          } catch {
+            // fall through
           }
+          if (!outPath) {
+            const m = String(shot.stdout ?? "").match(/\bMEDIA:([^\s]+)\s*$/m);
+            if (m?.[1]) outPath = String(m[1]).trim();
+          }
+          outPath = String(outPath).trim();
+          if (!outPath) throw new Error("openclaw_browser_screenshot_missing_path");
+          const bytes = await readFile(outPath);
+          const detected = detectPngOrJpeg(bytes);
+          if (!detected) throw new Error("screenshot_unknown_format");
+          artifacts.push(
+            await uploadArtifact({
+              token: input.token,
+              jobId: input.job.jobId,
+              filename: `${label}.${detected.ext}`,
+              contentType: detected.contentType,
+              bytes,
+              kind: "screenshot",
+              label,
+            }),
+          );
         } else if (op === "extract") {
           const key = typeof step?.key === "string" && step.key ? step.key : `extract_${i}`;
           const explicit = typeof step?.ref === "string" ? step.ref.trim() : "";
@@ -986,29 +1108,34 @@ async function runOpenClawBrowserFlowModule(input) {
     if (!artifacts.some((a) => a.kind === "screenshot" && a.label === "universal_screenshot")) {
       // Always emit a final screenshot under a stable label.
       if (Date.now() > deadlineMs) throw new Error("job_time_budget_exceeded");
-      const dir = await mkdtemp(join(tmpdir(), "proofwork-openclaw-final-"));
-      const outPath = join(dir, "screenshot.png");
+      const shot = await runOpenClaw(["browser", "screenshot", "--full-page", "--type", "png", targetId, "--json"], { timeoutMs: 45_000 });
+      let outPath = "";
       try {
-        const shot = await runOpenClaw(["browser", "screenshot", "--full-page", "--target-id", targetId, "--out", outPath, "--json"], {
-          timeoutMs: 45_000,
-        });
         const shotJson = parseJsonFromStdout(shot.stdout);
-        const out = String(shotJson?.path ?? outPath).trim() || outPath;
-        const bytes = await readFile(out);
-        artifacts.push(
-          await uploadArtifact({
-            token: input.token,
-            jobId: input.job.jobId,
-            filename: "screenshot.png",
-            contentType: "image/png",
-            bytes,
-            kind: "screenshot",
-            label: "universal_screenshot",
-          }),
-        );
-      } finally {
-        await rm(dir, { recursive: true, force: true }).catch(() => undefined);
+        outPath = typeof shotJson?.path === "string" ? shotJson.path : "";
+      } catch {
+        // fall through
       }
+      if (!outPath) {
+        const m = String(shot.stdout ?? "").match(/\bMEDIA:([^\s]+)\s*$/m);
+        if (m?.[1]) outPath = String(m[1]).trim();
+      }
+      outPath = String(outPath).trim();
+      if (!outPath) throw new Error("openclaw_browser_screenshot_missing_path");
+      const bytes = await readFile(outPath);
+      const detected = detectPngOrJpeg(bytes);
+      if (!detected) throw new Error("screenshot_unknown_format");
+      artifacts.push(
+        await uploadArtifact({
+          token: input.token,
+          jobId: input.job.jobId,
+          filename: `screenshot.${detected.ext}`,
+          contentType: detected.contentType,
+          bytes,
+          kind: "screenshot",
+          label: "universal_screenshot",
+        }),
+      );
     }
   } finally {
     await runOpenClaw(["browser", "close", targetId]).catch(() => undefined);
@@ -1048,6 +1175,8 @@ async function runOpenClawScreenshotModule(input) {
       : String(input.job?.journey?.startUrl ?? "");
   if (!startUrl) throw new Error("missing_start_url");
 
+  await ensureOpenClawBrowserReady();
+
   const allowedOrigins = input.allowedOrigins ?? compileAllowedOrigins(input.job);
   const deadlineMs = Number.isFinite(Number(input.deadlineMs)) ? Number(input.deadlineMs) : Infinity;
 
@@ -1071,11 +1200,13 @@ async function runOpenClawScreenshotModule(input) {
     const path = String(shotJson?.path ?? "").trim();
     if (!path) throw new Error("openclaw_browser_screenshot_missing_path");
     const bytes = await readFile(path);
+    const detected = detectPngOrJpeg(bytes);
+    if (!detected) throw new Error("screenshot_unknown_format");
     return await uploadArtifact({
       token: input.token,
       jobId: input.job.jobId,
-      filename: "screenshot.png",
-      contentType: "image/png",
+      filename: `screenshot.${detected.ext}`,
+      contentType: detected.contentType,
       bytes,
       kind: "screenshot",
       label: "openclaw_screenshot",
@@ -1093,6 +1224,8 @@ async function runOpenClawSnapshotModule(input) {
       ? descriptorUrl
       : String(input.job?.journey?.startUrl ?? "");
   if (!startUrl) return null;
+
+  await ensureOpenClawBrowserReady();
 
   const allowedOrigins = input.allowedOrigins ?? compileAllowedOrigins(input.job);
   const deadlineMs = Number.isFinite(Number(input.deadlineMs)) ? Number(input.deadlineMs) : Infinity;
@@ -1770,6 +1903,7 @@ async function releaseLeaseEarly(input) {
 
 async function loop() {
   const { token, workerId } = await ensureWorkerToken();
+  await maybeConfigurePayoutAddress({ token });
   const supported = supportedCapabilityTags();
   const prefer = String(process.env.PROOFWORK_PREFER_CAPABILITY_TAG ?? "").trim() || undefined;
   const requireTaskType =

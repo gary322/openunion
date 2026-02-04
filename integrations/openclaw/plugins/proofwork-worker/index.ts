@@ -71,11 +71,53 @@ type ProofworkPluginConfig = {
   denyOrigins: string[];
   openclawBin: string;
   workerScriptPath?: string;
+  payoutChain?: "base";
+  payoutAddress?: string;
+  payoutSignature?: string;
   dangerouslyEnableOpenclawAgentSummarize: boolean;
 };
 
 function sha256Hex(input: string): string {
   return createHash("sha256").update(input).digest("hex");
+}
+
+async function fetchJson(input: {
+  url: string;
+  method?: string;
+  token?: string;
+  body?: unknown;
+  timeoutMs?: number;
+}): Promise<{ status: number; ok: boolean; json: unknown; text: string }> {
+  const controller = new AbortController();
+  const timeoutMs = Number.isFinite(input.timeoutMs as any) ? Number(input.timeoutMs) : 15_000;
+  const timer = setTimeout(() => controller.abort(), Math.max(250, timeoutMs));
+  try {
+    const headers: Record<string, string> = { accept: "application/json" };
+    if (input.token) headers.authorization = `Bearer ${input.token}`;
+    let body: string | undefined;
+    if (input.body !== undefined) {
+      headers["content-type"] = "application/json";
+      body = JSON.stringify(input.body);
+    }
+    const resp = await fetch(input.url, {
+      method: input.method ?? (input.body === undefined ? "GET" : "POST"),
+      headers,
+      body,
+      signal: controller.signal,
+    });
+    const text = await resp.text();
+    let json: unknown = null;
+    if (text.trim()) {
+      try {
+        json = JSON.parse(text);
+      } catch {
+        json = { raw: text.slice(0, 10_000) };
+      }
+    }
+    return { status: resp.status, ok: resp.ok, json, text };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function safeJsonParse<T>(raw: string): T | null {
@@ -211,6 +253,11 @@ function parseConfig(raw: Record<string, unknown> | undefined): ProofworkPluginC
     typeof cfg.openclawBin === "string" && cfg.openclawBin.trim() ? cfg.openclawBin.trim() : "openclaw";
   const workerScriptPath =
     typeof cfg.workerScriptPath === "string" && cfg.workerScriptPath.trim() ? cfg.workerScriptPath.trim() : undefined;
+  const payoutChain = cfg.payoutChain === "base" ? "base" : undefined;
+  const payoutAddress =
+    typeof cfg.payoutAddress === "string" && cfg.payoutAddress.trim() ? cfg.payoutAddress.trim() : undefined;
+  const payoutSignature =
+    typeof cfg.payoutSignature === "string" && cfg.payoutSignature.trim() ? cfg.payoutSignature.trim() : undefined;
   const dangerouslyEnableOpenclawAgentSummarize =
     typeof cfg.dangerouslyEnableOpenclawAgentSummarize === "boolean"
       ? cfg.dangerouslyEnableOpenclawAgentSummarize
@@ -243,6 +290,9 @@ function parseConfig(raw: Record<string, unknown> | undefined): ProofworkPluginC
     denyOrigins,
     openclawBin,
     workerScriptPath,
+    payoutChain,
+    payoutAddress,
+    payoutSignature,
     dangerouslyEnableOpenclawAgentSummarize,
   };
 }
@@ -261,7 +311,7 @@ function redactEnvForLogs(env: Record<string, string | undefined>): Record<strin
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(env)) {
     if (!v) continue;
-    if (/token|secret|password|key/i.test(k)) out[k] = "<redacted>";
+    if (/token|secret|password|key|signature|private/i.test(k)) out[k] = "<redacted>";
     else out[k] = v.length > 200 ? `${v.slice(0, 200)}…` : v;
   }
   return out;
@@ -272,6 +322,16 @@ function parseArgsCsv(s: string | undefined): string[] {
     .split(",")
     .map((x) => x.trim())
     .filter(Boolean);
+}
+
+function getWorkerTokenFromTokenFile(tokenFile: string): { token: string; workerId?: string } | null {
+  const raw = readTextIfExists(tokenFile);
+  if (!raw) return null;
+  const j = safeJsonParse<{ token?: unknown; workerId?: unknown }>(raw);
+  const token = typeof j?.token === "string" ? j.token.trim() : "";
+  const workerId = typeof j?.workerId === "string" ? j.workerId.trim() : undefined;
+  if (!token) return null;
+  return { token, workerId };
 }
 
 function computeStateRoot(params: { stateDir: string; workspaceDir?: string }): { root: string; workspaceHash: string } {
@@ -346,6 +406,10 @@ function buildWorkerEnv(params: {
   if (params.cfg.allowOrigins.length) base.PROOFWORK_ALLOW_ORIGINS = params.cfg.allowOrigins.join(",");
   if (params.cfg.denyOrigins.length) base.PROOFWORK_DENY_ORIGINS = params.cfg.denyOrigins.join(",");
 
+  if (params.cfg.payoutChain) base.PROOFWORK_PAYOUT_CHAIN = params.cfg.payoutChain;
+  if (params.cfg.payoutAddress) base.PROOFWORK_PAYOUT_ADDRESS = params.cfg.payoutAddress;
+  if (params.cfg.payoutSignature) base.PROOFWORK_PAYOUT_SIGNATURE = params.cfg.payoutSignature;
+
   base.PROOFWORK_DANGEROUS_ENABLE_OPENCLAW_AGENT_SUMMARIZE = params.cfg.dangerouslyEnableOpenclawAgentSummarize
     ? "true"
     : "false";
@@ -368,6 +432,8 @@ export const __internal = {
   isPidAlive,
   redactEnvForLogs,
   parseArgsCsv,
+  fetchJson,
+  getWorkerTokenFromTokenFile,
 };
 
 export default {
@@ -603,7 +669,7 @@ export default {
 
     api.registerCommand({
       name: "proofwork",
-      description: "Manage the Proofwork worker (status|pause|resume|token rotate|browser reset)",
+      description: "Manage the Proofwork worker (status|pause|resume|token rotate|browser reset|payout)",
       acceptsArgs: true,
       requireAuth: true,
       handler: async (ctx) => {
@@ -642,6 +708,109 @@ export default {
               .filter(Boolean)
               .join("\n"),
           };
+        }
+
+        if (verb === "payout") {
+          const sub = (rest[0] ?? "status").toLowerCase();
+          const subArgs = rest.slice(1);
+          const activeCfg = (() => {
+            if (cfg) return cfg;
+            try {
+              return parseConfig(api.pluginConfig);
+            } catch {
+              return null;
+            }
+          })();
+          if (!activeCfg) {
+            return { text: "missing config: set plugins.entries.proofwork-worker.config.apiBaseUrl first" };
+          }
+
+          const tokenMeta = getWorkerTokenFromTokenFile(paths.tokenFile);
+          if (!tokenMeta?.token) {
+            return {
+              text:
+                "worker token not found yet. Wait for the worker to start + register, or run `/proofwork resume` if paused.",
+            };
+          }
+
+          const apiBaseUrl = activeCfg.apiBaseUrl.replace(/\/$/, "");
+          const withBase = (p: string) => `${apiBaseUrl}${p.startsWith("/") ? p : `/${p}`}`;
+
+          if (sub === "status") {
+            const me = await fetchJson({ url: withBase("/api/worker/me"), token: tokenMeta.token, timeoutMs: 10_000 });
+            if (!me.ok) {
+              return {
+                text: `payout status failed: http ${me.status} ${typeof (me.json as any)?.error?.message === "string" ? (me.json as any).error.message : ""}`.trim(),
+              };
+            }
+            const workerId = String((me.json as any)?.workerId ?? tokenMeta.workerId ?? "");
+            const chain = String((me.json as any)?.payout?.chain ?? "");
+            const address = String((me.json as any)?.payout?.address ?? "");
+            const verifiedAt = (me.json as any)?.payout?.verifiedAt ?? null;
+            return {
+              text: [
+                "proofwork payout",
+                workerId ? `- workerId: ${workerId}` : undefined,
+                chain ? `- chain: ${chain}` : `- chain: (not set)`,
+                address ? `- address: ${address}` : `- address: (not set)`,
+                verifiedAt ? `- verifiedAt: ${String(verifiedAt)}` : `- verifiedAt: (not verified)`,
+              ]
+                .filter(Boolean)
+                .join("\n"),
+            };
+          }
+
+          if (sub === "message") {
+            const address = String(subArgs[0] ?? "").trim();
+            const chain = String(subArgs[1] ?? "base").trim() || "base";
+            if (!address) return { text: "usage: /proofwork payout message <0xAddress> [base]" };
+            const msg = await fetchJson({
+              url: withBase("/api/worker/payout-address/message"),
+              token: tokenMeta.token,
+              method: "POST",
+              body: { chain, address },
+              timeoutMs: 10_000,
+            });
+            if (!msg.ok) {
+              return {
+                text: `payout message failed: http ${msg.status} ${typeof (msg.json as any)?.error?.message === "string" ? (msg.json as any).error.message : ""}`.trim(),
+              };
+            }
+            const message = String((msg.json as any)?.message ?? "").trim();
+            if (!message) return { text: "payout message failed: missing message" };
+            return {
+              text: [
+                "Sign this message with your wallet:",
+                message,
+                "",
+                `Then run: /proofwork payout set ${address} <0xSignature> ${chain}`,
+              ].join("\n"),
+            };
+          }
+
+          if (sub === "set") {
+            const address = String(subArgs[0] ?? "").trim();
+            const signature = String(subArgs[1] ?? "").trim();
+            const chain = String(subArgs[2] ?? "base").trim() || "base";
+            if (!address || !signature) return { text: "usage: /proofwork payout set <0xAddress> <0xSignature> [base]" };
+            const set = await fetchJson({
+              url: withBase("/api/worker/payout-address"),
+              token: tokenMeta.token,
+              method: "POST",
+              body: { chain, address, signature },
+              timeoutMs: 15_000,
+            });
+            if (!set.ok) {
+              return {
+                text: `payout set failed: http ${set.status} ${typeof (set.json as any)?.error?.message === "string" ? (set.json as any).error.message : ""}`.trim(),
+              };
+            }
+            const normalized = String((set.json as any)?.address ?? address);
+            const unblocked = Number((set.json as any)?.unblockedPayouts ?? 0);
+            return { text: `payout address verified: ${normalized} (unblockedPayouts=${unblocked})` };
+          }
+
+          return { text: "usage: /proofwork payout status|message <address> [chain]|set <address> <signature> [chain]" };
         }
 
         if (verb === "pause") {
@@ -706,7 +875,7 @@ export default {
           return { text: `debug ${on ? "on" : "off"}` };
         }
 
-        return { text: "usage: /proofwork status|pause|resume|token rotate|browser reset|debug on|off" };
+        return { text: "usage: /proofwork status|pause|resume|token rotate|browser reset|debug on|off|payout ..." };
       },
     });
   },

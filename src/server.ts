@@ -2025,7 +2025,68 @@ export function buildServer() {
         metadata: { chain, address: normalized },
       });
 
-      return { ok: true, chain, address: normalized };
+      // Unblock any pending payouts that were waiting on this worker to set a payout address,
+      // and requeue payout execution (respecting hold_until).
+      const nowMs = Date.now();
+      const now = new Date(nowMs);
+      const unblocked = await db.transaction().execute(async (trx) => {
+        const rows = await trx
+          .updateTable('payouts')
+          .set({ blocked_reason: null, updated_at: now })
+          .where('worker_id', '=', worker.id)
+          .where('status', '=', 'pending')
+          .where('blocked_reason', '=', 'worker_payout_address_missing')
+          .returning(['id', 'hold_until'])
+          .execute();
+
+        for (const r of rows) {
+          const hold = (r as any).hold_until as Date | null | undefined;
+          const nextAt = hold && hold.getTime() > nowMs ? hold : now;
+          await trx
+            .insertInto('outbox_events')
+            .values({
+              id: nanoid(12),
+              topic: 'payout.requested',
+              idempotency_key: `payout:${r.id}`,
+              payload: { payoutId: r.id, workerId: worker.id },
+              status: 'pending',
+              attempts: 0,
+              available_at: nextAt,
+              locked_at: null,
+              locked_by: null,
+              last_error: null,
+              created_at: now,
+              sent_at: null,
+            })
+            .onConflict((oc) =>
+              oc.columns(['topic', 'idempotency_key']).doUpdateSet({
+                status: 'pending',
+                attempts: 0,
+                available_at: nextAt,
+                locked_at: null,
+                locked_by: null,
+                last_error: null,
+                sent_at: null,
+              })
+            )
+            .execute();
+        }
+
+        return rows.length;
+      });
+
+      if (unblocked > 0) {
+        await writeAuditEvent({
+          actorType: 'worker',
+          actorId: worker.id,
+          action: 'payout.unblock_on_payout_address_set',
+          targetType: 'worker',
+          targetId: worker.id,
+          metadata: { unblockedPayouts: unblocked },
+        });
+      }
+
+      return { ok: true, chain, address: normalized, unblockedPayouts: unblocked };
     }
   );
 
