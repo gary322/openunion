@@ -445,11 +445,22 @@ export function buildServer() {
     index: false,
   });
   // Serve runbooks/docs (read-only static). Useful for third-party onboarding and ops.
+  app.get('/docs', async (_req, reply) => reply.redirect('/docs/'));
+  app.get('/docs/openapi.yaml', async (_req, reply) => {
+    try {
+      const p = path.resolve(process.cwd(), 'openapi.yaml');
+      const body = await readFile(p, 'utf8');
+      reply.header('content-type', 'text/yaml; charset=utf-8');
+      return reply.send(body);
+    } catch {
+      return reply.code(404).send('not found');
+    }
+  });
   app.register(fastifyStatic, {
     root: path.resolve(process.cwd(), 'docs'),
     prefix: '/docs/',
     decorateReply: false,
-    index: false,
+    index: ['index.html'],
   });
 
   // Dynamic app page for registry apps (works even when no static /public/apps/<slug>/ folder exists).

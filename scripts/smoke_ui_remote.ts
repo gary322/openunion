@@ -32,6 +32,7 @@ async function main() {
     // Built-in /apps/<slug>/ pages meta-refresh to the canonical dynamic app page. Smoke should
     // hit the canonical page directly to avoid timing flakes during the redirect.
     { path: '/apps/app/github/', titleIncludes: 'GitHub' },
+    { path: '/docs/', titleIncludes: 'Docs' },
   ];
 
   const browser = await chromium.launch({ headless: true });

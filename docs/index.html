@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Proofwork • Docs</title>
+    <link rel="stylesheet" href="/ui/ui.css" />
+  </head>
+  <body class="theme-apps">
+    <header class="pw-topbar">
+      <div class="pw-topbar-inner">
+        <a class="pw-brand" href="/apps/" aria-label="Proofwork home">
+          <span class="pw-brand-badge pw-mono">PW</span>
+          Proofwork
+        </a>
+        <nav class="pw-topnav" aria-label="Primary">
+          <a class="pw-navlink" href="/apps/">Catalog</a>
+          <a class="pw-navlink" href="/buyer/">Platforms</a>
+          <a class="pw-navlink" href="/worker/">Workers</a>
+          <a class="pw-navlink" href="/admin/">Admin</a>
+          <a class="pw-navlink" href="/docs/" aria-current="page">Docs</a>
+        </nav>
+      </div>
+    </header>
+
+    <main class="pw-container">
+      <section class="pw-hero">
+        <h1>Docs</h1>
+        <p>Runbooks and onboarding guides for platforms, workers, and operators.</p>
+        <div class="pw-hero-actions">
+          <div class="pw-actions">
+            <a class="pw-btn primary" href="/docs/runbooks/ThirdPartyOnboarding.md">Third-party onboarding</a>
+            <a class="pw-btn" href="/docs/runbooks/TaskDescriptor.md">Task descriptor</a>
+            <a class="pw-btn" href="/docs/runbooks/UniversalWorker.md">Universal Worker</a>
+            <a class="pw-btn" href="/docs/runbooks/VerifierGateway.md">Verifier gateway</a>
+          </div>
+        </div>
+      </section>
+
+      <div class="pw-grid">
+        <section class="pw-card">
+          <div class="pw-card-title">
+            <h2>Onboarding</h2>
+            <span class="pw-kicker">Start here</span>
+          </div>
+          <p class="pw-muted">
+            Get a platform from zero to “first bounty published” without reading source code.
+          </p>
+          <div class="pw-stack-sm">
+            <a class="pw-link" href="/docs/runbooks/ThirdPartyOnboarding.md">Third-party onboarding</a>
+            <a class="pw-link" href="/docs/runbooks/OriginVerification.md">Origin verification</a>
+            <a class="pw-link" href="/docs/runbooks/TaskDescriptor.md">Task descriptor contract</a>
+            <a class="pw-link" href="/docs/runbooks/UniversalWorker.md">Universal Worker</a>
+          </div>
+        </section>
+
+        <section class="pw-card">
+          <div class="pw-card-title">
+            <h2>Operations</h2>
+            <span class="pw-kicker">Runbooks</span>
+          </div>
+          <p class="pw-muted">Deploy, alerts, reliability, and emergency procedures.</p>
+          <div class="pw-stack-sm">
+            <a class="pw-link" href="/docs/runbooks/Deploy.md">Deploy</a>
+            <a class="pw-link" href="/docs/runbooks/Alerting.md">Alerting</a>
+            <a class="pw-link" href="/docs/runbooks/SLOs.md">SLOs</a>
+            <a class="pw-link" href="/docs/runbooks/DR.md">Disaster recovery</a>
+            <a class="pw-link" href="/docs/runbooks/Rollback.md">Rollback</a>
+            <a class="pw-link" href="/docs/runbooks/StuckJobs.md">Stuck jobs</a>
+            <a class="pw-link" href="/docs/runbooks/DLQ.md">DLQ</a>
+          </div>
+        </section>
+
+        <section class="pw-card">
+          <div class="pw-card-title">
+            <h2>Finance</h2>
+            <span class="pw-kicker">Payouts & disputes</span>
+          </div>
+          <p class="pw-muted">How money moves, how holds work, and how disputes resolve.</p>
+          <div class="pw-stack-sm">
+            <a class="pw-link" href="/docs/runbooks/Payouts.md">Payouts</a>
+            <a class="pw-link" href="/docs/runbooks/Disputes.md">Disputes</a>
+            <a class="pw-link" href="/docs/runbooks/Tokens.md">Tokens</a>
+          </div>
+        </section>
+
+        <section class="pw-card">
+          <div class="pw-card-title">
+            <h2>Security</h2>
+            <span class="pw-kicker">Hygiene</span>
+          </div>
+          <p class="pw-muted">Rotation, scanning, and security posture evidence.</p>
+          <div class="pw-stack-sm">
+            <a class="pw-link" href="/docs/runbooks/KeyRotation.md">Key rotation</a>
+            <a class="pw-link" href="/docs/runbooks/ClamAV.md">ClamAV scanning</a>
+            <a class="pw-link" href="/docs/security/secret-scan-report-2026-02-03.md">Secret scan report</a>
+          </div>
+        </section>
+
+        <section class="pw-card">
+          <div class="pw-card-title">
+            <h2>Reference</h2>
+            <span class="pw-kicker">Specs</span>
+          </div>
+          <p class="pw-muted">API contracts and implementation reference.</p>
+          <div class="pw-stack-sm">
+            <a class="pw-link" href="/docs/openapi.yaml">OpenAPI (YAML)</a>
+            <a class="pw-link" href="/docs/runbooks/VerifierGateway.md">Verifier gateway contract</a>
+            <a class="pw-link" href="/docs/runbooks/Migrations.md">Migrations</a>
+          </div>
+        </section>
+      </div>
+
+      <footer class="pw-footer">
+        <div class="pw-muted">Docs are served read-only from the deployment. For editing, use the GitHub repo.</div>
+      </footer>
+    </main>
+  </body>
+</html>
+
