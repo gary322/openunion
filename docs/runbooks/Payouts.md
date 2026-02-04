@@ -87,7 +87,7 @@ SELECT * FROM payout_transfers WHERE payout_id = '<payoutId>' ORDER BY kind;
 ```
 
 ## Common failures
-- `worker_payout_address_missing`: worker must set `/api/worker/payout-address`
+- `worker_payout_address_missing`: worker has not configured a payout address yet. Payouts remain `pending` but are blocked with `payouts.blocked_reason='worker_payout_address_missing'` until the worker sets `/api/worker/payout-address`, at which point payouts are automatically requeued.
 - `rpc_error:*`: Base RPC unavailable / rate limited
 - `tx_reverted`: splitter reverted (often missing USDC allowance or insufficient balance)
 

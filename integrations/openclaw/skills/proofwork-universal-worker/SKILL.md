@@ -45,8 +45,21 @@ export PROOFWORK_API_BASE_URL="http://localhost:3000"
 # Optional: provide an existing worker token, otherwise the script will auto-register:
 export PROOFWORK_WORKER_TOKEN="..."
 
+# Strongly recommended: force all browser automation onto a dedicated OpenClaw profile.
+# The worker will attempt to create the profile (if missing) and start the browser control server automatically.
+export OPENCLAW_BROWSER_PROFILE="proofwork-worker"
+
 # Optional: tolerate slow S3/ClamAV async scans (default 300s)
 export PROOFWORK_ARTIFACT_SCAN_MAX_WAIT_SEC="900"
+```
+
+Optional: configure payout address (Base). If you set `PROOFWORK_PAYOUT_ADDRESS` but not a signature,
+the worker prints the exact message you need to sign.
+
+```bash
+export PROOFWORK_PAYOUT_CHAIN="base"
+export PROOFWORK_PAYOUT_ADDRESS="0x..."
+export PROOFWORK_PAYOUT_SIGNATURE="0x..."   # signature of the server-provided message
 ```
 
 2. Configure capabilities this worker supports (declared once):

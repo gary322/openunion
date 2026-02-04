@@ -37,6 +37,9 @@
       "denyOrigins": { "type": "array", "items": { "type": "string", "minLength": 1 } },
       "openclawBin": { "type": "string", "minLength": 1 },
       "workerScriptPath": { "type": "string", "minLength": 1 },
+      "payoutChain": { "type": "string", "enum": ["base"] },
+      "payoutAddress": { "type": "string", "minLength": 1 },
+      "payoutSignature": { "type": "string", "minLength": 1 },
       "dangerouslyEnableOpenclawAgentSummarize": { "type": "boolean" }
     },
     "required": ["apiBaseUrl"]
@@ -68,6 +71,9 @@
     "denyOrigins": { "label": "Deny origins", "advanced": true },
     "openclawBin": { "label": "openclaw binary", "advanced": true },
     "workerScriptPath": { "label": "Worker script path override", "advanced": true },
+    "payoutChain": { "label": "Payout chain", "advanced": true },
+    "payoutAddress": { "label": "Payout address", "advanced": true, "placeholder": "0x..." },
+    "payoutSignature": { "label": "Payout signature", "advanced": true, "placeholder": "0x..." },
     "dangerouslyEnableOpenclawAgentSummarize": { "label": "Enable OpenClaw agent summarize (dangerous)", "advanced": true }
   }
 }

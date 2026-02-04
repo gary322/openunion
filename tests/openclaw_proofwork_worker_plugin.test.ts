@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { mkdtemp, writeFile, chmod, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -220,5 +220,94 @@ describe('OpenClaw Proofwork Worker plugin (service + commands)', () => {
 
     await service.stop(ctx);
   });
-});
 
+  it('supports payout commands (status/message/set) using the persisted worker token', async () => {
+    const stateDir = await mkdtemp(join(tmpdir(), 'openclaw-state-'));
+    const workspaceDir = await mkdtemp(join(tmpdir(), 'openclaw-ws-'));
+    const stubDir = await mkdtemp(join(tmpdir(), 'openclaw-stub-'));
+    const workerScriptPath = await makeStubWorker({ dir: stubDir, kind: 'stay_alive' });
+
+    const { logger } = makeLogger();
+    let service: any = null;
+    let command: any = null;
+
+    plugin.register({
+      id: 'proofwork-worker',
+      pluginConfig: { apiBaseUrl: 'http://127.0.0.1:1234', workerScriptPath },
+      logger,
+      registerService: (s: any) => {
+        service = s;
+      },
+      registerCommand: (c: any) => {
+        command = c;
+      },
+    } as any);
+
+    const ctx = { config: {}, stateDir, workspaceDir, logger };
+    const paths = __internal.computeStateRoot({ stateDir, workspaceDir });
+    const tokenFile = join(paths.root, 'worker-token.json');
+
+    await service.start(ctx);
+    await sleep(150);
+    await writeFile(tokenFile, JSON.stringify({ workerId: 'w_1', token: 'tok_1' }) + '\n', { mode: 0o600 });
+
+    const fetchMock = vi.fn(async (url: any, init: any) => {
+      const u = String(url);
+      if (u.endsWith('/api/worker/me')) {
+        return new Response(
+          JSON.stringify({
+            workerId: 'w_1',
+            payout: { chain: null, address: null, verifiedAt: null },
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      if (u.endsWith('/api/worker/payout-address/message')) {
+        const body = init?.body ? JSON.parse(String(init.body)) : {};
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            chain: body.chain ?? 'base',
+            address: body.address ?? '0xabc',
+            message: `Proofwork payout address verification\nworkerId=w_1\nchain=${body.chain ?? 'base'}\naddress=${body.address ?? '0xabc'}`,
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      if (u.endsWith('/api/worker/payout-address')) {
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            chain: 'base',
+            address: '0xabc',
+            unblockedPayouts: 2,
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      return new Response(JSON.stringify({ error: { message: 'not found' } }), {
+        status: 404,
+        headers: { 'content-type': 'application/json' },
+      });
+    });
+
+    vi.stubGlobal('fetch', fetchMock as any);
+
+    try {
+      const st = await command.handler({ args: 'payout status' });
+      expect(String(st.text)).toContain('proofwork payout');
+      expect(String(st.text)).toContain('workerId: w_1');
+
+      const msg = await command.handler({ args: 'payout message 0xabc base' });
+      expect(String(msg.text)).toContain('Sign this message');
+      expect(String(msg.text)).toContain('Proofwork payout address verification');
+
+      const set = await command.handler({ args: 'payout set 0xabc 0xsig base' });
+      expect(String(set.text)).toContain('payout address verified');
+      expect(String(set.text)).toContain('unblockedPayouts=2');
+    } finally {
+      vi.unstubAllGlobals();
+      await service.stop(ctx);
+    }
+  });
+});

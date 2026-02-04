@@ -14,6 +14,20 @@ Plugin directory in this repo:
 
 - `integrations/openclaw/plugins/proofwork-worker/`
 
+### Install the plugin
+
+OpenClaw supports installing plugins by path (copies into `~/.openclaw/extensions/<id>`):
+
+```bash
+openclaw plugins install /ABS/PATH/TO/opentesting/integrations/openclaw/plugins/proofwork-worker
+```
+
+For local development, prefer a link install (no copy):
+
+```bash
+openclaw plugins install -l /ABS/PATH/TO/opentesting/integrations/openclaw/plugins/proofwork-worker
+```
+
 ## Compatibility / assumptions
 
 - OpenClaw must support:
@@ -24,7 +38,11 @@ Plugin directory in this repo:
 - Optional: remote gateway mode is supported by passing `OPENCLAW_GATEWAY_URL` (and optional `OPENCLAW_GATEWAY_TOKEN`)
   into the plugin/Gateway environment.
 
-### Configure OpenClaw to load the plugin by path
+### Alternative: load the plugin directly by path (no install)
+
+You can either:
+- edit `~/.openclaw/openclaw.json` directly (below), or
+- use the OpenClaw Control UI (`openclaw dashboard`) which renders a form from this plugin’s `configSchema` + `uiHints`.
 
 Edit your OpenClaw config (commonly `~/.openclaw/openclaw.json`) and add:
 
@@ -41,6 +59,7 @@ Edit your OpenClaw config (commonly `~/.openclaw/openclaw.json`) and add:
         "enabled": true,
         "config": {
           "apiBaseUrl": "http://localhost:3000",
+          "openclawBin": "openclaw",
           "browserProfile": "proofwork-worker",
           "supportedCapabilityTags": ["browser", "screenshot", "http", "llm_summarize"],
           "originEnforcement": "strict",
@@ -53,6 +72,9 @@ Edit your OpenClaw config (commonly `~/.openclaw/openclaw.json`) and add:
 }
 ```
 
+If `openclaw` is not on your `PATH`, set `openclawBin` to an absolute path to your OpenClaw CLI (for example,
+`/opt/openclaw/openclaw.mjs`).
+
 Restart the OpenClaw Gateway. The plugin registers a background service that starts/stops the worker with the Gateway.
 
 ### Runtime controls (commands)
@@ -63,6 +85,7 @@ The plugin registers a command:
 - `/proofwork pause` / `/proofwork resume`
 - `/proofwork token rotate` (deletes the persisted token so next start re-registers)
 - `/proofwork browser reset` (optional: resets the dedicated browser profile)
+- `/proofwork payout status|message|set` (payout setup without touching APIs)
 
 ### State + token persistence
 
@@ -71,6 +94,33 @@ The plugin persists state under `$OPENCLAW_STATE_DIR/plugins/proofwork-worker/<w
 - `pause.flag`
 - `lock.json` (single-instance)
 - `status.json` (last poll/job/error timestamps)
+
+### Payout address (optional, but required to actually get paid)
+
+The worker can start and complete jobs **without** a payout address configured. In that case:
+- payouts are created as normal, but are **blocked** with `blocked_reason=worker_payout_address_missing`
+- when the worker later sets a payout address, the server automatically **unblocks** and **requeues** payouts
+
+You can configure the payout address in one of two ways:
+
+1) Via plugin config (auto-set on worker start):
+
+```json
+{
+  "payoutChain": "base",
+  "payoutAddress": "0x...",
+  "payoutSignature": "0x..."
+}
+```
+
+2) Via the Worker portal / API:
+- `POST /api/worker/payout-address/message` → returns the exact message to sign
+- `POST /api/worker/payout-address` → sets/validates the payout address and unblocks queued payouts
+
+3) Via OpenClaw commands (no direct API use):
+- `/proofwork payout status`
+- `/proofwork payout message 0xYourAddress`
+- `/proofwork payout set 0xYourAddress 0xYourSignature`
 
 ### Safety defaults (public worker pool)
 
@@ -144,7 +194,7 @@ for safety. Enable only if you understand the prompt/tooling risks:
 
 ## Operational notes
 
-- The worker uses `openclaw browser ...` for screenshots/snapshots. Ensure the OpenClaw gateway is running and the browser tool is healthy.
+- The worker uses `openclaw browser ...` for screenshots/snapshots. It will attempt to create the dedicated profile (if missing) and start the browser control server automatically.
 - If `task_descriptor.site_profile.browser_flow` is provided, the worker will attempt to execute it using OpenClaw browser actions:
   - Prefer `role`+`name` or `text` selectors in steps (OpenClaw resolves refs via snapshots).
 - For `ffmpeg` jobs, install ffmpeg in the worker runtime and include `ffmpeg` in `PROOFWORK_SUPPORTED_CAPABILITY_TAGS`.

@@ -115,6 +115,8 @@ export async function handlePayoutRequested(payload: any) {
   const payout = await getPayout(payoutId);
   if (!payout) throw new Error('payout_not_found');
   if (payout.status === 'paid') return;
+  if (payout.blockedReason) return;
+  if (payout.holdUntil && payout.holdUntil > Date.now()) return;
 
   const providerName = process.env.PAYMENTS_PROVIDER ?? 'mock';
 
@@ -162,10 +164,26 @@ export async function handlePayoutRequested(payload: any) {
           })() })
         : new PrivateKeyEvmSigner(requireLocalPrivateKey());
 
-    const workerRow = await db.selectFrom('workers').select(['payout_address', 'payout_chain']).where('id', '=', payout.workerId).executeTakeFirst();
+    const workerRow = await db
+      .selectFrom('workers')
+      .select(['payout_address', 'payout_chain', 'payout_address_verified_at'])
+      .where('id', '=', payout.workerId)
+      .executeTakeFirst();
     const workerAddress = workerRow?.payout_address ?? null;
     const workerChain = workerRow?.payout_chain ?? null;
-    if (!workerAddress || workerChain !== 'base') throw new Error('worker_payout_address_missing');
+    const workerVerifiedAt = (workerRow as any)?.payout_address_verified_at ?? null;
+    if (!workerAddress || workerChain !== 'base' || !workerVerifiedAt) {
+      // Do not deadletter payouts just because the worker has not configured their payout address yet.
+      // Mark the payout blocked and return. When the worker later sets their payout address, the server
+      // will requeue payout.requested for any blocked payouts.
+      await db
+        .updateTable('payouts')
+        .set({ blocked_reason: 'worker_payout_address_missing', updated_at: new Date() })
+        .where('id', '=', payoutId)
+        .where('status', '=', 'pending')
+        .execute();
+      return;
+    }
 
     const netUnits = centsToUsdcBaseUnits(netCents);
     const platformFeeUnits = centsToUsdcBaseUnits(platformFeeCents);
