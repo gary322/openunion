@@ -16,6 +16,7 @@ export interface WorkersTable {
   payout_address_verified_at: Timestamp | null;
   payout_address_proof: unknown | null;
   created_at: Timestamp;
+  last_seen_at: Timestamp | null;
 }
 
 export interface OrgsTable {

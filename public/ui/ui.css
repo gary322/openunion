@@ -493,6 +493,50 @@ a:hover {
   font-size: 12px;
 }
 
+/* Markdown-ish docs rendering (used by /docs/view.html). */
+.pw-md {
+  font-size: 15px;
+  line-height: 1.75;
+  color: rgba(11, 15, 25, 0.86);
+}
+.pw-md h1,
+.pw-md h2,
+.pw-md h3,
+.pw-md h4 {
+  font-family: var(--font-serif);
+  letter-spacing: 0.2px;
+  margin: 18px 0 10px;
+  line-height: 1.2;
+}
+.pw-md p {
+  margin: 10px 0;
+}
+.pw-md ul,
+.pw-md ol {
+  margin: 10px 0;
+  padding-left: 22px;
+}
+.pw-md li {
+  margin: 6px 0;
+}
+.pw-md code {
+  font-family: var(--font-mono);
+  font-size: 0.94em;
+  background: rgba(37, 99, 235, 0.08);
+  border: 1px solid rgba(11, 15, 25, 0.12);
+  padding: 1px 6px;
+  border-radius: 10px;
+}
+.pw-md pre.pw-codeblock {
+  margin: 12px 0;
+}
+.pw-md pre.pw-codeblock code {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  border-radius: 0;
+}
+
 /* Collapsible blocks for "raw JSON" without drowning the UI. */
 details.pw-details {
   border: 1px solid rgba(11, 15, 25, 0.12);

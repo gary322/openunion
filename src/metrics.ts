@@ -61,6 +61,9 @@ export async function renderPrometheusMetrics(): Promise<string> {
   out += '# TYPE proofwork_fee_cents_total counter\n';
   out += promLine('proofwork_fee_cents_total', counters.get('proofwork_fee_cents_total') ?? 0);
 
+  out += '# TYPE proofwork_worker_heartbeat_total counter\n';
+  out += promLine('proofwork_worker_heartbeat_total', counters.get('worker_heartbeat_total') ?? 0);
+
   // Gauges (DB)
   const verBacklog = await pool.query<{ c: string }>(
     "SELECT count(*)::text as c FROM verifications WHERE status IN ('queued','in_progress')"
@@ -120,6 +123,12 @@ export async function renderPrometheusMetrics(): Promise<string> {
   );
   out += '# TYPE proofwork_workers_rate_limited gauge\n';
   out += promLine('proofwork_workers_rate_limited', Number(rateLimited.rows[0]?.c ?? 0));
+
+  const workersActive5m = await pool.query<{ c: string }>(
+    "SELECT count(*)::text as c FROM workers WHERE last_seen_at IS NOT NULL AND last_seen_at > now() - interval '5 minutes'"
+  );
+  out += '# TYPE proofwork_workers_active_5m gauge\n';
+  out += promLine('proofwork_workers_active_5m', Number(workersActive5m.rows[0]?.c ?? 0));
 
   // Jobs stale vs freshness SLA (task_descriptor)
   const staleJobs = await pool.query<{ c: string }>(

@@ -219,6 +219,7 @@
 
               <div class="pw-actions">
                 <button class="pw-btn" id="btnSaveToken">Save token</button>
+                <button class="pw-btn" id="btnCopyBuyerToken" type="button">Copy token</button>
                 <button class="pw-btn" id="btnListKeys">List keys</button>
               </div>
 
@@ -234,6 +235,21 @@
               </div>
 
               <div id="keyStatus" class="pw-status" role="status"></div>
+              <div class="pw-scroll">
+                <table class="pw-table" aria-label="API keys list">
+                  <thead>
+                    <tr>
+                      <th>Id</th>
+                      <th>Name</th>
+                      <th>Prefix</th>
+                      <th>Created</th>
+                      <th>Last used</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody id="apiKeysTbody"></tbody>
+                </table>
+              </div>
               <details class="pw-details pw-dev">
                 <summary>Developer response</summary>
                 <div class="pw-details-body">
@@ -278,6 +294,38 @@
                   <div class="pw-actions">
                     <button class="pw-btn" id="btnCheckOrigin">Check verification</button>
                     <button class="pw-btn danger" id="btnRevokeOrigin">Revoke</button>
+                  </div>
+                </div>
+              </div>
+
+              <div class="pw-grid">
+                <div class="pw-card soft pw-span-all" id="originGuide">
+                  <div class="pw-card-title">
+                    <h3>Verification instructions</h3>
+                    <span class="pw-kicker" id="originGuideKicker">Add an origin to see the exact steps</span>
+                  </div>
+                  <div id="originGuideBody" class="pw-stack"></div>
+                </div>
+
+                <div class="pw-card soft pw-span-all">
+                  <div class="pw-card-title">
+                    <h3>Origins</h3>
+                    <span class="pw-kicker">Verified origins can publish bounties</span>
+                  </div>
+                  <div class="pw-scroll">
+                    <table class="pw-table" aria-label="Origins list">
+                      <thead>
+                        <tr>
+                          <th>Status</th>
+                          <th>Origin</th>
+                          <th>Method</th>
+                          <th>Verified</th>
+                          <th>Failure</th>
+                          <th>Action</th>
+                        </tr>
+                      </thead>
+                      <tbody id="originsTbody"></tbody>
+                    </table>
                   </div>
                 </div>
               </div>
@@ -609,8 +657,7 @@
       </div>
     </main>
 
-    <script src="./app.js"></script>
+    <script type="module" src="./app.js"></script>
     <script type="module" src="/ui/shell.js"></script>
   </body>
 </html>
-

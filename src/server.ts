@@ -16,6 +16,7 @@ import {
   buildJobSpec,
   createBounty,
   createWorker,
+  touchWorkerLastSeen,
   findClaimableJob,
   findVerificationBySubmission,
   getActiveJobForWorker,
@@ -664,7 +665,27 @@ export function buildServer() {
     }
   });
 
+  const API_VERSION = 1;
+  const SERVER_VERSION =
+    String(process.env.PROOFWORK_VERSION ?? '').trim() ||
+    String(process.env.npm_package_version ?? '').trim() ||
+    'dev';
+
   app.get('/health', async () => ({ ok: true }));
+  app.get('/api/version', async () => ({
+    ok: true,
+    service: 'proofwork',
+    apiVersion: API_VERSION,
+    serverVersion: SERVER_VERSION,
+    node: process.versions.node,
+    env: process.env.NODE_ENV ?? 'development',
+    features: {
+      taskDescriptor: isTaskDescriptorEnabled(),
+      jobsNextExcludeJobIds: true,
+      jobLeaseRelease: true,
+      workerPayoutAddress: true,
+    },
+  }));
   app.get('/health/metrics', async (_req, reply) => {
     const txt = await renderPrometheusMetrics();
     reply.header('content-type', 'text/plain; version=0.0.4');
@@ -1953,6 +1974,13 @@ export function buildServer() {
     };
   });
 
+  app.post('/api/worker/heartbeat', { preHandler: (app as any).authenticateWorker }, async (request: any) => {
+    const worker: Worker = request.worker;
+    await touchWorkerLastSeen(worker.id);
+    inc('worker_heartbeat_total', 1);
+    return { ok: true, workerId: worker.id };
+  });
+
   // Worker payout address registration (Base)
   app.post(
     '/api/worker/payout-address/message',
@@ -2104,6 +2132,8 @@ export function buildServer() {
   // jobs/next
   app.get('/api/jobs/next', { preHandler: (app as any).authenticateWorker }, async (request: any, reply) => {
     const worker: Worker = request.worker;
+    // Track liveness for monitoring / pool health.
+    await touchWorkerLastSeen(worker.id);
     const q = request.query || {};
     const capabilityTag =
       isTaskDescriptorEnabled() && typeof q.capability_tag === 'string' ? q.capability_tag : undefined;

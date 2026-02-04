@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Proofwork • Doc</title>
+    <link rel="stylesheet" href="/ui/ui.css" />
+  </head>
+  <body class="theme-apps">
+    <header class="pw-topbar">
+      <div class="pw-topbar-inner">
+        <a class="pw-brand" href="/apps/" aria-label="Proofwork home">
+          <span class="pw-brand-badge pw-mono">PW</span>
+          Proofwork
+        </a>
+        <nav class="pw-topnav" aria-label="Primary">
+          <a class="pw-navlink" href="/apps/">Catalog</a>
+          <a class="pw-navlink" href="/buyer/">Platforms</a>
+          <a class="pw-navlink" href="/worker/">Workers</a>
+          <a class="pw-navlink" href="/admin/">Admin</a>
+          <a class="pw-navlink" href="/docs/" aria-current="page">Docs</a>
+        </nav>
+      </div>
+    </header>
+
+    <main class="pw-container">
+      <section class="pw-hero">
+        <h1 id="docTitle">Doc</h1>
+        <p class="pw-muted" id="docKicker">Loading…</p>
+        <div class="pw-hero-actions">
+          <div class="pw-actions">
+            <a class="pw-btn" href="/docs/">Back to Docs</a>
+            <a class="pw-btn" id="btnOpenRaw" href="#" target="_blank" rel="noreferrer">Open raw</a>
+            <button class="pw-btn" id="btnCopyLink" type="button">Copy link</button>
+          </div>
+        </div>
+      </section>
+
+      <div class="pw-console">
+        <aside class="pw-sidebar" aria-label="Doc navigation">
+          <nav class="pw-sidenav">
+            <div class="pw-sidenav-title">Contents</div>
+            <div id="toc" class="pw-stack-sm"></div>
+          </nav>
+        </aside>
+
+        <section class="pw-card">
+          <article class="pw-md" id="content" aria-label="Doc content"></article>
+          <div id="status" class="pw-status" role="status"></div>
+        </section>
+      </div>
+    </main>
+
+    <script type="module" src="/docs/view.js"></script>
+    <script type="module" src="/ui/shell.js"></script>
+  </body>
+</html>
+

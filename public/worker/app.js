@@ -1,3 +1,5 @@
+import { LS, copyToClipboard, formatAgo, formatCents, startPolling, storageGet, storageSet, toast } from '/ui/pw.js';
+
 const apiBase = window.location.origin;
 document.getElementById('apiBase').textContent = apiBase;
 
@@ -17,11 +19,11 @@ function pretty(obj) {
 }
 
 function getToken() {
-  return localStorage.getItem('pw_worker_token') || '';
+  return storageGet(LS.workerToken, '');
 }
 
 function setToken(token) {
-  localStorage.setItem('pw_worker_token', token);
+  storageSet(LS.workerToken, token);
   $('token').value = token;
 }
 
@@ -550,18 +552,127 @@ async function onSubmit() {
 }
 
 async function onListPayouts() {
-  setStatus('payoutStatusMsg', '', null);
-  const token = requireTokenUI();
-  const status = $('payoutStatus').value.trim();
-  const qs = new URLSearchParams();
-  if (status) qs.set('status', status);
-  const { res, json } = await api(`/api/worker/payouts?${qs.toString()}`, { token });
-  $('payoutOut').textContent = pretty(json);
-  if (!res.ok) {
-    setStatus('payoutStatusMsg', `list payouts failed (${res.status})`, 'bad');
+  return onListPayoutsInternal({ silent: false });
+}
+
+let payoutsAutoOn = true;
+let payoutsPollPrimed = false;
+let stopPayoutsPoll = null;
+
+function setPayoutsAutoUi() {
+  const btn = $('btnPayoutsAutoRefresh');
+  if (!btn) return;
+  btn.setAttribute('aria-pressed', payoutsAutoOn ? 'true' : 'false');
+  btn.textContent = payoutsAutoOn ? 'Auto-refresh' : 'Auto-refresh (off)';
+}
+
+function stopPayoutPolling() {
+  if (stopPayoutsPoll) stopPayoutsPoll();
+  stopPayoutsPoll = null;
+}
+
+function maybeStartPayoutPolling() {
+  if (!payoutsAutoOn) return;
+  if (!payoutsPollPrimed) return;
+  if (stopPayoutsPoll) return;
+  stopPayoutsPoll = startPolling(() => onListPayoutsInternal({ silent: true }), { intervalMs: 5000, immediate: false });
+}
+
+function formatHoldCountdown(holdUntilMs) {
+  const hu = Number(holdUntilMs ?? 0);
+  if (!Number.isFinite(hu) || hu <= 0) return '-';
+  const delta = hu - Date.now();
+  if (delta <= 0) return 'released';
+  const s = Math.floor(delta / 1000);
+  if (s < 60) return `in ${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `in ${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 48) return `in ${h}h`;
+  const d = Math.floor(h / 24);
+  return `in ${d}d`;
+}
+
+function payoutStatusClass(status) {
+  const s = String(status || '').toLowerCase();
+  if (s === 'paid') return 'good';
+  if (s === 'failed') return 'bad';
+  if (s === 'refunded' || s === 'reversed') return 'warn';
+  return '';
+}
+
+function renderWorkerPayoutRows(payouts) {
+  const tbody = $('workerPayoutRows');
+  if (!tbody) return;
+  const rows = Array.isArray(payouts) ? payouts : [];
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="8" class="pw-muted">No payouts yet.</td></tr>';
     return;
   }
-  setStatus('payoutStatusMsg', `ok (${json.payouts?.length ?? 0} payouts)`, 'good');
+
+  tbody.innerHTML = rows
+    .map((p) => {
+      const when = p?.createdAt ? formatAgo(p.createdAt) : '-';
+      const status = String(p?.status ?? '');
+      const statusCls = payoutStatusClass(status);
+      const net = p?.netAmountCents !== null && p?.netAmountCents !== undefined ? formatCents(p.netAmountCents) : '-';
+      const pf = p?.platformFeeCents !== null && p?.platformFeeCents !== undefined ? formatCents(p.platformFeeCents) : '-';
+      const pwf = p?.proofworkFeeCents !== null && p?.proofworkFeeCents !== undefined ? formatCents(p.proofworkFeeCents) : '-';
+      const hold = formatHoldCountdown(p?.holdUntil);
+      const blocked = String(p?.blockedReason ?? '').trim();
+      const provider = String(p?.provider ?? '').trim() || '-';
+      const pref = String(p?.providerRef ?? '').trim();
+      const bounty = String(p?.bountyTitle ?? '').trim() || (p?.bountyId ? String(p.bountyId) : '-');
+      const taskType = String(p?.taskType ?? '').trim();
+      const id = String(p?.id ?? '').trim();
+
+      const providerText = pref ? `${provider} - ${pref}` : provider;
+      const holdText = blocked ? `${hold} - blocked: ${blocked}` : hold;
+
+      return `
+        <tr>
+          <td title="${escapeHtml(p?.createdAt ? new Date(p.createdAt).toISOString() : '')}">${escapeHtml(when)}</td>
+          <td><span class="pw-chip ${escapeHtml(statusCls)}">${escapeHtml(status || '-')}</span></td>
+          <td class="pw-mono">${escapeHtml(net)}</td>
+          <td class="pw-mono">Platform ${escapeHtml(pf)} + PW ${escapeHtml(pwf)}</td>
+          <td>${escapeHtml(holdText)}</td>
+          <td class="pw-mono" title="${escapeHtml(providerText)}">${escapeHtml(providerText.slice(0, 48))}${providerText.length > 48 ? '...' : ''}</td>
+          <td title="${escapeHtml(taskType)}">${escapeHtml(bounty)}${taskType ? ` <span class="pw-muted pw-mono">(${escapeHtml(taskType)})</span>` : ''}</td>
+          <td>
+            ${id ? `<button class="pw-btn" type="button" data-copy-payout-id="${escapeHtml(id)}">Copy id</button>` : ''}
+          </td>
+        </tr>
+      `;
+    })
+    .join('');
+}
+
+async function onListPayoutsInternal({ silent }) {
+  if (!silent) setStatus('payoutStatusMsg', '', null);
+  const token = requireTokenUI();
+  const status = $('payoutStatus').value.trim();
+  const page = $('payoutPage')?.value?.trim?.() || '';
+  const limit = $('payoutLimit')?.value?.trim?.() || '';
+
+  const qs = new URLSearchParams();
+  if (status) qs.set('status', status);
+  if (page) qs.set('page', page);
+  if (limit) qs.set('limit', limit);
+
+  const path = qs.toString() ? `/api/worker/payouts?${qs.toString()}` : '/api/worker/payouts';
+  const { res, json } = await api(path, { token });
+  $('payoutOut').textContent = pretty(json);
+  if (!res.ok) {
+    if (!silent) setStatus('payoutStatusMsg', `list payouts failed (${res.status})`, 'bad');
+    renderWorkerPayoutRows([]);
+    return;
+  }
+
+  payoutsPollPrimed = true;
+  renderWorkerPayoutRows(json?.payouts ?? []);
+  maybeStartPayoutPolling();
+
+  if (!silent) setStatus('payoutStatusMsg', `ok (${json.payouts?.length ?? 0} payouts)`, 'good');
 }
 
 async function onPayoutMessage() {
@@ -606,6 +717,14 @@ async function onSetPayoutAddress() {
 $('btnRegister').addEventListener('click', () => onRegister().catch((e) => setStatus('authStatus', String(e), 'bad')));
 $('btnSaveToken').addEventListener('click', () => onSaveToken());
 $('btnMe').addEventListener('click', () => onMe().catch((e) => setStatus('authStatus', String(e), 'bad')));
+$('btnCopyWorkerToken').addEventListener('click', async () => {
+  const token = $('token').value.trim() || getToken();
+  if (!token) {
+    toast('Missing token', 'bad');
+    return;
+  }
+  await copyToClipboard(token);
+});
 $('btnNext').addEventListener('click', () => onNext().catch((e) => setStatus('jobStatus', String(e), 'bad')));
 $('btnClaim').addEventListener('click', () => onClaim().catch((e) => setStatus('jobStatus', String(e), 'bad')));
 $('btnUpload').addEventListener('click', () => onUpload().catch((e) => setStatus('uploadStatus', String(e), 'bad')));
@@ -613,6 +732,21 @@ $('btnSubmit').addEventListener('click', () => onSubmit().catch((e) => setStatus
 $('btnPayoutMessage').addEventListener('click', () => onPayoutMessage().catch((e) => setStatus('payoutAddrStatus', String(e), 'bad')));
 $('btnSetPayoutAddress').addEventListener('click', () => onSetPayoutAddress().catch((e) => setStatus('payoutAddrStatus', String(e), 'bad')));
 $('btnListPayouts').addEventListener('click', () => onListPayouts().catch((e) => setStatus('payoutStatusMsg', String(e), 'bad')));
+const btnPayoutsAuto = $('btnPayoutsAutoRefresh');
+if (btnPayoutsAuto) {
+  setPayoutsAutoUi();
+  btnPayoutsAuto.addEventListener('click', () => {
+    payoutsAutoOn = !payoutsAutoOn;
+    setPayoutsAutoUi();
+    if (!payoutsAutoOn) {
+      stopPayoutPolling();
+      toast('Auto-refresh off');
+    } else {
+      maybeStartPayoutPolling();
+      toast('Auto-refresh on', 'good');
+    }
+  });
+}
 
 // Required outputs: event delegation for per-slot uploads.
 const reqWrap = $('requiredOutputs');
@@ -656,3 +790,17 @@ if (slotFile) {
 setToken(getToken());
 refreshReadyStatus().catch(() => {});
 buildRequiredOutputsFromJob();
+renderWorkerPayoutRows([]);
+
+// Worker payouts table: event delegation for copy actions.
+const payoutTbody = $('workerPayoutRows');
+if (payoutTbody) {
+  payoutTbody.addEventListener('click', (ev) => {
+    const target = ev.target;
+    const btn = target && typeof target.closest === 'function' ? target.closest('button[data-copy-payout-id]') : null;
+    if (!btn) return;
+    const id = btn.getAttribute('data-copy-payout-id') || '';
+    if (!id) return;
+    copyToClipboard(id).catch(() => {});
+  });
+}

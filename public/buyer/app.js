@@ -1,3 +1,5 @@
+import { copyToClipboard, formatAgo, toast } from '/ui/pw.js';
+
 const apiBase = window.location.origin;
 
 function $(id) {
@@ -13,6 +15,17 @@ function setStatus(id, text, kind) {
 
 function pretty(obj) {
   return JSON.stringify(obj, null, 2);
+}
+
+function toMs(ts) {
+  if (ts === null || ts === undefined) return 0;
+  if (typeof ts === 'number') return ts;
+  const s = String(ts).trim();
+  if (!s) return 0;
+  const n = Number(s);
+  if (Number.isFinite(n) && n > 0) return n;
+  const ms = Date.parse(s);
+  return Number.isFinite(ms) ? ms : 0;
 }
 
 function getBuyerToken() {
@@ -42,6 +55,12 @@ function setStepDone(id, done) {
   const el = $(id);
   if (!el) return;
   el.classList.toggle('done', Boolean(done));
+}
+
+function setText(id, text) {
+  const el = $(id);
+  if (!el) return;
+  el.textContent = String(text ?? '');
 }
 
 let onboardingReqNo = 0;
@@ -155,6 +174,383 @@ async function refreshOnboardingStatus() {
   setBadge('navBadgeDisputes', openDisputes > 0 ? String(openDisputes) : '0');
 }
 
+function originRecordName(originUrl) {
+  try {
+    const u = new URL(String(originUrl || '').trim());
+    if (!u.hostname) return '';
+    return `_proofwork.${u.hostname}`;
+  } catch {
+    return '';
+  }
+}
+
+function originHttpFileUrl(originUrl) {
+  try {
+    return new URL('/.well-known/proofwork-verify.txt', String(originUrl || '').trim()).toString();
+  } catch {
+    return '';
+  }
+}
+
+function clearNode(node) {
+  if (!node) return;
+  while (node.firstChild) node.removeChild(node.firstChild);
+}
+
+function renderOriginGuide(origin) {
+  const kicker = $('originGuideKicker');
+  const body = $('originGuideBody');
+  if (!kicker || !body) return;
+
+  if (!origin) {
+    kicker.textContent = 'Add an origin to see the exact steps';
+    clearNode(body);
+    body.appendChild(document.createElement('div')).className = 'pw-muted';
+    body.lastChild.textContent = 'Tip: use https origins in production. Verification runs from Proofwork servers (no private networks).';
+    return;
+  }
+
+  const status = String(origin?.status ?? 'pending');
+  const method = String(origin?.method ?? '');
+  const originUrl = String(origin?.origin ?? '');
+  const token = String(origin?.token ?? '');
+  const verifiedAt = toMs(origin?.verifiedAt);
+  const failure = String(origin?.failureReason ?? '').trim();
+
+  kicker.textContent = `${status}${method ? ` • ${method}` : ''}`;
+  clearNode(body);
+
+  const top = document.createElement('div');
+  top.className = 'pw-row';
+
+  const left = document.createElement('div');
+  left.className = 'pw-field';
+  const leftLab = document.createElement('div');
+  leftLab.className = 'pw-kicker';
+  leftLab.textContent = 'Origin';
+  const leftVal = document.createElement('div');
+  leftVal.className = 'pw-mono';
+  leftVal.textContent = originUrl;
+  left.appendChild(leftLab);
+  left.appendChild(leftVal);
+
+  const right = document.createElement('div');
+  right.className = 'pw-field';
+  const rightLab = document.createElement('div');
+  rightLab.className = 'pw-kicker';
+  rightLab.textContent = 'Token';
+  const rightVal = document.createElement('div');
+  rightVal.className = 'pw-mono';
+  rightVal.textContent = token || '—';
+  const rightActions = document.createElement('div');
+  rightActions.className = 'pw-actions';
+  const btnCopy = document.createElement('button');
+  btnCopy.type = 'button';
+  btnCopy.className = 'pw-btn';
+  btnCopy.textContent = 'Copy token';
+  btnCopy.addEventListener('click', () => copyToClipboard(token));
+  rightActions.appendChild(btnCopy);
+  right.appendChild(rightLab);
+  right.appendChild(rightVal);
+  right.appendChild(rightActions);
+
+  top.appendChild(left);
+  top.appendChild(right);
+  body.appendChild(top);
+
+  if (verifiedAt) {
+    const v = document.createElement('div');
+    v.className = 'pw-badge';
+    v.textContent = `Verified ${formatAgo(verifiedAt)}`;
+    body.appendChild(v);
+  }
+
+  if (failure) {
+    const warn = document.createElement('div');
+    warn.className = 'pw-status bad';
+    warn.textContent = `Last check: ${failure}`;
+    body.appendChild(warn);
+  }
+
+  const guide = document.createElement('div');
+  guide.className = 'pw-card soft';
+
+  const gTitle = document.createElement('div');
+  gTitle.className = 'pw-kicker';
+  gTitle.textContent = 'Do this once';
+  guide.appendChild(gTitle);
+
+  const steps = document.createElement('div');
+  steps.className = 'pw-stack';
+
+  if (method === 'dns_txt') {
+    const name = originRecordName(originUrl);
+    const row = document.createElement('div');
+    row.className = 'pw-row';
+
+    const f1 = document.createElement('div');
+    f1.className = 'pw-field';
+    const l1 = document.createElement('label');
+    l1.textContent = 'TXT record name';
+    const v1 = document.createElement('input');
+    v1.className = 'pw-input pw-mono';
+    v1.value = name;
+    v1.readOnly = true;
+    const a1 = document.createElement('div');
+    a1.className = 'pw-actions';
+    const c1 = document.createElement('button');
+    c1.type = 'button';
+    c1.className = 'pw-btn';
+    c1.textContent = 'Copy';
+    c1.addEventListener('click', () => copyToClipboard(name));
+    a1.appendChild(c1);
+    f1.appendChild(l1);
+    f1.appendChild(v1);
+    f1.appendChild(a1);
+
+    const f2 = document.createElement('div');
+    f2.className = 'pw-field';
+    const l2 = document.createElement('label');
+    l2.textContent = 'TXT record value';
+    const v2 = document.createElement('input');
+    v2.className = 'pw-input pw-mono';
+    v2.value = token;
+    v2.readOnly = true;
+    const a2 = document.createElement('div');
+    a2.className = 'pw-actions';
+    const c2 = document.createElement('button');
+    c2.type = 'button';
+    c2.className = 'pw-btn';
+    c2.textContent = 'Copy';
+    c2.addEventListener('click', () => copyToClipboard(token));
+    a2.appendChild(c2);
+    f2.appendChild(l2);
+    f2.appendChild(v2);
+    f2.appendChild(a2);
+
+    row.appendChild(f1);
+    row.appendChild(f2);
+    steps.appendChild(row);
+
+    const hint = document.createElement('div');
+    hint.className = 'pw-muted';
+    hint.textContent = 'Then wait for DNS to propagate and click “Check verification”.';
+    steps.appendChild(hint);
+  } else if (method === 'http_file') {
+    const url = originHttpFileUrl(originUrl);
+    const row = document.createElement('div');
+    row.className = 'pw-row';
+
+    const f1 = document.createElement('div');
+    f1.className = 'pw-field';
+    const l1 = document.createElement('label');
+    l1.textContent = 'URL to serve';
+    const v1 = document.createElement('input');
+    v1.className = 'pw-input pw-mono';
+    v1.value = url;
+    v1.readOnly = true;
+    const a1 = document.createElement('div');
+    a1.className = 'pw-actions';
+    const c1 = document.createElement('button');
+    c1.type = 'button';
+    c1.className = 'pw-btn';
+    c1.textContent = 'Copy';
+    c1.addEventListener('click', () => copyToClipboard(url));
+    a1.appendChild(c1);
+    f1.appendChild(l1);
+    f1.appendChild(v1);
+    f1.appendChild(a1);
+
+    const f2 = document.createElement('div');
+    f2.className = 'pw-field';
+    const l2 = document.createElement('label');
+    l2.textContent = 'File body must include';
+    const v2 = document.createElement('input');
+    v2.className = 'pw-input pw-mono';
+    v2.value = token;
+    v2.readOnly = true;
+    const a2 = document.createElement('div');
+    a2.className = 'pw-actions';
+    const c2 = document.createElement('button');
+    c2.type = 'button';
+    c2.className = 'pw-btn';
+    c2.textContent = 'Copy';
+    c2.addEventListener('click', () => copyToClipboard(token));
+    a2.appendChild(c2);
+    f2.appendChild(l2);
+    f2.appendChild(v2);
+    f2.appendChild(a2);
+
+    row.appendChild(f1);
+    row.appendChild(f2);
+    steps.appendChild(row);
+
+    const hint = document.createElement('div');
+    hint.className = 'pw-muted';
+    hint.textContent = 'Make sure the URL returns 200 OK (no redirects) and includes the token.';
+    steps.appendChild(hint);
+  } else if (method === 'header') {
+    const headerName = 'X-Proofwork-Verify';
+    const row = document.createElement('div');
+    row.className = 'pw-row';
+
+    const f1 = document.createElement('div');
+    f1.className = 'pw-field';
+    const l1 = document.createElement('label');
+    l1.textContent = 'Header name';
+    const v1 = document.createElement('input');
+    v1.className = 'pw-input pw-mono';
+    v1.value = headerName;
+    v1.readOnly = true;
+    const a1 = document.createElement('div');
+    a1.className = 'pw-actions';
+    const c1 = document.createElement('button');
+    c1.type = 'button';
+    c1.className = 'pw-btn';
+    c1.textContent = 'Copy';
+    c1.addEventListener('click', () => copyToClipboard(headerName));
+    a1.appendChild(c1);
+    f1.appendChild(l1);
+    f1.appendChild(v1);
+    f1.appendChild(a1);
+
+    const f2 = document.createElement('div');
+    f2.className = 'pw-field';
+    const l2 = document.createElement('label');
+    l2.textContent = 'Header value must include';
+    const v2 = document.createElement('input');
+    v2.className = 'pw-input pw-mono';
+    v2.value = token;
+    v2.readOnly = true;
+    const a2 = document.createElement('div');
+    a2.className = 'pw-actions';
+    const c2 = document.createElement('button');
+    c2.type = 'button';
+    c2.className = 'pw-btn';
+    c2.textContent = 'Copy';
+    c2.addEventListener('click', () => copyToClipboard(token));
+    a2.appendChild(c2);
+    f2.appendChild(l2);
+    f2.appendChild(v2);
+    f2.appendChild(a2);
+
+    row.appendChild(f1);
+    row.appendChild(f2);
+    steps.appendChild(row);
+
+    const hint = document.createElement('div');
+    hint.className = 'pw-muted';
+    hint.textContent = 'Proofwork sends a HEAD request to your origin. Respond 200 OK and include the header.';
+    steps.appendChild(hint);
+  } else {
+    const hint = document.createElement('div');
+    hint.className = 'pw-muted';
+    hint.textContent = 'Unknown verification method.';
+    steps.appendChild(hint);
+  }
+
+  guide.appendChild(steps);
+  body.appendChild(guide);
+
+  const actions = document.createElement('div');
+  actions.className = 'pw-actions';
+  const btnSelect = document.createElement('button');
+  btnSelect.type = 'button';
+  btnSelect.className = 'pw-btn';
+  btnSelect.textContent = 'Use this origin id';
+  btnSelect.addEventListener('click', () => {
+    $('originId').value = String(origin?.id ?? '');
+    toast('Selected origin', 'good');
+  });
+  const btnCheck = document.createElement('button');
+  btnCheck.type = 'button';
+  btnCheck.className = 'pw-btn primary';
+  btnCheck.textContent = 'Check verification';
+  btnCheck.addEventListener('click', () => onCheckOrigin().catch((e) => setStatus('originStatus', String(e), 'bad')));
+  actions.appendChild(btnSelect);
+  actions.appendChild(btnCheck);
+  body.appendChild(actions);
+}
+
+function renderOriginsTable(origins) {
+  const tbody = $('originsTbody');
+  if (!tbody) return;
+  tbody.innerHTML = '';
+
+  const rows = Array.isArray(origins) ? origins : [];
+  for (const o of rows) {
+    const tr = document.createElement('tr');
+
+    const status = String(o?.status ?? '');
+    const method = String(o?.method ?? '');
+    const verifiedAt = toMs(o?.verifiedAt);
+    const failure = String(o?.failureReason ?? '').trim();
+
+    const tdStatus = document.createElement('td');
+    const badge = document.createElement('span');
+    badge.className = `pw-chip ${status === 'verified' ? 'good' : status === 'revoked' ? 'faint' : ''}`.trim();
+    badge.textContent = status || '—';
+    tdStatus.appendChild(badge);
+
+    const tdOrigin = document.createElement('td');
+    tdOrigin.className = 'pw-mono';
+    tdOrigin.textContent = String(o?.origin ?? '');
+
+    const tdMethod = document.createElement('td');
+    tdMethod.className = 'pw-mono';
+    tdMethod.textContent = method || '—';
+
+    const tdVerified = document.createElement('td');
+    tdVerified.textContent = verifiedAt ? formatAgo(verifiedAt) : '—';
+
+    const tdFail = document.createElement('td');
+    tdFail.textContent = failure ? String(failure).slice(0, 80) : '—';
+
+    const tdAction = document.createElement('td');
+    const actions = document.createElement('div');
+    actions.className = 'pw-actions';
+    const btnUse = document.createElement('button');
+    btnUse.type = 'button';
+    btnUse.className = 'pw-btn';
+    btnUse.textContent = 'Use';
+    btnUse.addEventListener('click', () => {
+      $('originId').value = String(o?.id ?? '');
+      renderOriginGuide(o);
+      toast('Selected origin', 'good');
+    });
+    actions.appendChild(btnUse);
+
+    if (status !== 'revoked') {
+      const btnCopy = document.createElement('button');
+      btnCopy.type = 'button';
+      btnCopy.className = 'pw-btn';
+      btnCopy.textContent = 'Copy token';
+      btnCopy.addEventListener('click', () => copyToClipboard(String(o?.token ?? '')));
+      actions.appendChild(btnCopy);
+    }
+
+    tdAction.appendChild(actions);
+
+    tr.appendChild(tdStatus);
+    tr.appendChild(tdOrigin);
+    tr.appendChild(tdMethod);
+    tr.appendChild(tdVerified);
+    tr.appendChild(tdFail);
+    tr.appendChild(tdAction);
+    tbody.appendChild(tr);
+  }
+
+  if (!rows.length) {
+    const tr = document.createElement('tr');
+    const td = document.createElement('td');
+    td.colSpan = 6;
+    td.className = 'pw-muted';
+    td.textContent = 'No origins yet. Add one above.';
+    tr.appendChild(td);
+    tbody.appendChild(tr);
+  }
+}
+
 async function api(path, { method = 'GET', token, body, csrf } = {}) {
   const headers = { 'Content-Type': 'application/json' };
   if (token) headers['Authorization'] = `Bearer ${token}`;
@@ -213,20 +609,92 @@ async function onCreateKey() {
     setStatus('keyStatus', `create key failed (${res.status})`, 'bad');
     return;
   }
-  setBuyerToken(json.token);
+  if (json?.token) setBuyerToken(json.token);
   setStatus('keyStatus', 'token created and saved', 'good');
+  toast('API key created', 'good');
+  onListKeys({ silent: true }).catch(() => {});
   refreshOnboardingStatus().catch(() => {});
 }
 
-async function onListKeys() {
-  setStatus('keyStatus', '', null);
+function renderApiKeys(keys) {
+  const tbody = $('apiKeysTbody');
+  if (!tbody) return;
+  tbody.innerHTML = '';
+
+  const rows = Array.isArray(keys) ? keys : [];
+  for (const k of rows) {
+    const tr = document.createElement('tr');
+    const revoked = Boolean(k?.revokedAt);
+    if (revoked) tr.classList.add('pw-row-muted');
+
+    const tdId = document.createElement('td');
+    tdId.className = 'pw-mono';
+    tdId.textContent = String(k?.id ?? '');
+
+    const tdName = document.createElement('td');
+    tdName.textContent = String(k?.name ?? '');
+
+    const tdPrefix = document.createElement('td');
+    tdPrefix.className = 'pw-mono';
+    tdPrefix.textContent = String(k?.keyPrefix ?? '');
+
+    const tdCreated = document.createElement('td');
+    tdCreated.textContent = formatAgo(toMs(k?.createdAt));
+
+    const tdLast = document.createElement('td');
+    tdLast.textContent = k?.lastUsedAt ? formatAgo(toMs(k.lastUsedAt)) : '—';
+
+    const tdActions = document.createElement('td');
+    const actions = document.createElement('div');
+    actions.className = 'pw-actions';
+
+    const btnCopy = document.createElement('button');
+    btnCopy.type = 'button';
+    btnCopy.className = 'pw-btn';
+    btnCopy.textContent = 'Copy id';
+    btnCopy.addEventListener('click', () => copyToClipboard(String(k?.id ?? '')));
+
+    actions.appendChild(btnCopy);
+
+    if (!revoked) {
+      const btnRevoke = document.createElement('button');
+      btnRevoke.type = 'button';
+      btnRevoke.className = 'pw-btn danger';
+      btnRevoke.textContent = 'Revoke';
+      btnRevoke.addEventListener('click', () => {
+        $('revokeKeyId').value = String(k?.id ?? '');
+        onRevokeKey().catch((e) => setStatus('keyStatus', String(e), 'bad'));
+      });
+      actions.appendChild(btnRevoke);
+    } else {
+      const badge = document.createElement('span');
+      badge.className = 'pw-badge';
+      badge.textContent = 'Revoked';
+      actions.appendChild(badge);
+    }
+
+    tdActions.appendChild(actions);
+
+    tr.appendChild(tdId);
+    tr.appendChild(tdName);
+    tr.appendChild(tdPrefix);
+    tr.appendChild(tdCreated);
+    tr.appendChild(tdLast);
+    tr.appendChild(tdActions);
+    tbody.appendChild(tr);
+  }
+}
+
+async function onListKeys({ silent = false } = {}) {
+  if (!silent) setStatus('keyStatus', '', null);
   const { res, json } = await api('/api/org/api-keys', { method: 'GET' });
   $('keyOut').textContent = pretty(json);
   if (!res.ok) {
-    setStatus('keyStatus', `list keys failed (${res.status})`, 'bad');
+    if (!silent) setStatus('keyStatus', `list keys failed (${res.status})`, 'bad');
     return;
   }
-  setStatus('keyStatus', `ok (${json.apiKeys?.length ?? 0} keys)`, 'good');
+  renderApiKeys(json?.apiKeys);
+  if (!silent) setStatus('keyStatus', `ok (${json.apiKeys?.length ?? 0} keys)`, 'good');
 }
 
 async function onRevokeKey() {
@@ -238,6 +706,8 @@ async function onRevokeKey() {
   $('keyOut').textContent = pretty(json);
   if (!res.ok) return setStatus('keyStatus', `revoke failed (${res.status})`, 'bad');
   setStatus('keyStatus', 'revoked', 'good');
+  toast('API key revoked', 'good');
+  onListKeys({ silent: true }).catch(() => {});
   refreshOnboardingStatus().catch(() => {});
 }
 
@@ -354,6 +824,7 @@ function onSaveToken() {
   if (!t) return setStatus('keyStatus', 'missing token', 'bad');
   setBuyerToken(t);
   setStatus('keyStatus', 'token saved', 'good');
+  toast('Token saved', 'good');
   refreshOnboardingStatus().catch(() => {});
 }
 
@@ -372,16 +843,19 @@ async function onAddOrigin() {
   }
   $('originId').value = json.origin?.id || '';
   setStatus('originStatus', `added origin ${json.origin?.id}`, 'good');
+  renderOriginGuide(json.origin);
+  onListOrigins({ silent: true }).catch(() => {});
   refreshOnboardingStatus().catch(() => {});
 }
 
-async function onListOrigins() {
-  setStatus('originStatus', '', null);
+async function onListOrigins({ silent = false } = {}) {
+  if (!silent) setStatus('originStatus', '', null);
   const token = $('buyerToken').value.trim();
   const { res, json } = await api('/api/origins', { method: 'GET', token: token || undefined });
   $('originOut').textContent = pretty(json);
-  if (!res.ok) return setStatus('originStatus', `list origins failed (${res.status})`, 'bad');
-  setStatus('originStatus', `ok (${json.origins?.length ?? 0} origins)`, 'good');
+  if (!res.ok) return silent ? undefined : setStatus('originStatus', `list origins failed (${res.status})`, 'bad');
+  renderOriginsTable(json?.origins);
+  if (!silent) setStatus('originStatus', `ok (${json.origins?.length ?? 0} origins)`, 'good');
 }
 
 async function onCheckOrigin() {
@@ -393,6 +867,8 @@ async function onCheckOrigin() {
   $('originOut').textContent = pretty(json);
   if (!res.ok) return setStatus('originStatus', `check failed (${res.status})`, 'bad');
   setStatus('originStatus', `status=${json.origin?.status}`, 'good');
+  renderOriginGuide(json.origin);
+  onListOrigins({ silent: true }).catch(() => {});
   refreshOnboardingStatus().catch(() => {});
 }
 
@@ -405,6 +881,8 @@ async function onRevokeOrigin() {
   $('originOut').textContent = pretty(json);
   if (!res.ok) return setStatus('originStatus', `revoke failed (${res.status})`, 'bad');
   setStatus('originStatus', `status=${json.origin?.status}`, 'good');
+  renderOriginGuide(json.origin);
+  onListOrigins({ silent: true }).catch(() => {});
   refreshOnboardingStatus().catch(() => {});
 }
 
@@ -568,6 +1046,10 @@ $('btnCreateKey').addEventListener('click', () => onCreateKey().catch((e) => set
 $('btnListKeys').addEventListener('click', () => onListKeys().catch((e) => setStatus('keyStatus', String(e), 'bad')));
 $('btnRevokeKey').addEventListener('click', () => onRevokeKey().catch((e) => setStatus('keyStatus', String(e), 'bad')));
 $('btnSaveToken').addEventListener('click', () => onSaveToken());
+const btnCopyBuyerToken = $('btnCopyBuyerToken');
+if (btnCopyBuyerToken) {
+  btnCopyBuyerToken.addEventListener('click', () => copyToClipboard(($('buyerToken')?.value ?? '').trim()));
+}
 
 $('btnGetPlatformFee').addEventListener('click', () => onGetPlatformFee().catch((e) => setStatus('pfStatus', String(e), 'bad')));
 $('btnSetPlatformFee').addEventListener('click', () => onSetPlatformFee().catch((e) => setStatus('pfStatus', String(e), 'bad')));
@@ -598,4 +1080,5 @@ $('btnCancelDispute').addEventListener('click', () => onCancelDispute().catch((e
 
 setBuyerToken(getBuyerToken());
 setCsrfToken(getCsrfToken());
+renderOriginGuide(null);
 refreshOnboardingStatus().catch(() => {});

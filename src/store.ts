@@ -748,6 +748,7 @@ export async function createWorker(
   const token = `pw_wk_${nanoid(16)}`;
   const keyPrefix = token.slice(0, TOKEN_PREFIX_LEN);
   const keyHash = hmacSha256Hex(token, WORKER_TOKEN_PEPPER);
+  const now = new Date();
 
   await db
     .insertInto('workers')
@@ -763,7 +764,8 @@ export async function createWorker(
       payout_address: null,
       payout_address_verified_at: null,
       payout_address_proof: null,
-      created_at: new Date(),
+      created_at: now,
+      last_seen_at: now,
     } satisfies Selectable<WorkersTable>)
     .execute();
 
@@ -771,6 +773,10 @@ export async function createWorker(
     worker: { id, displayName, status: 'active', capabilities },
     token,
   };
+}
+
+export async function touchWorkerLastSeen(workerId: string, now = new Date()) {
+  await db.updateTable('workers').set({ last_seen_at: now }).where('id', '=', workerId).execute();
 }
 
 export async function getWorkerByToken(token?: string): Promise<Worker | undefined> {
