@@ -42,7 +42,13 @@ async function main() {
       const url = `${baseUrl}${c.path}`;
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60_000 });
       // Allow minimal JS bootstraps (e.g., /apps/* pages set document.title in a module).
-      await page.waitForTimeout(200);
+      // Network + DB fetches can make this >200ms on real deployments, so wait up to a short
+      // bound instead of a fixed sleep to reduce flakes.
+      try {
+        await page.waitForFunction((expected) => document.title.includes(expected), c.titleIncludes, { timeout: 5_000 });
+      } catch {
+        // Best-effort: we'll validate the observed title below for a deterministic failure.
+      }
       const title = await page.title();
       if (!title.includes(c.titleIncludes)) {
         throw new Error(`ui_smoke_failed:${c.path}:expected_title_includes:${c.titleIncludes}:got:${title}`);
