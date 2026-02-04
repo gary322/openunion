@@ -128,6 +128,14 @@ async function main() {
     out({ ok: true });
     return;
   }
+  if (cmd === "tab") {
+    const sub = rest[0] ?? "";
+    if (sub === "new") {
+      await writeState(stateFile, { url: "about:blank" });
+      out({ ok: true, tab: { targetId: "t_mock_tab_1", url: "about:blank" } });
+      return;
+    }
+  }
   if (cmd === "open") {
     const url = rest[0] ?? "";
     await writeState(stateFile, { url });
@@ -152,6 +160,10 @@ async function main() {
     return;
   }
   if (cmd === "snapshot") {
+    if (String(process.env.MOCK_OPENCLAW_FAIL_SNAPSHOT ?? "").trim() === "1" || String(process.env.MOCK_OPENCLAW_FAIL_SNAPSHOT ?? "").trim().toLowerCase() === "true") {
+      console.error("playwright_not_available");
+      process.exit(1);
+    }
     // Write a tiny role snapshot to the --out path so the worker can resolve refs.
     const outIdx = argv.indexOf("--out");
     const outPath = outIdx >= 0 && argv[outIdx + 1] ? argv[outIdx + 1] : path.join(os.tmpdir(), "mock_snapshot.txt");
@@ -304,6 +316,7 @@ process.exit(0);
     await pool.query('UPDATE jobs SET task_descriptor=$1 WHERE id=$2', [JSON.stringify(descriptor), job.jobId]);
 
     const mockOpenClaw = await makeMockOpenClawBin();
+    const profile = 'pw-test-profile';
     const scriptPath = 'integrations/openclaw/skills/proofwork-universal-worker/scripts/proofwork_worker.mjs';
     let run: { code: number | null; stdout: string; stderr: string } = { code: 1, stdout: '', stderr: '' };
     try {
@@ -317,6 +330,8 @@ process.exit(0);
           PROOFWORK_SUPPORTED_CAPABILITY_TAGS: 'browser,http,screenshot,llm_summarize',
           PROOFWORK_CANARY_PERCENT: '100',
           OPENCLAW_BIN: mockOpenClaw,
+          OPENCLAW_BROWSER_PROFILE: profile,
+          MOCK_OPENCLAW_EXPECT_PROFILE: profile,
           // Do not use OpenClaw LLM in tests; force deterministic fallback.
           OPENCLAW_AGENT_ID: '',
           ARXIV_API_BASE_URL: arxivApiBaseUrl,
@@ -540,6 +555,7 @@ process.exit(0);
     await pool.query('UPDATE jobs SET task_descriptor=$1 WHERE id=$2', [JSON.stringify(descriptor), job.jobId]);
 
     const mockOpenClaw = await makeMockOpenClawBin();
+    const profile = 'pw-test-profile';
     const scriptPath = 'integrations/openclaw/skills/proofwork-universal-worker/scripts/proofwork_worker.mjs';
     const run = await runNodeScript({
       scriptPath,
@@ -551,6 +567,8 @@ process.exit(0);
         PROOFWORK_SUPPORTED_CAPABILITY_TAGS: 'browser,http,screenshot,llm_summarize', // no ffmpeg
         PROOFWORK_CANARY_PERCENT: '100',
         OPENCLAW_BIN: mockOpenClaw,
+        OPENCLAW_BROWSER_PROFILE: profile,
+        MOCK_OPENCLAW_EXPECT_PROFILE: profile,
       },
     });
     expect(run.code).toBe(0);
@@ -558,6 +576,105 @@ process.exit(0);
     const row = await getJob(job.jobId);
     expect(row?.status).toBe('open');
     expect(row?.leaseWorkerId).toBeUndefined();
+  });
+
+  it('degrades browser capabilities when OpenClaw browser actions are unhealthy and still completes http-only jobs', async () => {
+    const reg = await request(app.server).post('/api/workers/register').send({ displayName: 'A', capabilities: { openclaw: true } });
+    const workerToken = reg.body.token as string;
+
+    // Start a local HTTP origin to exercise the http module without external network.
+    const siteServer = createServer((req, res) => {
+      const u = new URL(req.url ?? '/', 'http://127.0.0.1');
+      if (u.pathname === '/ok') {
+        res.statusCode = 200;
+        res.setHeader('content-type', 'text/plain; charset=utf-8');
+        res.end('ok');
+        return;
+      }
+      res.statusCode = 404;
+      res.end('not found');
+    });
+    siteServer.listen(0, '127.0.0.1');
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+    await once(siteServer, 'listening');
+    const addr: any = siteServer.address();
+    const origin = `http://127.0.0.1:${addr.port}`;
+    const httpUrl = `${origin}/ok`;
+
+    const idsRes = await pool.query<{ id: string; bounty_id: string }>('SELECT id, bounty_id FROM jobs ORDER BY created_at ASC LIMIT 2');
+    expect(idsRes.rows.length).toBeGreaterThanOrEqual(2);
+    const [jobBrowser, jobHttp] = idsRes.rows;
+    await pool.query('DELETE FROM jobs WHERE id <> $1 AND id <> $2', [jobBrowser.id, jobHttp.id]);
+
+    // Verify the local origin and restrict both bounties so /jobs/next can offer these jobs.
+    const bountyIds = Array.from(new Set([jobBrowser.bounty_id, jobHttp.bounty_id]));
+    for (const bountyId of bountyIds) {
+      const bountyRes = await pool.query<{ org_id: string }>('SELECT org_id FROM bounties WHERE id = $1', [bountyId]);
+      const orgId = String(bountyRes.rows[0]?.org_id ?? '');
+      expect(orgId).toBeTruthy();
+      await pool.query(
+        `INSERT INTO origins(id, org_id, origin, status, method, token, verified_at)
+         VALUES ($1, $2, $3, 'verified', 'manual', 't', now())
+         ON CONFLICT (org_id, origin) DO UPDATE SET status='verified', verified_at=now()`,
+        [`orig_${Date.now()}_${Math.random().toString(16).slice(2)}`, orgId, origin]
+      );
+      await pool.query('UPDATE bounties SET allowed_origins=$1 WHERE id=$2', [JSON.stringify([origin]), bountyId]);
+    }
+
+    const browserDescriptor = {
+      schema_version: 'v1',
+      type: 'browser_unhealthy_job',
+      capability_tags: ['browser', 'screenshot'],
+      input_spec: { url: `${origin}/page` },
+      output_spec: { required_artifacts: [{ kind: 'screenshot', count: 1 }] },
+      freshness_sla_sec: 3600,
+    };
+    const httpDescriptor = {
+      schema_version: 'v1',
+      type: 'http_only_job',
+      capability_tags: ['http'],
+      input_spec: { url: httpUrl },
+      output_spec: { http_response: true, required_artifacts: [{ kind: 'log', count: 1, label: 'report_http' }] },
+      freshness_sla_sec: 3600,
+    };
+    await pool.query('UPDATE jobs SET task_descriptor=$1 WHERE id=$2', [JSON.stringify(browserDescriptor), jobBrowser.id]);
+    await pool.query('UPDATE jobs SET task_descriptor=$1 WHERE id=$2', [JSON.stringify(httpDescriptor), jobHttp.id]);
+
+    const mockOpenClaw = await makeMockOpenClawBin();
+    const profile = 'pw-test-profile';
+    const scriptPath = 'integrations/openclaw/skills/proofwork-universal-worker/scripts/proofwork_worker.mjs';
+    const run = await runNodeScript({
+      scriptPath,
+      cwd: process.cwd(),
+      env: {
+        ONCE: 'true',
+        PROOFWORK_API_BASE_URL: baseUrl,
+        PROOFWORK_WORKER_TOKEN: workerToken,
+        PROOFWORK_SUPPORTED_CAPABILITY_TAGS: 'browser,http,screenshot',
+        PROOFWORK_CANARY_PERCENT: '100',
+        OPENCLAW_BIN: mockOpenClaw,
+        OPENCLAW_BROWSER_PROFILE: profile,
+        MOCK_OPENCLAW_EXPECT_PROFILE: profile,
+        // Force the health probe's interactive snapshot to fail (simulates missing Playwright).
+        MOCK_OPENCLAW_FAIL_SNAPSHOT: 'true',
+      },
+    });
+
+    await new Promise<void>((resolve) => siteServer.close(() => resolve()));
+    if (run.code !== 0) {
+      // eslint-disable-next-line no-console
+      console.log('openclaw worker stdout:\n', run.stdout);
+      // eslint-disable-next-line no-console
+      console.log('openclaw worker stderr:\n', run.stderr);
+    }
+    expect(run.code).toBe(0);
+
+    const a = await getJob(jobBrowser.id);
+    const b = await getJob(jobHttp.id);
+    expect(a?.status).toBe('open');
+    expect(a?.leaseWorkerId).toBeUndefined();
+    expect(b?.status).toBe('verifying');
+    expect(b?.currentSubmissionId).toBeTruthy();
   });
 
   it('executes site_profile.browser_flow steps via OpenClaw browser actions', async () => {
@@ -592,6 +709,7 @@ process.exit(0);
     await pool.query('UPDATE jobs SET task_descriptor=$1 WHERE id=$2', [JSON.stringify(descriptor), job.jobId]);
 
     const mockOpenClaw = await makeMockOpenClawBin();
+    const profile = 'pw-test-profile';
     const scriptPath = 'integrations/openclaw/skills/proofwork-universal-worker/scripts/proofwork_worker.mjs';
     const run = await runNodeScript({
       scriptPath,
@@ -603,6 +721,8 @@ process.exit(0);
         PROOFWORK_SUPPORTED_CAPABILITY_TAGS: 'browser,http,screenshot,llm_summarize',
         PROOFWORK_CANARY_PERCENT: '100',
         OPENCLAW_BIN: mockOpenClaw,
+        OPENCLAW_BROWSER_PROFILE: profile,
+        MOCK_OPENCLAW_EXPECT_PROFILE: profile,
         OPENCLAW_AGENT_ID: '',
       },
     });
@@ -946,6 +1066,7 @@ process.exit(0);
     await pool.query('UPDATE jobs SET task_descriptor=$1 WHERE id=$2', [JSON.stringify(descriptor), job.jobId]);
 
     const mockOpenClaw = await makeMockOpenClawBin();
+    const profile = 'pw-test-profile';
     const scriptPath = 'integrations/openclaw/skills/proofwork-universal-worker/scripts/proofwork_worker.mjs';
     const run = await runNodeScript({
       scriptPath,
@@ -957,6 +1078,8 @@ process.exit(0);
         PROOFWORK_SUPPORTED_CAPABILITY_TAGS: 'browser,http,screenshot,llm_summarize',
         PROOFWORK_CANARY_PERCENT: '100',
         OPENCLAW_BIN: mockOpenClaw,
+        OPENCLAW_BROWSER_PROFILE: profile,
+        MOCK_OPENCLAW_EXPECT_PROFILE: profile,
       },
     });
     expect(run.code).toBe(0);
@@ -988,6 +1111,7 @@ process.exit(0);
     await pool.query('UPDATE jobs SET task_descriptor=$1 WHERE id=$2', [JSON.stringify(descriptor), job.jobId]);
 
     const mockOpenClaw = await makeMockOpenClawBin();
+    const profile = 'pw-test-profile';
     const scriptPath = 'integrations/openclaw/skills/proofwork-universal-worker/scripts/proofwork_worker.mjs';
     const run = await runNodeScript({
       scriptPath,
@@ -999,6 +1123,8 @@ process.exit(0);
         PROOFWORK_SUPPORTED_CAPABILITY_TAGS: 'browser,http,screenshot,llm_summarize',
         PROOFWORK_CANARY_PERCENT: '100',
         OPENCLAW_BIN: mockOpenClaw,
+        OPENCLAW_BROWSER_PROFILE: profile,
+        MOCK_OPENCLAW_EXPECT_PROFILE: profile,
       },
     });
     expect(run.code).toBe(0);
@@ -1031,6 +1157,7 @@ process.exit(0);
     await pool.query('UPDATE jobs SET task_descriptor=$1 WHERE id=$2', [JSON.stringify(descriptor), job.jobId]);
 
     const mockOpenClaw = await makeMockOpenClawBin();
+    const profile = 'pw-test-profile';
     const scriptPath = 'integrations/openclaw/skills/proofwork-universal-worker/scripts/proofwork_worker.mjs';
     const run = await runNodeScript({
       scriptPath,
@@ -1042,6 +1169,8 @@ process.exit(0);
         PROOFWORK_SUPPORTED_CAPABILITY_TAGS: 'browser,http,screenshot,llm_summarize',
         PROOFWORK_CANARY_PERCENT: '100',
         OPENCLAW_BIN: mockOpenClaw,
+        OPENCLAW_BROWSER_PROFILE: profile,
+        MOCK_OPENCLAW_EXPECT_PROFILE: profile,
       },
     });
     expect(run.code).toBe(0);

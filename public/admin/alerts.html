@@ -91,8 +91,23 @@
                   <input class="pw-input" id="alarmFilter" placeholder="proofwork-...-api-cpu-high" />
                 </div>
               </div>
+              <div class="pw-row">
+                <div class="pw-field">
+                  <label>Page</label>
+                  <input class="pw-input" id="page" type="number" value="1" min="1" />
+                </div>
+                <div class="pw-field">
+                  <label>Limit</label>
+                  <input class="pw-input" id="limit" type="number" value="50" min="1" max="200" />
+                </div>
+              </div>
               <div class="pw-actions">
                 <button class="pw-btn primary" id="btnList">Refresh list</button>
+                <button class="pw-toggle" id="btnAutoRefresh" type="button" aria-pressed="false">
+                  <span class="pw-toggle-pill"></span>
+                  <span>Auto</span>
+                </button>
+                <span class="pw-badge" id="lastUpdated">—</span>
               </div>
               <div id="listStatus" class="pw-status" role="status"></div>
             </div>
@@ -104,11 +119,34 @@
               <pre class="pw-codeblock" id="out">{}</pre>
             </div>
           </details>
+
+          <div class="pw-card">
+            <div class="pw-card-title">
+              <h2>Alarm inbox</h2>
+              <span class="pw-kicker">Latest notifications</span>
+            </div>
+            <div class="pw-scroll">
+              <table class="pw-table" aria-label="Alerts list">
+                <thead>
+                  <tr>
+                    <th>Env</th>
+                    <th>Alarm</th>
+                    <th>State</th>
+                    <th>Change</th>
+                    <th>Received</th>
+                    <th>Reason</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="alertRows"></tbody>
+              </table>
+            </div>
+          </div>
         </section>
       </div>
     </main>
 
-    <script src="./alerts.js"></script>
+    <script type="module" src="./alerts.js"></script>
     <script type="module" src="/ui/shell.js"></script>
   </body>
 </html>

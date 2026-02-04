@@ -83,8 +83,23 @@
                 <label>Status</label>
                 <input class="pw-input" id="statusFilter" placeholder="open|resolved|cancelled" />
               </div>
+              <div class="pw-row">
+                <div class="pw-field">
+                  <label>Page</label>
+                  <input class="pw-input" id="page" type="number" value="1" min="1" />
+                </div>
+                <div class="pw-field">
+                  <label>Limit</label>
+                  <input class="pw-input" id="limit" type="number" value="50" min="1" max="200" />
+                </div>
+              </div>
               <div class="pw-actions">
                 <button class="pw-btn primary" id="btnList">Refresh list</button>
+                <button class="pw-toggle" id="btnAutoRefresh" type="button" aria-pressed="false">
+                  <span class="pw-toggle-pill"></span>
+                  <span>Auto</span>
+                </button>
+                <span class="pw-badge" id="lastUpdated">—</span>
               </div>
               <div id="listStatus" class="pw-status" role="status"></div>
             </div>
@@ -123,12 +138,36 @@
                 <pre class="pw-codeblock" id="out">{}</pre>
               </div>
             </details>
+
+            <div class="pw-card pw-span-all">
+              <div class="pw-card-title">
+                <h2>Dispute list</h2>
+                <span class="pw-kicker">Triage-first</span>
+              </div>
+              <div class="pw-scroll">
+                <table class="pw-table" aria-label="Disputes list">
+                  <thead>
+                    <tr>
+                      <th>Status</th>
+                      <th>Dispute</th>
+                      <th>Payout</th>
+                      <th>Org</th>
+                      <th>Reason</th>
+                      <th>Created</th>
+                      <th>Resolved</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody id="disputeRows"></tbody>
+                </table>
+              </div>
+            </div>
           </div>
         </section>
       </div>
     </main>
 
-    <script src="./disputes.js"></script>
+    <script type="module" src="./disputes.js"></script>
     <script type="module" src="/ui/shell.js"></script>
   </body>
 </html>

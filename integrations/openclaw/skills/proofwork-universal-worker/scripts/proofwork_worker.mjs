@@ -62,6 +62,12 @@ function debugLog(...args) {
 
 const POLL_INTERVAL_MS = parseIntClamped(process.env.PROOFWORK_POLL_INTERVAL_MS ?? 1000, 1000, 250, 60_000);
 const ERROR_BACKOFF_MS = parseIntClamped(process.env.PROOFWORK_ERROR_BACKOFF_MS ?? 2000, 2000, 250, 60_000);
+const BROWSER_HEALTH_INTERVAL_MS = parseIntClamped(
+  process.env.PROOFWORK_BROWSER_HEALTH_INTERVAL_MS ?? 60_000,
+  60_000,
+  5_000,
+  10 * 60_000,
+);
 
 const PROOFWORK_WORKER_TOKEN_FILE = String(process.env.PROOFWORK_WORKER_TOKEN_FILE ?? "").trim() || null;
 const PROOFWORK_STATUS_FILE = String(process.env.PROOFWORK_STATUS_FILE ?? "").trim() || null;
@@ -642,7 +648,10 @@ async function runOpenClaw(args, opts = {}) {
   }, timeoutMs);
   timer.unref?.();
 
-  const code = await new Promise((resolve) => child.on("close", resolve));
+  const code = await new Promise((resolve) => {
+    child.on("close", resolve);
+    child.on("error", () => resolve(1));
+  });
   clearTimeout(timer);
   if (code !== 0) {
     throw new Error(`openclaw_failed:${code}:${stderr.slice(0, 300)}`);
@@ -663,12 +672,117 @@ async function runBinary(cmd, args, opts = {}) {
   }, timeoutMs);
   timer.unref?.();
 
-  const code = await new Promise((resolve) => child.on("close", resolve));
+  const code = await new Promise((resolve) => {
+    child.on("close", resolve);
+    child.on("error", () => resolve(1));
+  });
   clearTimeout(timer);
   return { code: Number(code ?? 1), stdout, stderr };
 }
 
 let openclawBrowserReady = false;
+let lastBrowserHealthAt = 0;
+let browserHealthy = null;
+let lastBrowserHealthError = null;
+let effectiveCapabilityTagsState = null;
+
+async function probeOpenClawBrowserHealth() {
+  if (!OPENCLAW_BROWSER_PROFILE) {
+    return { ok: false, reason: "missing_openclaw_browser_profile" };
+  }
+
+  try {
+    await ensureOpenClawBrowserReady();
+  } catch (err) {
+    return { ok: false, reason: `openclaw_browser_start_failed:${String(err?.message ?? err).slice(0, 200)}` };
+  }
+
+  // Create a blank tab without network so probes work in offline environments.
+  let targetId = "";
+  try {
+    const tabNew = await runOpenClaw(["browser", "tab", "new", "--json"], { timeoutMs: 20_000 });
+    const j = parseJsonFromStdout(tabNew.stdout);
+    targetId = String(j?.tab?.targetId ?? j?.targetId ?? "").trim();
+  } catch (err) {
+    debugLog("openclaw tab new failed", String(err?.message ?? err));
+  }
+
+  // Fallback: open about:blank (older OpenClaw versions may not support tab new).
+  if (!targetId) {
+    try {
+      const opened = await runOpenClaw(["browser", "open", "about:blank", "--json"], { timeoutMs: 20_000 });
+      const j = parseJsonFromStdout(opened.stdout);
+      targetId = String(j?.targetId ?? "").trim();
+    } catch (err) {
+      return { ok: false, reason: `openclaw_browser_open_failed:${String(err?.message ?? err).slice(0, 200)}` };
+    }
+  }
+
+  // Probe the interactive snapshot path (Playwright-backed). This is required for browser_flow click/type.
+  const dir = await mkdtemp(join(tmpdir(), "proofwork-openclaw-health-"));
+  const outPath = join(dir, "snapshot.role.txt");
+  try {
+    await runOpenClaw(
+      ["browser", "snapshot", "--interactive", "--compact", "--depth", "2", "--target-id", targetId, "--out", outPath, "--json"],
+      { timeoutMs: 25_000 },
+    );
+  } catch (err) {
+    const msg = String(err?.message ?? err);
+    return { ok: false, reason: `openclaw_browser_snapshot_failed:${msg.slice(0, 200)}` };
+  } finally {
+    await rm(dir, { recursive: true, force: true }).catch(() => undefined);
+    try {
+      await runOpenClaw(["browser", "close", targetId, "--json"], { timeoutMs: 10_000 });
+    } catch {
+      // ignore
+    }
+  }
+
+  return { ok: true };
+}
+
+function computeEffectiveCapabilityTags(baseSupported) {
+  const base = Array.isArray(baseSupported) ? baseSupported.slice() : [];
+  if (!base.length) return [];
+  const needsBrowser = base.includes("browser") || base.includes("screenshot");
+  if (!needsBrowser) return base;
+  // Strict safety: require a dedicated browser profile when claiming browser-tag jobs.
+  if (!OPENCLAW_BROWSER_PROFILE) return base.filter((t) => t !== "browser" && t !== "screenshot");
+  if (browserHealthy === false) return base.filter((t) => t !== "browser" && t !== "screenshot");
+  return base;
+}
+
+async function maybeUpdateBrowserHealth(baseSupported) {
+  const base = Array.isArray(baseSupported) ? baseSupported : [];
+  const needsBrowser = base.includes("browser") || base.includes("screenshot");
+  if (!needsBrowser) {
+    browserHealthy = null;
+    lastBrowserHealthError = null;
+    effectiveCapabilityTagsState = computeEffectiveCapabilityTags(base);
+    await writeStatus({ effectiveCapabilityTags: effectiveCapabilityTagsState, browserReady: null, lastBrowserHealthAt: null, lastBrowserError: null });
+    return;
+  }
+
+  const now = Date.now();
+  if (browserHealthy !== null && now - lastBrowserHealthAt < BROWSER_HEALTH_INTERVAL_MS) {
+    effectiveCapabilityTagsState = computeEffectiveCapabilityTags(base);
+    return;
+  }
+
+  lastBrowserHealthAt = now;
+  const res = await probeOpenClawBrowserHealth();
+  browserHealthy = Boolean(res.ok);
+  lastBrowserHealthError = res.ok ? null : String(res.reason ?? "browser_unhealthy");
+  effectiveCapabilityTagsState = computeEffectiveCapabilityTags(base);
+
+  await writeStatus({
+    browserReady: browserHealthy,
+    lastBrowserHealthAt: now,
+    lastBrowserError: lastBrowserHealthError,
+    effectiveCapabilityTags: effectiveCapabilityTagsState,
+  });
+}
+
 async function ensureOpenClawBrowserReady() {
   if (openclawBrowserReady) return;
   if (!OPENCLAW_BROWSER_PROFILE) return;
@@ -1903,8 +2017,16 @@ async function releaseLeaseEarly(input) {
 
 async function loop() {
   const { token, workerId } = await ensureWorkerToken();
+  try {
+    const v = await apiFetch("/api/version", { token });
+    if (v.resp.ok && v.json?.apiVersion) {
+      await writeStatus({ api: { version: v.json?.apiVersion ?? null, serverVersion: v.json?.serverVersion ?? null } });
+    }
+  } catch {
+    // ignore (backwards-compatible)
+  }
   await maybeConfigurePayoutAddress({ token });
-  const supported = supportedCapabilityTags();
+  const baseSupported = supportedCapabilityTags();
   const prefer = String(process.env.PROOFWORK_PREFER_CAPABILITY_TAG ?? "").trim() || undefined;
   const requireTaskType =
     String(process.env.PROOFWORK_REQUIRE_TASK_TYPE ?? process.env.REQUIRE_TASK_TYPE ?? "").trim() || undefined;
@@ -1912,7 +2034,14 @@ async function loop() {
     ? Number(process.env.PROOFWORK_MIN_PAYOUT_CENTS)
     : undefined;
 
-  await writeStatus({ startedAt: Date.now(), pid: process.pid, workerId });
+  await maybeUpdateBrowserHealth(baseSupported);
+  await writeStatus({
+    startedAt: Date.now(),
+    pid: process.pid,
+    workerId,
+    supportedCapabilityTags: baseSupported,
+    effectiveCapabilityTags: effectiveCapabilityTagsState ?? computeEffectiveCapabilityTags(baseSupported),
+  });
 
   const refuseCache = new Map();
 
@@ -1923,6 +2052,8 @@ async function loop() {
       continue;
     }
 
+    await maybeUpdateBrowserHealth(baseSupported);
+    const supported = effectiveCapabilityTagsState ?? computeEffectiveCapabilityTags(baseSupported);
     const exclude = excludeJobIdsCsv(refuseCache);
     await writeStatus({ paused: false, lastPollAt: Date.now(), excludeJobIdsCount: exclude ? exclude.split(",").length : 0 });
 
