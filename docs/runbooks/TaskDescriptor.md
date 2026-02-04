@@ -30,6 +30,8 @@ These rules are enforced by the OpenClaw worker (descriptor is **untrusted input
 - **No login / no secrets**: refuse auth/credential/OTP/OAuth-ish flows.
 - **Origin enforcement**: explicit URLs visited/fetched/clipped must stay within `job.constraints.allowedOrigins`.
 - **No arbitrary JS**: descriptor-provided JS is never executed (e.g. `extract.fn` is forbidden).
+- **No env exfiltration**: `value_env` is allowlist-only (default allowlist is empty) and secret-ish env names are always blocked (`token|secret|password|key`).
+- **Resource caps**: time budget, HTTP max bytes, artifact max bytes, and ffmpeg caps are enforced by the worker.
 
 ## Recommended conventions (v1)
 Keep `input_spec` and `output_spec` small and declarative. Do not embed credentials.
@@ -39,8 +41,23 @@ Keep `input_spec` and `output_spec` small and declarative. Do not embed credenti
 If you want the Universal Worker to do more than a screenshot (e.g. **click/type/wait/extract**), you can
 provide an optional `site_profile.browser_flow` with step descriptors.
 
-This is intentionally lightweight and best-effort (the platform does not strictly validate the structure),
-but it is bounded by `TASK_DESCRIPTOR_MAX_BYTES` and `TASK_DESCRIPTOR_MAX_DEPTH`.
+This is intentionally lightweight and best-effort. By default, the server only enforces descriptor
+schema/size/depth + “likely secret” keys, while the **worker** enforces the “public pool” safety contract.
+Optionally, you can enable a stricter **server-side** validation gate for `browser_flow` (see below).
+
+It is always bounded by `TASK_DESCRIPTOR_MAX_BYTES` and `TASK_DESCRIPTOR_MAX_DEPTH`.
+
+### Server-side browser_flow validation gate (optional)
+
+Set:
+- `TASK_DESCRIPTOR_BROWSER_FLOW_VALIDATE=true` to reject invalid/unsafe `site_profile.browser_flow` early (before publish/claim).
+- `TASK_DESCRIPTOR_BROWSER_FLOW_ALLOW_VALUE_ENV=true` only if you explicitly want to allow `value_env` in descriptors (not recommended for a public pool).
+
+When enabled, the server rejects `browser_flow` steps that:
+- exceed 100 steps
+- use unsupported ops
+- include `fn` (no arbitrary JS)
+- include `value_env` (unless `TASK_DESCRIPTOR_BROWSER_FLOW_ALLOW_VALUE_ENV=true`)
 
 ### Supported step ops (v0)
 - `navigate|goto`: `{ op, url, timeout_ms? }`

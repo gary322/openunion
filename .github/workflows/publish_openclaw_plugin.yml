@@ -1,0 +1,46 @@
+name: Publish OpenClaw Proofwork Worker Plugin
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "If true, run checks but skip npm publish"
+        required: false
+        default: "false"
+  push:
+    tags:
+      - "proofwork-worker-v*"
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Unit/integration tests
+        run: npm test
+
+      - name: Typecheck/build (tsc)
+        run: npm run build
+
+      - name: Verify packaged worker assets are synced
+        run: node scripts/sync_assets.mjs --check
+        working-directory: integrations/openclaw/extensions/proofwork-worker
+
+      - name: Publish to npm
+        if: ${{ secrets.NPM_TOKEN != '' && (github.event_name == 'push' || github.event.inputs.dry_run != 'true') }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish
+        working-directory: integrations/openclaw/extensions/proofwork-worker

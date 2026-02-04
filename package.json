@@ -18,7 +18,7 @@
     "worker:scanner": "tsx workers/scanner-runner.ts",
     "worker:universal": "tsx skills/universal-worker/worker.ts",
     "verifier:gateway": "tsx services/verifier-gateway/server.ts",
-    "test": "vitest run",
+    "test": "vitest run --no-file-parallelism",
     "test:serial": "vitest run --no-file-parallelism",
     "test:e2e": "playwright test",
     "test:full": "bash scripts/test_full.sh",

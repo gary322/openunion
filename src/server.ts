@@ -249,6 +249,50 @@ function hasSensitiveKeys(obj: any, depth = 0, maxDepth = TASK_DESCRIPTOR_MAX_DE
   return false;
 }
 
+const BROWSER_FLOW_ALLOWED_OPS = new Set(['goto', 'navigate', 'wait', 'click', 'fill', 'type', 'press', 'screenshot', 'extract']);
+const BROWSER_FLOW_HARD_CAP_STEPS = 100;
+const BROWSER_FLOW_ATTR_REGEX = /^[a-zA-Z0-9_:-]{1,80}$/;
+
+function validateTaskDescriptorBrowserFlow(taskDescriptor: any, opts: { allowValueEnv: boolean }): string | null {
+  const sp = taskDescriptor?.site_profile;
+  if (!sp || typeof sp !== 'object') return null;
+  const bf = (sp as any).browser_flow ?? (sp as any).browserFlow ?? null;
+  if (!bf || typeof bf !== 'object') return null;
+  const steps = (bf as any).steps;
+  if (!Array.isArray(steps) || steps.length === 0) return null;
+  if (steps.length > BROWSER_FLOW_HARD_CAP_STEPS) return 'browser_flow_steps_exceeds_hard_cap';
+
+  for (let i = 0; i < steps.length; i++) {
+    const step = steps[i];
+    if (!step || typeof step !== 'object') return `browser_flow_step_${i}_not_object`;
+    const op = String((step as any).op ?? (step as any).action ?? '').trim().toLowerCase();
+    if (!op) return `browser_flow_step_${i}_missing_op`;
+    if (!BROWSER_FLOW_ALLOWED_OPS.has(op)) return `browser_flow_step_${i}_op_not_allowed:${op}`;
+    if ((step as any).fn !== undefined) return `browser_flow_step_${i}_fn_forbidden`;
+
+    const valueEnv = (step as any).value_env;
+    if (valueEnv !== undefined && valueEnv !== null && String(valueEnv).trim() !== '') {
+      if (!opts.allowValueEnv) return `browser_flow_step_${i}_value_env_forbidden`;
+      const envName = String(valueEnv).trim();
+      if (/token|secret|password|key/i.test(envName)) return `browser_flow_step_${i}_value_env_sensitive`;
+      if (!/^[A-Z0-9_]{1,100}$/.test(envName)) return `browser_flow_step_${i}_value_env_invalid_name`;
+    }
+
+    if (op === 'extract') {
+      const key = String((step as any).key ?? '').trim();
+      if (!key) return `browser_flow_step_${i}_extract_missing_key`;
+      if ((step as any).fn !== undefined) return `browser_flow_step_${i}_extract_fn_forbidden`;
+      const attrRaw = (step as any).attribute;
+      if (typeof attrRaw === 'string' && attrRaw.trim()) {
+        const attr = attrRaw.trim();
+        if (!BROWSER_FLOW_ATTR_REGEX.test(attr)) return `browser_flow_step_${i}_extract_invalid_attribute`;
+      }
+    }
+  }
+
+  return null;
+}
+
 // Fail fast on insecure defaults in production.
 if (process.env.NODE_ENV === 'production') {
   if ((process.env.WORKER_TOKEN_PEPPER ?? 'dev_pepper_change_me') === 'dev_pepper_change_me') {
@@ -269,10 +313,20 @@ if (process.env.NODE_ENV === 'production') {
 }
 
 // Build Fastify with Zod provider
-export function buildServer() {
+export function buildServer(opts: { taskDescriptorBrowserFlowValidationGate?: boolean } = {}) {
   const app = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>();
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
+
+  const taskDescriptorBrowserFlowValidationGate =
+    opts.taskDescriptorBrowserFlowValidationGate ??
+    (String(process.env.TASK_DESCRIPTOR_BROWSER_FLOW_VALIDATE ?? '').trim().toLowerCase() === 'true' ||
+      String(process.env.TASK_DESCRIPTOR_BROWSER_FLOW_VALIDATE ?? '').trim() === '1' ||
+      false);
+  const taskDescriptorBrowserFlowAllowValueEnv =
+    String(process.env.TASK_DESCRIPTOR_BROWSER_FLOW_ALLOW_VALUE_ENV ?? '').trim().toLowerCase() === 'true' ||
+    String(process.env.TASK_DESCRIPTOR_BROWSER_FLOW_ALLOW_VALUE_ENV ?? '').trim() === '1' ||
+    false;
 
   // Preserve raw JSON body for webhook signature verification, while still providing parsed JSON to handlers.
   app.addContentTypeParser('application/json', { parseAs: 'buffer' }, (req, body, done) => {
@@ -684,6 +738,7 @@ export function buildServer() {
       jobsNextExcludeJobIds: true,
       jobLeaseRelease: true,
       workerPayoutAddress: true,
+      taskDescriptorBrowserFlowValidationGate,
     },
   }));
   app.get('/health/metrics', async (_req, reply) => {
@@ -1732,6 +1787,12 @@ export function buildServer() {
       }
       if (hasSensitiveKeys(parsed.data)) {
         return reply.code(400).send({ error: { code: 'task_descriptor_sensitive', message: 'task_descriptor contains sensitive keys' } });
+      }
+      if (taskDescriptorBrowserFlowValidationGate) {
+        const err = validateTaskDescriptorBrowserFlow(parsed.data, { allowValueEnv: taskDescriptorBrowserFlowAllowValueEnv });
+        if (err) {
+          return reply.code(400).send({ error: { code: 'invalid_task_descriptor', message: `browser_flow_invalid:${err}` } });
+        }
       }
       taskDescriptor = parsed.data;
     }

@@ -5,6 +5,22 @@
 - `proofwork_outbox_pending{topic="payout.confirm.requested"}` grows
 - Payout marked `failed` unexpectedly
 
+## Worker-side visibility (OpenClaw)
+
+If you run the OpenClaw Proofwork worker plugin, workers can check:
+- `/proofwork payouts pending|paid|failed|refunded`
+- `/proofwork earnings`
+- `/proofwork payout status` (to verify payout address)
+
+## Operator smoke checklist (payout pipeline)
+
+Before debugging individual payouts, confirm:
+- `workers/outbox-dispatcher.ts` is running
+- `workers/payout-runner.ts` is running
+- the payout signer is funded (Base ETH for gas + Base USDC for payouts)
+- splitter allowance exists (see “Approve USDC allowance for the splitter” below)
+- `PROOFWORK_FEE_WALLET_BASE` is configured
+
 ## Required config (crypto payouts)
 - `PAYMENTS_PROVIDER=crypto_base_usdc`
 - `BASE_RPC_URL`

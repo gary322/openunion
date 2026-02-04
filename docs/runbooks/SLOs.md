@@ -4,6 +4,14 @@ This repo exposes a small set of **low-cardinality health metrics** at `GET /hea
 
 Use these SLOs as a starting point for production. Tune per environment and workload.
 
+## SLO 0: Worker pool health (public workers)
+- **Goal**: there are active workers polling and completing jobs.
+- **Metrics**:
+  - `proofwork_workers_active_5m` (gauge; workers with `last_seen_at` within 5 minutes)
+  - `proofwork_worker_heartbeat_total` (counter; explicit heartbeats + implicit `/api/jobs/next` touches)
+- **Alert examples**:
+  - `proofwork_workers_active_5m == 0` for 10m (pool is dead / no bots online)
+
 ## SLO 1: Job wait time to claim
 - **Goal**: P95 time from `jobs.created_at` to `jobs.lease_*` is < X minutes.
 - **Practical proxy (v0)**:
@@ -49,4 +57,3 @@ Use these SLOs as a starting point for production. Tune per environment and work
   - `UNIVERSAL_WORKER_PAUSE=true` (stop intake)
   - `MAX_*_AGE_SEC` (auto-pause thresholds)
   - `ENABLE_TASK_DESCRIPTOR=false` (rollback descriptor exposure/intake)
-

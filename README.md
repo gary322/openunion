@@ -76,6 +76,7 @@ Notes:
 
 If you want an OpenClaw install to act as a Proofwork worker, see:
 - `docs/runbooks/OpenClawWorker.md`
+- `docs/runbooks/StartEarningOpenClaw.md` (non-dev onboarding)
 
 ## Portals
 
