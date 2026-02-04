@@ -49,6 +49,11 @@ test('buyer → bounty → worker → upload → verify (gateway) → payout (lo
 
   const baseURL = String(test.info().project.use.baseURL ?? 'http://localhost:3111').replace(/\/$/, '');
 
+  let buyerToken = '';
+  let baseGrossPaidCents = 0;
+  let basePlatformFeeCents = 0;
+  let baseProofworkFeeCents = 0;
+  let basePaidCount = 0;
   let targetServer: http.Server | undefined;
   let originVerifyToken = '';
   let gateway: any | undefined;
@@ -155,6 +160,18 @@ test('buyer → bounty → worker → upload → verify (gateway) → payout (lo
 
     await page.click('#btnCreateKey');
     await expect(page.locator('#keyStatus')).toContainText('token created');
+    buyerToken = await page.locator('#buyerToken').inputValue();
+    expect(buyerToken).toMatch(/^pw_bu_/);
+
+    // Snapshot baseline org earnings so this test is deterministic even if other E2E tests
+    // created payouts earlier in the same DB.
+    const earnings0 = await request.get('/api/org/earnings', { headers: { Authorization: `Bearer ${buyerToken}` } });
+    expect(earnings0.ok()).toBeTruthy();
+    const e0 = (await earnings0.json()) as any;
+    baseGrossPaidCents = Number(e0?.totals?.grossPaidCents ?? 0);
+    basePlatformFeeCents = Number(e0?.totals?.platformFeeCents ?? 0);
+    baseProofworkFeeCents = Number(e0?.totals?.proofworkFeeCents ?? 0);
+    basePaidCount = Number(e0?.totals?.paidCount ?? 0);
 
     await page.fill('#originUrl', targetOrigin);
     await page.fill('#originMethod', 'http_file');
@@ -300,6 +317,27 @@ test('buyer → bounty → worker → upload → verify (gateway) → payout (lo
     expect(paid.net_amount_cents).toBe(1782);
     expect(paid.platform_fee_cents).toBe(200);
     expect(paid.proofwork_fee_cents).toBe(18);
+
+    // Worker UI: payout history should show the paid payout (no DB access required).
+    await page.click('#btnListPayouts');
+    await expect(page.locator('#payoutOut')).toContainText(payoutId);
+    await expect(page.locator('#payoutOut')).toContainText(/"status"\s*:\s*"paid"/);
+
+    // Buyer UI: earnings + payout history should reflect the fee split.
+    await page.goto('/buyer/index.html');
+    await page.fill('#buyerToken', buyerToken);
+
+    await page.click('#btnGetEarnings');
+    await expect(page.locator('#earningsStatus')).toContainText('ok');
+    const earningsTxt = (await page.locator('#earningsOut').textContent()) || '{}';
+    const earningsJson = JSON.parse(earningsTxt) as any;
+    expect(Number(earningsJson?.totals?.paidCount ?? 0)).toBe(basePaidCount + 1);
+    expect(Number(earningsJson?.totals?.grossPaidCents ?? 0)).toBe(baseGrossPaidCents + 2000);
+    expect(Number(earningsJson?.totals?.platformFeeCents ?? 0)).toBe(basePlatformFeeCents + 200);
+    expect(Number(earningsJson?.totals?.proofworkFeeCents ?? 0)).toBe(baseProofworkFeeCents + 18);
+
+    await page.click('#btnListPayouts');
+    await expect(page.locator('#earningsOut')).toContainText(payoutId);
 
     // On-chain assertions: net to worker, fees to platform + proofwork.
     const usdcRead = new Contract(await usdc.getAddress(), ['function balanceOf(address) view returns (uint256)'], provider);
