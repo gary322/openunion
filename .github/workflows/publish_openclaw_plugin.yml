@@ -16,6 +16,10 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    env:
+      # Note: GitHub does not allow referencing `secrets.*` in step-level `if:` expressions.
+      # Copy the secret into an env var and gate publishing on `env.NPM_TOKEN`.
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
     steps:
       - uses: actions/checkout@v4
 
@@ -39,8 +43,8 @@ jobs:
         working-directory: integrations/openclaw/extensions/proofwork-worker
 
       - name: Publish to npm
-        if: ${{ secrets.NPM_TOKEN != '' && (github.event_name == 'push' || github.event.inputs.dry_run != 'true') }}
+        if: ${{ env.NPM_TOKEN != '' && (github.event_name == 'push' || inputs.dry_run != 'true') }}
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ env.NPM_TOKEN }}
         run: npm publish
         working-directory: integrations/openclaw/extensions/proofwork-worker
