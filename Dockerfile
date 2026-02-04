@@ -10,6 +10,8 @@ COPY src ./src
 COPY workers ./workers
 COPY services ./services
 COPY db ./db
+COPY contracts ./contracts
+COPY docs ./docs
 COPY public ./public
 COPY openapi.yaml README.md ./
 
@@ -24,6 +26,8 @@ ENV NODE_ENV=production
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/db ./db
+COPY --from=build /app/contracts ./contracts
+COPY --from=build /app/docs ./docs
 COPY --from=build /app/public ./public
 COPY --from=build /app/openapi.yaml ./openapi.yaml
 
