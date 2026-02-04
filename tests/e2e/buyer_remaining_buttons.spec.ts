@@ -127,6 +127,8 @@ test('buyer portal: exercise remaining buttons (fee get, quotas, origins list/re
     await page.fill('#appTaskType', taskType);
     await page.fill('#appName', `Buyer Buttons App ${Date.now()}`);
     await page.fill('#appDashboardUrl', '');
+    // Default descriptor is behind a progressive-disclosure <details>.
+    await page.locator('details:has(#appDefaultDescriptor)').evaluate((d: any) => (d.open = true));
     await page.fill(
       '#appDefaultDescriptor',
       JSON.stringify(

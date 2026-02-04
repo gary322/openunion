@@ -1,5 +1,64 @@
+import { el, formatCents, toast } from '/ui/pw.js';
+
 const statusEl = document.getElementById('status');
+const statsEl = document.getElementById('stats');
 const grid = document.getElementById('grid');
+
+const q = document.getElementById('q');
+const btnClear = document.getElementById('btnClear');
+
+const catFilters = document.getElementById('catFilters');
+const capFilters = document.getElementById('capFilters');
+const onlyUniversal = document.getElementById('onlyUniversal');
+
+const UNIVERSAL_CAPS = new Set(['browser', 'http', 'ffmpeg', 'llm_summarize', 'screenshot']);
+
+function getCategory(app) {
+  const cat = app?.uiSchema?.category;
+  return String(cat || 'Uncategorized');
+}
+
+function getCaps(app) {
+  const caps = app?.defaultDescriptor?.capability_tags;
+  return Array.isArray(caps) ? caps.map(String) : [];
+}
+
+function isUniversalCompatible(app) {
+  const caps = getCaps(app);
+  if (!caps.length) return false;
+  return caps.every((c) => UNIVERSAL_CAPS.has(String(c)));
+}
+
+function getDefaultPayoutCents(app) {
+  const cents = app?.uiSchema?.bounty_defaults?.payout_cents;
+  const n = Number(cents);
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : null;
+}
+
+function norm(s) {
+  return String(s || '').trim().toLowerCase();
+}
+
+function renderFilterList(root, items, selected, { idPrefix, labelPrefix } = {}) {
+  const nodes = [];
+  for (const name of items) {
+    const id = `${idPrefix || 'f'}_${name.replace(/[^a-z0-9]+/gi, '_').toLowerCase()}`;
+    const input = el('input', { id, type: 'checkbox', value: name });
+    input.checked = selected.has(name);
+    input.addEventListener('change', () => {
+      if (input.checked) selected.add(name);
+      else selected.delete(name);
+      render();
+    });
+    nodes.push(
+      el('label', { class: 'pw-check' }, [
+        input,
+        el('span', { text: labelPrefix ? `${labelPrefix}${name}` : name }),
+      ])
+    );
+  }
+  root?.replaceChildren(...nodes);
+}
 
 function renderCard(app) {
   const title = String(app?.name || app?.slug || 'App');
@@ -7,56 +66,135 @@ function renderCard(app) {
   const slug = String(app?.slug || '');
   const href = app?.dashboardUrl || (slug ? `/apps/app/${encodeURIComponent(slug)}/` : '/apps/');
 
-  const card = document.createElement('article');
-  // Keep legacy `.card` for existing E2E selectors; style comes from `.pw-card`.
-  card.className = 'pw-card soft card';
+  const cat = getCategory(app);
+  const caps = getCaps(app);
+  const payout = getDefaultPayoutCents(app);
 
-  const name = document.createElement('h3');
-  name.className = 'pw-app-name';
-  name.textContent = title;
-  card.appendChild(name);
+  const card = el('article', { class: 'pw-card soft card' }, []);
 
-  const p = document.createElement('p');
-  p.className = 'pw-app-desc';
-  p.textContent = desc || '—';
-  card.appendChild(p);
+  const head = el('div', { class: 'pw-card-title' }, [
+    el('h3', { class: 'pw-app-name', text: title }),
+    el('span', { class: 'pw-kicker' }, [cat]),
+  ]);
+  card.appendChild(head);
 
-  const actions = document.createElement('div');
-  actions.className = 'pw-actions';
+  if (desc) card.appendChild(el('p', { class: 'pw-app-desc', text: desc }));
 
-  const open = document.createElement('a');
-  open.className = 'pw-btn primary';
-  open.href = href;
-  open.textContent = 'Open';
+  const chips = el('div', { class: 'pw-chips' }, []);
+  if (isUniversalCompatible(app)) chips.appendChild(el('span', { class: 'pw-chip good', text: 'Universal Worker' }));
+  if (String(app?.taskType || '')) chips.appendChild(el('span', { class: 'pw-chip pw-mono', text: String(app.taskType) }));
+  if (payout !== null) chips.appendChild(el('span', { class: 'pw-chip', text: `Typical payout: ${formatCents(payout)}` }));
+  for (const c of caps.slice(0, 6)) chips.appendChild(el('span', { class: 'pw-chip faint pw-mono', text: c }));
+  if (caps.length > 6) chips.appendChild(el('span', { class: 'pw-chip faint', text: `+${caps.length - 6}` }));
+  card.appendChild(chips);
+
+  const actions = el('div', { class: 'pw-actions' }, []);
+  const open = el('a', { class: 'pw-btn primary', href }, ['Create work']);
   actions.appendChild(open);
-
-  if (String(app?.taskType || '')) {
-    const chip = document.createElement('span');
-    chip.className = 'pw-chip pw-mono';
-    chip.textContent = String(app.taskType);
-    actions.appendChild(chip);
-  }
-
+  const learn = el('a', { class: 'pw-btn', href }, ['Open']);
+  actions.appendChild(learn);
   card.appendChild(actions);
 
   return card;
 }
 
-(async () => {
+let apps = [];
+let cats = [];
+let capsAll = [];
+
+const selectedCats = new Set();
+const selectedCaps = new Set();
+
+function setStatus(text, kind = '') {
+  if (!statusEl) return;
+  statusEl.textContent = text || '';
+  statusEl.classList.remove('good', 'bad');
+  if (kind) statusEl.classList.add(kind);
+}
+
+function render() {
+  const needle = norm(q?.value);
+  const onlyUW = Boolean(onlyUniversal?.checked);
+
+  const visible = apps.filter((a) => {
+    const cat = getCategory(a);
+    if (selectedCats.size && !selectedCats.has(cat)) return false;
+
+    const caps = getCaps(a);
+    if (selectedCaps.size) {
+      for (const c of selectedCaps) {
+        if (!caps.includes(c)) return false;
+      }
+    }
+    if (onlyUW && !isUniversalCompatible(a)) return false;
+
+    if (needle) {
+      const hay = [
+        a?.name,
+        a?.slug,
+        a?.description,
+        a?.taskType,
+        cat,
+        ...caps,
+      ]
+        .map(norm)
+        .join(' ');
+      if (!hay.includes(needle)) return false;
+    }
+    return true;
+  });
+
+  if (grid) grid.replaceChildren(...visible.map(renderCard));
+
+  const total = apps.length;
+  const uwCount = apps.filter(isUniversalCompatible).length;
+  const msg = `${visible.length} shown • ${total} total • ${uwCount} Universal Worker compatible`;
+  if (statsEl) statsEl.textContent = msg;
+  setStatus(visible.length ? '' : 'No apps match your filters.');
+}
+
+async function load() {
   try {
-    if (statusEl) statusEl.textContent = 'Loading apps...';
+    setStatus('Loading apps…');
     const res = await fetch('/api/apps?page=1&limit=200', { credentials: 'include' });
     const json = await res.json().catch(() => null);
     if (!res.ok) {
-      if (statusEl) statusEl.textContent = `Failed to load apps (${res.status})`;
+      setStatus(`Failed to load apps (${res.status})`, 'bad');
       return;
     }
-    const apps = Array.isArray(json?.apps) ? json.apps : [];
-    if (grid) {
-      grid.replaceChildren(...apps.map(renderCard));
+    apps = Array.isArray(json?.apps) ? json.apps : [];
+
+    const catSet = new Set();
+    const capSet = new Set();
+    for (const a of apps) {
+      catSet.add(getCategory(a));
+      for (const c of getCaps(a)) capSet.add(c);
     }
-    if (statusEl) statusEl.textContent = apps.length ? `Loaded ${apps.length} apps` : 'No apps published yet.';
+    cats = Array.from(catSet).sort((a, b) => a.localeCompare(b));
+    capsAll = Array.from(capSet).sort((a, b) => a.localeCompare(b));
+
+    renderFilterList(catFilters, cats, selectedCats, { idPrefix: 'cat_' });
+    renderFilterList(capFilters, capsAll, selectedCaps, { idPrefix: 'cap_' });
+
+    q?.addEventListener('input', () => render());
+    onlyUniversal?.addEventListener('change', () => render());
+    btnClear?.addEventListener('click', () => {
+      if (q) q.value = '';
+      selectedCats.clear();
+      selectedCaps.clear();
+      if (onlyUniversal) onlyUniversal.checked = false;
+      renderFilterList(catFilters, cats, selectedCats, { idPrefix: 'cat_' });
+      renderFilterList(capFilters, capsAll, selectedCaps, { idPrefix: 'cap_' });
+      render();
+      toast('Cleared filters');
+    });
+
+    setStatus('');
+    render();
   } catch (_err) {
-    if (statusEl) statusEl.textContent = 'Failed to load apps.';
+    setStatus('Failed to load apps.', 'bad');
   }
-})();
+}
+
+load();
+

@@ -37,6 +37,11 @@ export const registerWorkerSchema = z.object({
   capabilities: jsonRecord().default({}),
 });
 
+export const releaseJobLeaseSchema = z.object({
+  leaseNonce: z.string().min(1).max(80),
+  reason: z.string().min(1).max(500).optional(),
+});
+
 export const presignRequestSchema = z.object({
   jobId: z.string(),
   files: z.array(
@@ -172,6 +177,75 @@ export const appSlugSchema = z
   .max(64)
   .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, 'slug must be lowercase alphanumeric with optional dashes');
 
+// App-defined UI schema (friendly forms) used by /apps/app/:slug/ and built-in vertical pages.
+// - Strict where it matters (field types + target paths), permissive elsewhere (passthrough) so
+//   we can evolve the UX without breaking existing apps.
+const appUiFieldTypeEnum = z.enum(['text', 'textarea', 'url', 'number', 'select', 'multiselect', 'boolean', 'date']);
+const appUiTargetSchema = z
+  .string()
+  .min(1)
+  .max(200)
+  .regex(/^(input_spec|site_profile)\.[a-zA-Z0-9_][a-zA-Z0-9_.]*$/, 'target must start with input_spec. or site_profile.');
+
+const appUiFieldSchema = z
+  .object({
+    key: z.string().min(1).max(80),
+    label: z.string().min(1).max(160),
+    type: appUiFieldTypeEnum,
+    required: z.boolean().optional(),
+    placeholder: z.string().max(400).optional(),
+    help: z.string().max(1200).optional(),
+    default: z.any().optional(),
+    advanced: z.boolean().optional(),
+    min: z.number().optional(),
+    max: z.number().optional(),
+    options: z
+      .array(
+        z.object({
+          label: z.string().min(1).max(160),
+          value: z.any(),
+        })
+      )
+      .max(200)
+      .optional(),
+    target: appUiTargetSchema,
+  })
+  .passthrough();
+
+const appUiSectionSchema = z
+  .object({
+    id: z.string().min(1).max(80),
+    title: z.string().min(1).max(160),
+    description: z.string().max(2000).optional(),
+    fields: z.array(appUiFieldSchema).min(1).max(80),
+  })
+  .passthrough();
+
+const appUiTemplateSchema = z
+  .object({
+    id: z.string().min(1).max(80),
+    name: z.string().min(1).max(160),
+    description: z.string().max(2000).optional(),
+    preset: z.record(z.string(), z.any()).default({}),
+  })
+  .passthrough();
+
+export const appUiSchemaSchema = z
+  .object({
+    schema_version: z.literal('v1').default('v1'),
+    category: z.string().max(120).optional(),
+    // Optional: used for smart defaults when creating bounties from app pages.
+    bounty_defaults: z
+      .object({
+        payout_cents: z.number().int().min(0).max(10_000_000).optional(),
+        required_proofs: z.number().int().min(0).max(50).optional(),
+      })
+      .optional(),
+    sections: z.array(appUiSectionSchema).min(1).max(50),
+    templates: z.array(appUiTemplateSchema).max(200).optional(),
+  })
+  .passthrough();
+
 export const appCreateSchema = z.object({
   slug: appSlugSchema,
   taskType: z.string().min(1).max(120),
@@ -180,6 +254,7 @@ export const appCreateSchema = z.object({
   dashboardUrl: z.string().max(500).optional().nullable(),
   public: z.boolean().optional(),
   defaultDescriptor: taskDescriptorSchema.optional(),
+  uiSchema: appUiSchemaSchema.optional(),
 });
 
 export const appUpdateSchema = z.object({
@@ -191,6 +266,7 @@ export const appUpdateSchema = z.object({
   public: z.boolean().optional(),
   status: z.enum(['active', 'disabled']).optional(),
   defaultDescriptor: taskDescriptorSchema.optional(),
+  uiSchema: appUiSchemaSchema.optional(),
 });
 
 export const disputeCreateSchema = z

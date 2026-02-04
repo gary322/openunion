@@ -28,6 +28,7 @@ import {
   isAcceptedDuplicate,
   findSubmissionByIdempotency,
   leaseJob,
+  releaseJobLease,
   listBountiesByOrg,
   markPayoutStatus,
   updateJob,
@@ -77,6 +78,9 @@ import {
   listBlockedDomainsAdmin,
   upsertBlockedDomainAdmin,
   deleteBlockedDomainAdmin,
+  resolveIdAdmin,
+  resolveIdOrg,
+  resolveIdWorker,
 } from './store.js';
 import { db } from './db/client.js';
 import { runMigrations } from './db/migrate.js';
@@ -94,6 +98,7 @@ import {
 } from './buyer.js';
 import {
   registerWorkerSchema,
+  releaseJobLeaseSchema,
   presignRequestSchema,
   verifierPresignRequestSchema,
   uploadCompleteSchema,
@@ -154,6 +159,7 @@ const VERIFIER_TOKEN_PEPPER = process.env.VERIFIER_TOKEN_PEPPER ?? process.env.W
 const MAX_VERIFIER_BACKLOG = Number(process.env.MAX_VERIFIER_BACKLOG ?? 500);
 const MAX_VERIFICATION_ATTEMPTS = Number(process.env.MAX_VERIFICATION_ATTEMPTS ?? 3);
 const TASK_DESCRIPTOR_MAX_BYTES = Number(process.env.TASK_DESCRIPTOR_MAX_BYTES ?? 16000);
+const APP_UI_SCHEMA_MAX_BYTES = Number(process.env.APP_UI_SCHEMA_MAX_BYTES ?? 32000);
 function isUniversalWorkerPaused() {
   return String(process.env.UNIVERSAL_WORKER_PAUSE ?? '').toLowerCase() === 'true';
 }
@@ -652,6 +658,49 @@ export function buildServer() {
     const txt = await renderPrometheusMetrics();
     reply.header('content-type', 'text/plain; version=0.0.4');
     return txt;
+  });
+
+  // Global search helpers (used by the shared UI shell).
+  app.get('/api/admin/resolve', { preHandler: (app as any).authenticateAdmin }, async (request: any, reply) => {
+    const q = (request.query ?? {}) as any;
+    const id = String(q.id ?? '').trim();
+    if (!id) return reply.code(400).send({ error: { code: 'invalid', message: 'id required' } });
+    const res = await resolveIdAdmin(id);
+    if (!res.found) return { found: false };
+    return {
+      found: true,
+      type: res.type,
+      meta: res.meta ?? {},
+      href: `/admin/explorer.html?id=${encodeURIComponent(id)}`,
+    };
+  });
+
+  app.get('/api/org/resolve', { preHandler: (app as any).authenticateBuyer }, async (request: any, reply) => {
+    const q = (request.query ?? {}) as any;
+    const id = String(q.id ?? '').trim();
+    if (!id) return reply.code(400).send({ error: { code: 'invalid', message: 'id required' } });
+    const res = await resolveIdOrg(request.orgId, id);
+    if (!res.found) return { found: false };
+    return {
+      found: true,
+      type: res.type,
+      meta: res.meta ?? {},
+      href: `/buyer/explorer.html?id=${encodeURIComponent(id)}`,
+    };
+  });
+
+  app.get('/api/worker/resolve', { preHandler: (app as any).authenticateWorker }, async (request: any, reply) => {
+    const q = (request.query ?? {}) as any;
+    const id = String(q.id ?? '').trim();
+    if (!id) return reply.code(400).send({ error: { code: 'invalid', message: 'id required' } });
+    const res = await resolveIdWorker(request.worker.id, id);
+    if (!res.found) return { found: false };
+    return {
+      found: true,
+      type: res.type,
+      meta: res.meta ?? {},
+      href: `/worker/explorer.html?id=${encodeURIComponent(id)}`,
+    };
   });
 
   // Public apps registry (partner-facing listing)
@@ -1407,6 +1456,21 @@ export function buildServer() {
       defaultDescriptor = {};
     }
 
+    let uiSchema: any = body.uiSchema ?? null;
+    if (uiSchema !== null && uiSchema !== undefined) {
+      const bytes = Buffer.byteLength(JSON.stringify(uiSchema), 'utf8');
+      if (bytes > APP_UI_SCHEMA_MAX_BYTES) {
+        return reply
+          .code(400)
+          .send({ error: { code: 'ui_schema_too_large', message: `uiSchema exceeds ${APP_UI_SCHEMA_MAX_BYTES} bytes` } });
+      }
+      if (hasSensitiveKeys(uiSchema)) {
+        return reply.code(400).send({ error: { code: 'ui_schema_sensitive', message: 'uiSchema contains sensitive keys' } });
+      }
+    } else {
+      uiSchema = {};
+    }
+
     try {
       const appRec = await createOrgApp(request.orgId, {
         slug,
@@ -1416,6 +1480,7 @@ export function buildServer() {
         dashboardUrl,
         public: publicFlag,
         defaultDescriptor,
+        uiSchema,
       });
 
       await writeAuditEvent({
@@ -1493,6 +1558,20 @@ export function buildServer() {
       if (patch.taskType && String(parsed.data.type) !== patch.taskType) {
         return reply.code(400).send({ error: { code: 'invalid', message: 'defaultDescriptor.type must match taskType when both are provided' } });
       }
+    }
+
+    if (body.uiSchema !== undefined) {
+      const uiSchema: any = body.uiSchema;
+      const bytes = Buffer.byteLength(JSON.stringify(uiSchema), 'utf8');
+      if (bytes > APP_UI_SCHEMA_MAX_BYTES) {
+        return reply
+          .code(400)
+          .send({ error: { code: 'ui_schema_too_large', message: `uiSchema exceeds ${APP_UI_SCHEMA_MAX_BYTES} bytes` } });
+      }
+      if (hasSensitiveKeys(uiSchema)) {
+        return reply.code(400).send({ error: { code: 'ui_schema_sensitive', message: 'uiSchema contains sensitive keys' } });
+      }
+      patch.uiSchema = uiSchema;
     }
 
     try {
@@ -1835,6 +1914,9 @@ export function buildServer() {
 
   // Worker registration
   app.post('/api/workers/register', { schema: { body: registerWorkerSchema } }, async (request, reply) => {
+    if (!(await rateLimit(`worker_register:ip:${(request as any).ip}`, 30))) {
+      return reply.code(429).send({ error: { code: 'rate_limited', message: 'Rate limited' } });
+    }
     const body = request.body as any;
     const { worker, token } = await createWorker(body.displayName, body.capabilities || {});
     return { workerId: worker.id, token };
@@ -1962,6 +2044,14 @@ export function buildServer() {
             .map((s: string) => s.trim())
             .filter(Boolean)
         : undefined;
+    const excludeJobIds =
+      typeof q.exclude_job_ids === 'string'
+        ? q.exclude_job_ids
+            .split(',')
+            .map((s: string) => s.trim())
+            .filter(Boolean)
+            .slice(0, 50)
+        : undefined;
     const minPayoutCents = q.min_payout_cents ? Number(q.min_payout_cents) : undefined;
     const active = await getActiveJobForWorker(worker.id);
     if (active) {
@@ -1994,7 +2084,7 @@ export function buildServer() {
         return envelope('idle', [`Scanner backlog high (${Math.round(age)}s); wait and retry later.`], {}, {}, {});
       }
     }
-    const claimable = await findClaimableJob(worker, { capabilityTag, supportedCapabilityTags, minPayoutCents, taskType });
+    const claimable = await findClaimableJob(worker, { capabilityTag, supportedCapabilityTags, minPayoutCents, taskType, excludeJobIds });
     if (!claimable) {
       return envelope('idle', ['No jobs available right now. Reply HEARTBEAT_OK.'], {}, {}, {});
     }
@@ -2041,6 +2131,43 @@ export function buildServer() {
       leaseNonce: lease.leaseNonce,
     });
   });
+
+  // Early lease release (worker-side safety: refuse unsafe jobs without waiting for TTL expiry).
+  app.post(
+    '/api/jobs/:jobId/release',
+    { preHandler: (app as any).authenticateWorker, schema: { body: releaseJobLeaseSchema } },
+    async (request: any, reply: any) => {
+      const worker: Worker = request.worker;
+      const jobId = String(request.params.jobId);
+      const body = request.body as any;
+      const leaseNonce = String(body.leaseNonce ?? '');
+      const reason = typeof body.reason === 'string' ? body.reason.slice(0, 500) : undefined;
+
+      const released = await releaseJobLease(jobId, worker.id, leaseNonce);
+      if (!released) {
+        const job = await getJob(jobId);
+        if (!job) return reply.code(404).send({ error: { code: 'not_found', message: 'Job not found' } });
+        if (job.leaseWorkerId !== worker.id) {
+          return reply.code(403).send({ error: { code: 'forbidden', message: 'Worker does not hold lease' } });
+        }
+        if (job.leaseNonce && job.leaseNonce !== leaseNonce) {
+          return reply.code(403).send({ error: { code: 'forbidden', message: 'leaseNonce mismatch' } });
+        }
+        return reply.code(409).send({ error: { code: 'not_available', message: 'Job lease could not be released' } });
+      }
+
+      await writeAuditEvent({
+        actorType: 'worker',
+        actorId: worker.id,
+        action: 'job.lease_release',
+        targetType: 'job',
+        targetId: jobId,
+        metadata: { reason: reason ?? null },
+      });
+
+      return { ok: true };
+    }
+  );
 
   // presign uploads
   app.post('/api/uploads/presign', { preHandler: (app as any).authenticateWorker, schema: { body: presignRequestSchema } }, async (request: any, reply) => {

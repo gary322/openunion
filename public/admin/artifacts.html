@@ -6,7 +6,7 @@
     <title>Proofwork • Admin • Artifacts</title>
     <link rel="stylesheet" href="/ui/ui.css" />
   </head>
-  <body class="theme-admin">
+  <body class="theme-admin" data-portal="admin">
     <header class="pw-topbar">
       <div class="pw-topbar-inner">
         <a class="pw-brand" href="/apps/" aria-label="Proofwork home">
@@ -26,7 +26,7 @@
     <main class="pw-container">
       <section class="pw-hero">
         <h1 class="title">Artifacts</h1>
-        <p>Quarantine/delete tools (break‑glass).</p>
+        <p>Quarantine or delete suspicious uploads. Every action is audit‑logged.</p>
         <div class="pw-hero-actions">
           <div class="pw-badge">
             Shortcuts: <a href="/admin/index.html">Admin console</a> · <a href="/admin/blocked-domains.html">Blocked domains</a>
@@ -38,74 +38,96 @@
         </div>
       </section>
 
-      <div class="pw-grid">
-        <div class="pw-card">
-          <div class="pw-card-title">
-            <h2>Auth</h2>
-            <span class="pw-kicker">Admin token</span>
-          </div>
-          <div class="pw-field">
-            <label>Admin token</label>
-            <input class="pw-input" id="adminToken" placeholder="pw_adm_internal" />
-          </div>
-          <div class="pw-actions">
-            <button class="pw-btn primary" id="btnSave">Save token</button>
-          </div>
-          <div id="authStatus" class="pw-status" role="status"></div>
-        </div>
+      <div class="pw-console">
+        <aside class="pw-sidebar" aria-label="Admin navigation">
+          <nav class="pw-sidenav">
+            <div class="pw-sidenav-title">Ops</div>
+            <a href="/admin/">Overview</a>
+            <a href="/admin/alerts.html">Alerts</a>
+            <a href="/admin/apps.html">Apps dashboard</a>
+            <div class="pw-sidenav-title">Finance</div>
+            <a href="/admin/payouts.html">Payouts</a>
+            <a href="/admin/disputes.html">Disputes</a>
+            <div class="pw-sidenav-title">Governance</div>
+            <a href="/admin/artifacts.html" aria-current="page">Artifacts</a>
+            <a href="/admin/blocked-domains.html">Blocked domains</a>
+            <div class="pw-sidenav-title">Tools</div>
+            <a href="/admin/descriptor-builder.html">Descriptor builder</a>
+            <a href="/admin/explorer.html">Explorer</a>
+          </nav>
+        </aside>
 
-        <div class="pw-card">
-          <div class="pw-card-title">
-            <h2>Lookup</h2>
-            <span class="pw-kicker">Read artifact status</span>
-          </div>
-          <div class="pw-field">
-            <label>Artifact ID</label>
-            <input class="pw-input" id="artifactId" placeholder="artifactId" />
-          </div>
-          <div class="pw-actions">
-            <button class="pw-btn primary" id="btnGet">GET /api/artifacts/:id</button>
-          </div>
-          <div id="getStatus" class="pw-status" role="status"></div>
-        </div>
+        <section class="pw-stack" aria-label="Artifact tools">
+          <div class="pw-grid">
+            <div class="pw-card">
+              <div class="pw-card-title">
+                <h2>Auth</h2>
+                <span class="pw-kicker">Admin token</span>
+              </div>
+              <div class="pw-field">
+                <label>Admin token</label>
+                <input class="pw-input" id="adminToken" placeholder="pw_adm_internal" />
+              </div>
+              <div class="pw-actions">
+                <button class="pw-btn primary" id="btnSave">Save token</button>
+              </div>
+              <div id="authStatus" class="pw-status" role="status"></div>
+            </div>
 
-        <div class="pw-card">
-          <div class="pw-card-title">
-            <h2>Quarantine</h2>
-            <span class="pw-kicker">Move to quarantine bucket</span>
-          </div>
-          <div class="pw-field">
-            <label>Reason</label>
-            <textarea class="pw-textarea" id="reason" placeholder="why is this blocked?"></textarea>
-          </div>
-          <div class="pw-actions">
-            <button class="pw-btn danger" id="btnQuarantine">POST /api/admin/artifacts/:id/quarantine</button>
-          </div>
-          <div id="qStatus" class="pw-status" role="status"></div>
-        </div>
+            <div class="pw-card">
+              <div class="pw-card-title">
+                <h2>Lookup</h2>
+                <span class="pw-kicker">Read artifact status</span>
+              </div>
+              <div class="pw-field">
+                <label>Artifact ID</label>
+                <input class="pw-input" id="artifactId" placeholder="artifactId" />
+              </div>
+              <div class="pw-actions">
+                <button class="pw-btn primary" id="btnGet">Get artifact</button>
+              </div>
+              <div id="getStatus" class="pw-status" role="status"></div>
+            </div>
 
-        <div class="pw-card">
-          <div class="pw-card-title">
-            <h2>Delete</h2>
-            <span class="pw-kicker">Hard delete</span>
-          </div>
-          <p class="pw-muted">Deletes the object and marks the DB row deleted.</p>
-          <div class="pw-actions">
-            <button class="pw-btn danger" id="btnDelete">POST /api/admin/artifacts/:id/delete</button>
-          </div>
-          <div id="delStatus" class="pw-status" role="status"></div>
-        </div>
+            <div class="pw-card">
+              <div class="pw-card-title">
+                <h2>Quarantine</h2>
+                <span class="pw-kicker">Move to quarantine bucket</span>
+              </div>
+              <div class="pw-field">
+                <label>Reason</label>
+                <textarea class="pw-textarea" id="reason" placeholder="why is this blocked?"></textarea>
+              </div>
+              <div class="pw-actions">
+                <button class="pw-btn danger" id="btnQuarantine">Quarantine</button>
+              </div>
+              <div id="qStatus" class="pw-status" role="status"></div>
+            </div>
 
-        <div class="pw-card pw-span-all">
-          <div class="pw-card-title">
-            <h2>Response</h2>
-            <span class="pw-kicker pw-mono">/api/artifacts/:id</span>
+            <div class="pw-card">
+              <div class="pw-card-title">
+                <h2>Delete</h2>
+                <span class="pw-kicker">Hard delete</span>
+              </div>
+              <p class="pw-muted">Deletes the object and marks the DB row deleted.</p>
+              <div class="pw-actions">
+                <button class="pw-btn danger" id="btnDelete">Delete</button>
+              </div>
+              <div id="delStatus" class="pw-status" role="status"></div>
+            </div>
+
+            <details class="pw-details pw-dev pw-span-all">
+              <summary>Developer response</summary>
+              <div class="pw-details-body">
+                <pre class="pw-codeblock" id="out">{}</pre>
+              </div>
+            </details>
           </div>
-          <pre class="pw-codeblock" id="out">{}</pre>
-        </div>
+        </section>
       </div>
     </main>
 
     <script src="./artifacts.js"></script>
+    <script type="module" src="/ui/shell.js"></script>
   </body>
 </html>

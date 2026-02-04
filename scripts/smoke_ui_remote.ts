@@ -23,8 +23,8 @@ async function main() {
   const baseUrl = normalizeBaseUrl(argValue('--base-url') ?? process.env.BASE_URL ?? 'http://localhost:3000');
 
   const checks: Array<{ path: string; titleIncludes: string }> = [
-    { path: '/buyer/', titleIncludes: 'Buyer Portal' },
-    { path: '/worker/', titleIncludes: 'Worker Portal' },
+    { path: '/buyer/', titleIncludes: 'Platform Console' },
+    { path: '/worker/', titleIncludes: 'Worker Console' },
     { path: '/admin/', titleIncludes: 'Admin Console' },
     { path: '/admin/apps.html', titleIncludes: 'Apps Dashboard' },
     { path: '/admin/descriptor-builder.html', titleIncludes: 'Descriptor Builder' },
@@ -59,4 +59,3 @@ main().catch((err) => {
   console.error('[ui-smoke] FAILED', err);
   process.exitCode = 1;
 });
-

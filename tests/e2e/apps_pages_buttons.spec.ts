@@ -1,20 +1,16 @@
 import { test, expect } from '@playwright/test';
 
-const APP_PATHS: Array<{ path: string; titleIncludes: string }> = [
-  { path: '/apps/clips/', titleIncludes: 'Clips' },
-  { path: '/apps/marketplace/', titleIncludes: 'Marketplace' },
-  { path: '/apps/jobs/', titleIncludes: 'Jobs' },
-  { path: '/apps/travel/', titleIncludes: 'Travel' },
-  { path: '/apps/research/', titleIncludes: 'Research' },
-  { path: '/apps/github/', titleIncludes: 'GitHub' },
-  // Dynamic app page for a built-in app.
-  { path: '/apps/app/clips/', titleIncludes: 'Clips' },
+const APPS: Array<{ slug: string; titleIncludes: string }> = [
+  { slug: 'clips', titleIncludes: 'Clips' },
+  { slug: 'marketplace', titleIncludes: 'Marketplace' },
+  { slug: 'jobs', titleIncludes: 'Jobs' },
+  { slug: 'travel', titleIncludes: 'Travel' },
+  { slug: 'research', titleIncludes: 'Research' },
+  { slug: 'github', titleIncludes: 'GitHub' },
 ];
 
-test('apps pages: exercise create draft, create+publish, refresh, load jobs on every app page', async ({ page, request }, testInfo) => {
-  test.setTimeout(180_000);
-
-  const baseURL = String(testInfo.project.use.baseURL ?? 'http://localhost:3111').replace(/\/$/, '');
+test('apps pages: exercise create draft, create+publish, refresh, load jobs on every built-in app', async ({ page, request }) => {
+  test.setTimeout(210_000);
 
   // Create a buyer API key for the seeded demo user (no session required).
   const apiKey = await request.post('/api/org/api-keys', {
@@ -25,37 +21,56 @@ test('apps pages: exercise create draft, create+publish, refresh, load jobs on e
   const buyerToken = String(apiKeyJson?.token ?? '');
   expect(buyerToken).toMatch(/^pw_bu_/);
 
-  for (const app of APP_PATHS) {
-    await page.goto(app.path);
+  for (const app of APPS) {
+    await page.goto(`/apps/app/${app.slug}/`);
     await expect(page.locator('#hdrTitle')).toContainText(app.titleIncludes);
 
-    // Ensure the app calls the right API base in E2E (template defaults to localhost:3000).
-    await page.fill('#apiBase', baseURL);
+    // Connect: save buyer token to localStorage to load verified origins.
     await page.fill('#buyerToken', buyerToken);
-    await page.fill('#origins', 'https://example.com');
-    await page.fill('#payout', '1200');
-    await page.fill('#title', `E2E ${app.titleIncludes} ${Date.now()}`);
-    await page.fill('#description', `E2E ${app.titleIncludes} bounty`);
+    const originsLoadPromise = page.waitForResponse((r) => r.url().endsWith('/api/origins') && r.request().method() === 'GET');
+    await page.click('#btnSaveToken');
+    await originsLoadPromise;
 
-    // Refresh should load bounties (might be empty; must not error).
-    await page.click('#btnRefresh');
-    await expect(page.locator('#bounties')).toContainText('"bounties"');
+    // Describe: (optional) apply the first template if available.
+    const hasTemplates = (await page.locator('#template option').count()) > 1;
+    if (hasTemplates) {
+      await page.selectOption('#template', { index: 1 });
+      await page.click('#btnApplyTemplate');
+    }
+
+    // Publish: choose a verified origin and set payout.
+    await expect
+      .poll(async () => {
+        return await page.evaluate(() => Array.from((document.getElementById('originSelect') as HTMLSelectElement | null)?.options ?? []).map((o) => o.value));
+      })
+      .toContain('https://example.com');
+    await page.selectOption('#originSelect', 'https://example.com');
+
+    await page.fill('#payoutCents', '1200');
+    await page.fill('#requiredProofs', '1');
+
+    // Refresh bounties (might be empty; must not error).
+    await page.click('#btnRefreshBounties');
+    await expect(page.locator('#monitorStatus')).not.toContainText('Failed');
 
     // Create draft bounty.
+    const draftTitle = `E2E ${app.titleIncludes} draft ${Date.now()}`;
+    await page.fill('#title', draftTitle);
     const createDraftRespPromise = page.waitForResponse((r) => r.url().endsWith('/api/bounties') && r.request().method() === 'POST');
-    await page.click('#btnCreate');
+    await page.click('#btnCreateDraft');
     const draftResp = await createDraftRespPromise;
     expect(draftResp.ok()).toBeTruthy();
-    const draftJson = (await draftResp.json()) as any;
-    const draftBountyId = String(draftJson?.id ?? '');
-    expect(draftBountyId).toBeTruthy();
-    await expect(page.locator('#bounties')).toContainText(draftBountyId);
 
-    // Create + publish bounty (must generate jobs).
+    // Monitor table should include the title we just created.
+    await expect
+      .poll(async () => String(await page.locator('#bountiesTbody').textContent()), { timeout: 10_000 })
+      .toContain(draftTitle);
+
+    // Create + publish bounty (should create jobs).
+    const pubTitle = `E2E ${app.titleIncludes} pub ${Date.now()}`;
+    await page.fill('#title', pubTitle);
     const createRespPromise = page.waitForResponse((r) => r.url().endsWith('/api/bounties') && r.request().method() === 'POST');
-    const publishRespPromise = page.waitForResponse(
-      (r) => r.url().includes('/api/bounties/') && r.url().endsWith('/publish') && r.request().method() === 'POST'
-    );
+    const publishRespPromise = page.waitForResponse((r) => r.url().includes('/api/bounties/') && r.url().endsWith('/publish') && r.request().method() === 'POST');
     await page.click('#btnCreatePublish');
 
     const createResp = await createRespPromise;
@@ -67,15 +82,20 @@ test('apps pages: exercise create draft, create+publish, refresh, load jobs on e
     const publishResp = await publishRespPromise;
     expect(publishResp.ok()).toBeTruthy();
 
-    await expect(page.locator('#bounties')).toContainText(bountyId);
+    await expect
+      .poll(async () => String(await page.locator('#bountiesTbody').textContent()), { timeout: 10_000 })
+      .toContain(pubTitle);
 
-    // Load jobs for the published bounty.
-    await page.fill('#bountyId', bountyId);
+    // Load jobs for the published bounty using the per-row "Jobs" action.
+    const row = page.locator('#bountiesTbody tr').filter({ hasText: pubTitle }).first();
     const jobsRespPromise = page.waitForResponse((r) => r.url().includes(`/api/bounties/${encodeURIComponent(bountyId)}/jobs`) && r.request().method() === 'GET');
-    await page.click('#btnJobs');
+    await row.getByRole('button', { name: 'Jobs' }).click();
     const jobsResp = await jobsRespPromise;
     expect(jobsResp.ok()).toBeTruthy();
-    await expect(page.locator('#jobs')).toContainText('"jobs"');
+
+    // Jobs table should populate.
+    await expect
+      .poll(async () => (await page.locator('#jobsTbody').innerText()).trim().length, { timeout: 10_000 })
+      .toBeGreaterThan(0);
   }
 });
-

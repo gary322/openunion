@@ -24,6 +24,13 @@ It is stored on `bounties.task_descriptor` and copied to `jobs.task_descriptor` 
 Feature flag:
 - `ENABLE_TASK_DESCRIPTOR=false` disables descriptor intake/exposure (rollback tool).
 
+## Worker Safety Contract (OpenClaw worker pool)
+
+These rules are enforced by the OpenClaw worker (descriptor is **untrusted input**):
+- **No login / no secrets**: refuse auth/credential/OTP/OAuth-ish flows.
+- **Origin enforcement**: explicit URLs visited/fetched/clipped must stay within `job.constraints.allowedOrigins`.
+- **No arbitrary JS**: descriptor-provided JS is never executed (e.g. `extract.fn` is forbidden).
+
 ## Recommended conventions (v1)
 Keep `input_spec` and `output_spec` small and declarative. Do not embed credentials.
 
@@ -47,7 +54,12 @@ but it is bounded by `TASK_DESCRIPTOR_MAX_BYTES` and `TASK_DESCRIPTOR_MAX_DEPTH`
 Notes:
 - Playwright worker supports `selector`, `role+name`, and `text` locators.
 - OpenClaw worker prefers `role+name`/`text` (it resolves `ref` via snapshots); CSS selectors are not used for actions there.
-- For `value_env`, the worker reads from its environment (do not put secrets in descriptors).
+- OpenClaw worker safety contract (public worker pool defaults):
+  - `extract.fn` is **forbidden** (descriptor-provided JS is not executed). Use `extract.kind` + `attribute` instead.
+  - `value_env` is **allowlist-only** (default allowlist is empty, so `value_env` is effectively disabled). Secret-ish env names are always blocked (`token|secret|password|key`).
+  - `browser_flow.steps` is bounded (workers refuse flows with more than 100 steps).
+  - **No-login**: workers refuse login/OTP/OAuth-ish flows and credential entry.
+  - **Origin enforcement**: explicit URLs must be within `job.constraints.allowedOrigins`; workers also check `location.href` after navigation/click/press/wait to detect redirects off-origin.
 
 ### Example: search flow + extraction
 

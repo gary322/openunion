@@ -32,6 +32,129 @@ function setCsrfToken(token) {
   localStorage.setItem('pw_csrf_token', token);
 }
 
+function setBadge(id, text) {
+  const el = $(id);
+  if (!el) return;
+  el.textContent = String(text ?? '');
+}
+
+function setStepDone(id, done) {
+  const el = $(id);
+  if (!el) return;
+  el.classList.toggle('done', Boolean(done));
+}
+
+let onboardingReqNo = 0;
+async function refreshOnboardingStatus() {
+  const reqNo = ++onboardingReqNo;
+
+  const token = $('buyerToken')?.value?.trim?.() || getBuyerToken();
+  const hasToken = Boolean(token);
+
+  setStepDone('stepToken', hasToken);
+  if (!hasToken) {
+    setStepDone('stepOrigin', false);
+    setStepDone('stepFees', false);
+    setStepDone('stepApp', false);
+    setStepDone('stepPublish', false);
+    setStepDone('stepPaid', false);
+    setBadge('navBadgeOnboarding', '6');
+    setBadge('navBadgeIntegrations', '-');
+    setBadge('navBadgeApps', '-');
+    setBadge('navBadgeWork', '-');
+    setBadge('navBadgeMoney', '-');
+    setBadge('navBadgeDisputes', '-');
+    return;
+  }
+
+  let verifiedOrigins = 0;
+  try {
+    const { res, json } = await api('/api/origins', { method: 'GET', token });
+    if (res.ok) {
+      const origins = Array.isArray(json?.origins) ? json.origins : [];
+      verifiedOrigins = origins.filter((o) => String(o?.status ?? '') === 'verified').length;
+    }
+  } catch {
+    // ignore
+  }
+
+  let feeOk = false;
+  try {
+    const { res, json } = await api('/api/org/platform-fee', { method: 'GET', token });
+    if (res.ok) {
+      const bps = Number(json?.platformFeeBps ?? 0);
+      const wallet = String(json?.platformFeeWalletAddress ?? '').trim();
+      feeOk = Number.isFinite(bps) && (bps <= 0 || wallet.length > 0);
+    }
+  } catch {
+    // ignore
+  }
+
+  let appsCount = 0;
+  try {
+    const { res, json } = await api('/api/org/apps?page=1&limit=1', { method: 'GET', token });
+    if (res.ok) {
+      const apps = Array.isArray(json?.apps) ? json.apps : [];
+      appsCount = typeof json?.total === 'number' ? Number(json.total) : apps.length;
+    }
+  } catch {
+    // ignore
+  }
+
+  let publishedBounties = 0;
+  try {
+    const { res, json } = await api('/api/bounties?page=1&limit=1&status=published', { method: 'GET', token });
+    if (res.ok) {
+      publishedBounties = typeof json?.total === 'number' ? Number(json.total) : 0;
+    }
+  } catch {
+    // ignore
+  }
+
+  let paidCount = 0;
+  try {
+    const { res, json } = await api('/api/org/earnings', { method: 'GET', token });
+    if (res.ok) {
+      paidCount = Number(json?.totals?.paidCount ?? 0);
+    }
+  } catch {
+    // ignore
+  }
+
+  let openDisputes = 0;
+  try {
+    const { res, json } = await api('/api/org/disputes?page=1&limit=1&status=open', { method: 'GET', token });
+    if (res.ok) {
+      openDisputes = typeof json?.total === 'number' ? Number(json.total) : 0;
+    }
+  } catch {
+    // ignore
+  }
+
+  if (reqNo !== onboardingReqNo) return;
+
+  setStepDone('stepOrigin', verifiedOrigins > 0);
+  setStepDone('stepFees', feeOk);
+  setStepDone('stepApp', appsCount > 0);
+  setStepDone('stepPublish', publishedBounties > 0);
+  setStepDone('stepPaid', paidCount > 0);
+
+  const remaining =
+    (hasToken ? 0 : 1) +
+    (verifiedOrigins > 0 ? 0 : 1) +
+    (feeOk ? 0 : 1) +
+    (appsCount > 0 ? 0 : 1) +
+    (publishedBounties > 0 ? 0 : 1) +
+    (paidCount > 0 ? 0 : 1);
+
+  setBadge('navBadgeOnboarding', String(remaining));
+  setBadge('navBadgeIntegrations', verifiedOrigins > 0 ? String(verifiedOrigins) : '!');
+  setBadge('navBadgeApps', String(appsCount));
+  setBadge('navBadgeWork', String(publishedBounties));
+  setBadge('navBadgeMoney', String(paidCount));
+  setBadge('navBadgeDisputes', openDisputes > 0 ? String(openDisputes) : '0');
+}
+
 async function api(path, { method = 'GET', token, body, csrf } = {}) {
   const headers = { 'Content-Type': 'application/json' };
   if (token) headers['Authorization'] = `Bearer ${token}`;
@@ -60,6 +183,7 @@ async function onLogin() {
   }
   if (json?.csrfToken) setCsrfToken(String(json.csrfToken));
   setStatus('loginStatus', `ok orgId=${json.orgId} role=${json.role}`, 'good');
+  refreshOnboardingStatus().catch(() => {});
 }
 
 async function onRegister() {
@@ -76,6 +200,7 @@ async function onRegister() {
   }
   if (json?.token) setBuyerToken(String(json.token));
   setStatus('regStatus', `ok orgId=${json.orgId} (token saved)`, 'good');
+  refreshOnboardingStatus().catch(() => {});
 }
 
 async function onCreateKey() {
@@ -90,6 +215,7 @@ async function onCreateKey() {
   }
   setBuyerToken(json.token);
   setStatus('keyStatus', 'token created and saved', 'good');
+  refreshOnboardingStatus().catch(() => {});
 }
 
 async function onListKeys() {
@@ -112,6 +238,7 @@ async function onRevokeKey() {
   $('keyOut').textContent = pretty(json);
   if (!res.ok) return setStatus('keyStatus', `revoke failed (${res.status})`, 'bad');
   setStatus('keyStatus', 'revoked', 'good');
+  refreshOnboardingStatus().catch(() => {});
 }
 
 async function onGetPlatformFee() {
@@ -146,6 +273,7 @@ async function onSetPlatformFee() {
     return;
   }
   setStatus('pfStatus', 'saved', 'good');
+  refreshOnboardingStatus().catch(() => {});
 }
 
 async function onGetCorsAllowlist() {
@@ -177,6 +305,7 @@ async function onSetCorsAllowlist() {
     return;
   }
   setStatus('corsStatus', 'saved', 'good');
+  refreshOnboardingStatus().catch(() => {});
 }
 
 function parseNullableIntInput(id) {
@@ -217,6 +346,7 @@ async function onSetQuotas() {
   $('quotaOut').textContent = pretty(json);
   if (!res.ok) return setStatus('quotaStatus', `save failed (${res.status})`, 'bad');
   setStatus('quotaStatus', 'saved', 'good');
+  refreshOnboardingStatus().catch(() => {});
 }
 
 function onSaveToken() {
@@ -224,6 +354,7 @@ function onSaveToken() {
   if (!t) return setStatus('keyStatus', 'missing token', 'bad');
   setBuyerToken(t);
   setStatus('keyStatus', 'token saved', 'good');
+  refreshOnboardingStatus().catch(() => {});
 }
 
 async function onAddOrigin() {
@@ -241,6 +372,7 @@ async function onAddOrigin() {
   }
   $('originId').value = json.origin?.id || '';
   setStatus('originStatus', `added origin ${json.origin?.id}`, 'good');
+  refreshOnboardingStatus().catch(() => {});
 }
 
 async function onListOrigins() {
@@ -261,6 +393,7 @@ async function onCheckOrigin() {
   $('originOut').textContent = pretty(json);
   if (!res.ok) return setStatus('originStatus', `check failed (${res.status})`, 'bad');
   setStatus('originStatus', `status=${json.origin?.status}`, 'good');
+  refreshOnboardingStatus().catch(() => {});
 }
 
 async function onRevokeOrigin() {
@@ -272,6 +405,7 @@ async function onRevokeOrigin() {
   $('originOut').textContent = pretty(json);
   if (!res.ok) return setStatus('originStatus', `revoke failed (${res.status})`, 'bad');
   setStatus('originStatus', `status=${json.origin?.status}`, 'good');
+  refreshOnboardingStatus().catch(() => {});
 }
 
 async function onCreateBounty() {
@@ -301,6 +435,7 @@ async function onCreateBounty() {
   if (!res.ok) return setStatus('bountyStatus', `create bounty failed (${res.status})`, 'bad');
   $('bountyId').value = json.id || '';
   setStatus('bountyStatus', `created bounty ${json.id}`, 'good');
+  refreshOnboardingStatus().catch(() => {});
 }
 
 async function onListBounties() {
@@ -321,6 +456,7 @@ async function onPublish() {
   $('bountyOut').textContent = pretty(json);
   if (!res.ok) return setStatus('bountyStatus', `publish failed (${res.status})`, 'bad');
   setStatus('bountyStatus', `published ${json.id}`, 'good');
+  refreshOnboardingStatus().catch(() => {});
 }
 
 async function onListOrgApps() {
@@ -360,6 +496,7 @@ async function onCreateOrgApp() {
   $('appsOut').textContent = pretty(json);
   if (!res.ok) return setStatus('appsStatus', `create app failed (${res.status})`, 'bad');
   setStatus('appsStatus', `created app ${json.app?.id || ''}`, 'good');
+  refreshOnboardingStatus().catch(() => {});
 }
 
 async function onGetEarnings() {
@@ -400,6 +537,7 @@ async function onCreateDispute() {
   if (!res.ok) return setStatus('disputeStatus', `open dispute failed (${res.status})`, 'bad');
   $('cancelDisputeId').value = json.dispute?.id || '';
   setStatus('disputeStatus', `opened dispute ${json.dispute?.id || ''}`, 'good');
+  refreshOnboardingStatus().catch(() => {});
 }
 
 async function onListDisputes() {
@@ -421,6 +559,7 @@ async function onCancelDispute() {
   $('disputeOut').textContent = pretty(json);
   if (!res.ok) return setStatus('disputeStatus', `cancel failed (${res.status})`, 'bad');
   setStatus('disputeStatus', 'cancelled', 'good');
+  refreshOnboardingStatus().catch(() => {});
 }
 
 $('btnLogin').addEventListener('click', () => onLogin().catch((e) => setStatus('loginStatus', String(e), 'bad')));
@@ -459,3 +598,4 @@ $('btnCancelDispute').addEventListener('click', () => onCancelDispute().catch((e
 
 setBuyerToken(getBuyerToken());
 setCsrfToken(getCsrfToken());
+refreshOnboardingStatus().catch(() => {});

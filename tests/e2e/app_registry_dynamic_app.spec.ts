@@ -1,10 +1,8 @@
 import { test, expect } from '@playwright/test';
 import http from 'http';
 
-test('org can register an app and use the dynamic app page to create+publish', async ({ page }, testInfo) => {
+test('org can register an app and use the dynamic app page to create+publish', async ({ page }) => {
   test.setTimeout(90_000);
-
-  const baseURL = String(testInfo.project.use.baseURL ?? 'http://localhost:3111').replace(/\/$/, '');
 
   // Stand up a deterministic origin that can be verified via http_file.
   let verifyToken = '';
@@ -70,6 +68,8 @@ test('org can register an app and use the dynamic app page to create+publish', a
     await page.fill('#appTaskType', taskType);
     await page.fill('#appName', name);
     await page.fill('#appDashboardUrl', ''); // force dynamic /apps/app/:slug
+    // Default descriptor is behind a progressive-disclosure <details>.
+    await page.locator('details:has(#appDefaultDescriptor)').evaluate((d: any) => (d.open = true));
     await page.fill('#appDefaultDescriptor', JSON.stringify(defaultDescriptor, null, 2));
 
     const createAppRespPromise = page.waitForResponse((r) => r.url().endsWith('/api/org/apps') && r.request().method() === 'POST');
@@ -87,16 +87,26 @@ test('org can register an app and use the dynamic app page to create+publish', a
     await card.locator('a', { hasText: 'Open' }).click();
     await expect(page.locator('#hdrTitle')).toContainText(name);
 
-    // Set API base to the current server (the template defaults to localhost:3000).
-    await page.fill('#apiBase', baseURL);
+    // Save buyer token for this app page (stored locally in browser storage).
     await page.fill('#buyerToken', buyerToken);
-    await page.fill('#origins', origin);
-    await page.fill('#payout', '1200');
-    await page.fill('#title', `Dynamic app bounty ${Date.now()}`);
-    await page.fill('#description', 'E2E dynamic app bounty');
+    const originsLoadPromise = page.waitForResponse((r) => r.url().endsWith('/api/origins') && r.request().method() === 'GET');
+    await page.click('#btnSaveToken');
+    await originsLoadPromise;
 
-    // Ensure descriptor is present and matches our taskType.
-    await expect(page.locator('#descriptor')).toHaveValue(new RegExp(`"type"\\s*:\\s*"${taskType}"`));
+    // Select the verified origin we just proved via http_file.
+    await expect
+      .poll(async () => {
+        return await page.evaluate(() => Array.from((document.getElementById('originSelect') as HTMLSelectElement | null)?.options ?? []).map((o) => o.value));
+      })
+      .toContain(origin);
+    await page.selectOption('#originSelect', origin);
+    await expect(page.locator('#originSelect')).toHaveValue(origin);
+
+    // Create + publish with a unique title.
+    const title = `Dynamic app bounty ${Date.now()}`;
+    await page.fill('#payoutCents', '1200');
+    await page.fill('#requiredProofs', '1');
+    await page.fill('#title', title);
 
     const createRespPromise = page.waitForResponse((r) => r.url().endsWith('/api/bounties') && r.request().method() === 'POST');
     const publishRespPromise = page.waitForResponse(
@@ -113,10 +123,10 @@ test('org can register an app and use the dynamic app page to create+publish', a
     const publishResp = await publishRespPromise;
     expect(publishResp.ok()).toBeTruthy();
 
-    // After publish, the page refreshes the bounties list; assert our ID appears.
+    // After publish, the page refreshes the bounties list; assert our title appears in the table.
     await expect
-      .poll(async () => String(await page.locator('#bounties').textContent()), { timeout: 10_000 })
-      .toContain(bountyId);
+      .poll(async () => String(await page.locator('#bountiesTbody').textContent()), { timeout: 10_000 })
+      .toContain(title);
   } finally {
     await new Promise<void>((resolve) => originServer.close(() => resolve()));
   }

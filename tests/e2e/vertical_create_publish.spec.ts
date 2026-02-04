@@ -52,13 +52,25 @@ test('create + publish via a vertical app page (github)', async ({ page }) => {
     await expect(page.locator('#originStatus')).toContainText('status=verified');
 
     // Use a vertical app page to create + publish the bounty with task_descriptor.
-    await page.goto('/apps/github/');
+    await page.goto('/apps/app/github/');
     await expect(page.locator('#hdrTitle')).toContainText('GitHub Scan');
 
     await page.fill('#buyerToken', buyerToken);
-    await page.fill('#origins', origin);
-    await page.fill('#payout', '1200');
-    await page.fill('#title', `GitHub E2E ${Date.now()}`);
+    const originsLoadPromise = page.waitForResponse((r) => r.url().endsWith('/api/origins') && r.request().method() === 'GET');
+    await page.click('#btnSaveToken');
+    await originsLoadPromise;
+
+    await expect
+      .poll(async () => {
+        return await page.evaluate(() => Array.from((document.getElementById('originSelect') as HTMLSelectElement | null)?.options ?? []).map((o) => o.value));
+      })
+      .toContain(origin);
+    await page.selectOption('#originSelect', origin);
+
+    const title = `GitHub E2E ${Date.now()}`;
+    await page.fill('#payoutCents', '1200');
+    await page.fill('#requiredProofs', '1');
+    await page.fill('#title', title);
 
     const createRespPromise = page.waitForResponse((r) => r.url().endsWith('/api/bounties') && r.request().method() === 'POST');
     const publishRespPromise = page.waitForResponse((r) => r.url().includes('/api/bounties/') && r.url().endsWith('/publish') && r.request().method() === 'POST');
@@ -68,18 +80,16 @@ test('create + publish via a vertical app page (github)', async ({ page }) => {
     const createResp = await createRespPromise;
     expect(createResp.ok()).toBeTruthy();
     const createJson = (await createResp.json()) as any;
-    const bountyId = String(createJson?.id ?? '');
-    expect(bountyId).toBeTruthy();
+    expect(String(createJson?.id ?? '')).toBeTruthy();
 
     const publishResp = await publishRespPromise;
     expect(publishResp.ok()).toBeTruthy();
 
-    // After publish, the app page refreshes the bounties list; assert our ID appears.
+    // After publish, the app page refreshes the bounties list; assert our title appears.
     await expect
-      .poll(async () => String(await page.locator('#bounties').textContent()), { timeout: 10_000 })
-      .toContain(bountyId);
+      .poll(async () => String(await page.locator('#bountiesTbody').textContent()), { timeout: 10_000 })
+      .toContain(title);
   } finally {
     await new Promise<void>((resolve) => originServer.close(() => resolve()));
   }
 });
-
