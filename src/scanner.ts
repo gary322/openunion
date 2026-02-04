@@ -127,66 +127,86 @@ async function scanWithClamd(input: { bytes: Buffer }): Promise<ScanResult> {
 
   const host = process.env.CLAMD_HOST ?? '127.0.0.1';
   const port = Number(process.env.CLAMD_PORT ?? 3310);
-  if (!socketPathRaw) {
-    if (!Number.isFinite(port) || port <= 0) throw new Error('invalid_clamd_port');
-  }
 
   const { connect } = await import('net');
 
-  return await new Promise<ScanResult>((resolve) => {
-    let done = false;
-    const finish = (res: ScanResult) => {
-      if (done) return;
-      done = true;
-      resolve(res);
-    };
+  const scanOnce = async (connOpts: any): Promise<ScanResult> => {
+    return await new Promise<ScanResult>((resolve) => {
+      let done = false;
+      const finish = (res: ScanResult) => {
+        if (done) return;
+        done = true;
+        resolve(res);
+      };
 
-    const connOpts: any = socketPathRaw ? { path: socketPathRaw } : { host, port };
-    const socket = connect(connOpts, () => {
-      try {
-        // clamd protocol: use the NUL-terminated "zINSTREAM" form for broad compatibility.
-        // Some builds accept "INSTREAM\\n", but others only accept "zINSTREAM\\0".
-        socket.write('zINSTREAM\0');
-        const bytes = input.bytes;
-        const chunkSize = 1024 * 1024;
-        for (let off = 0; off < bytes.length; off += chunkSize) {
-          const end = Math.min(bytes.length, off + chunkSize);
-          const chunk = bytes.subarray(off, end);
-          const len = Buffer.alloc(4);
-          len.writeUInt32BE(chunk.byteLength, 0);
-          socket.write(len);
-          socket.write(chunk);
+      const socket = connect(connOpts, () => {
+        try {
+          // clamd protocol: use the NUL-terminated "zINSTREAM" form for broad compatibility.
+          // Some builds accept "INSTREAM\\n", but others only accept "zINSTREAM\\0".
+          socket.write('zINSTREAM\0');
+          const bytes = input.bytes;
+          const chunkSize = 1024 * 1024;
+          for (let off = 0; off < bytes.length; off += chunkSize) {
+            const end = Math.min(bytes.length, off + chunkSize);
+            const chunk = bytes.subarray(off, end);
+            const len = Buffer.alloc(4);
+            len.writeUInt32BE(chunk.byteLength, 0);
+            socket.write(len);
+            socket.write(chunk);
+          }
+          const zero = Buffer.alloc(4);
+          zero.writeUInt32BE(0, 0);
+          socket.end(zero);
+        } catch (err: any) {
+          socket.destroy();
+          finish({ ok: false, reason: `clamd_stream_error:${String(err?.message ?? err)}` });
         }
-        const zero = Buffer.alloc(4);
-        zero.writeUInt32BE(0, 0);
-        socket.end(zero);
-      } catch (err: any) {
+      });
+
+      socket.setTimeout(timeoutMs);
+      let resp = '';
+
+      socket.on('data', (d) => {
+        resp += d.toString('utf8');
+      });
+      socket.on('timeout', () => {
         socket.destroy();
-        finish({ ok: false, reason: `clamd_stream_error:${String(err?.message ?? err)}` });
-      }
+        finish({ ok: false, reason: 'clamd_timeout' });
+      });
+      socket.on('error', (e: any) => {
+        finish({ ok: false, reason: `clamd_error:${String(e?.message ?? e)}` });
+      });
+      socket.on('close', () => {
+        if (done) return;
+        const line = resp.trim();
+        const upper = line.toUpperCase();
+        if (upper.includes(' OK')) return finish({ ok: true });
+        if (upper.includes('FOUND')) return finish({ ok: false, reason: 'clamd_infected' });
+        if (!line) return finish({ ok: false, reason: 'clamd_no_response' });
+        return finish({ ok: false, reason: `clamd_unknown:${line.slice(0, 200)}` });
+      });
     });
+  };
 
-    socket.setTimeout(timeoutMs);
-    let resp = '';
+  if (!Number.isFinite(port) || port <= 0) throw new Error('invalid_clamd_port');
 
-    socket.on('data', (d) => {
-      resp += d.toString('utf8');
-    });
-    socket.on('timeout', () => {
-      socket.destroy();
-      finish({ ok: false, reason: 'clamd_timeout' });
-    });
-    socket.on('error', (e: any) => {
-      finish({ ok: false, reason: `clamd_error:${String(e?.message ?? e)}` });
-    });
-    socket.on('close', () => {
-      if (done) return;
-      const line = resp.trim();
-      const upper = line.toUpperCase();
-      if (upper.includes(' OK')) return finish({ ok: true });
-      if (upper.includes('FOUND')) return finish({ ok: false, reason: 'clamd_infected' });
-      if (!line) return finish({ ok: false, reason: 'clamd_no_response' });
-      return finish({ ok: false, reason: `clamd_unknown:${line.slice(0, 200)}` });
-    });
-  });
+  // Prefer the unix socket when configured, but fall back to TCP when the socket isn't present yet.
+  // This prevents permanent scan deadletters on Fargate cold starts when clamd doesn't create the
+  // expected socket path immediately (or at all).
+  if (socketPathRaw) {
+    const socketRes = await scanOnce({ path: socketPathRaw });
+    if (socketRes.ok) return socketRes;
+    const r = String(socketRes.reason ?? '');
+    const retryableSocket =
+      r.includes('connect ENOENT') ||
+      r.includes('connect ENOTSOCK') ||
+      r.includes('connect ECONNREFUSED') ||
+      r.includes('connect EACCES') ||
+      r.includes('clamd_timeout') ||
+      r.includes('clamd_no_response');
+    if (!retryableSocket) return socketRes;
+    return await scanOnce({ host, port });
+  }
+
+  return await scanOnce({ host, port });
 }

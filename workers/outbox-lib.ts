@@ -7,11 +7,21 @@ export interface OutboxEvent {
   attempts: number;
 }
 
-const MAX_OUTBOX_ATTEMPTS = Number(process.env.MAX_OUTBOX_ATTEMPTS ?? 10);
+const MAX_OUTBOX_ATTEMPTS_DEFAULT = Number(process.env.MAX_OUTBOX_ATTEMPTS ?? 10);
+// Artifact scans can fail transiently during clamd cold starts (or when the unix socket isn't ready).
+// Do not deadletter quickly or artifacts can become permanently stuck in "staging"/409.
+const MAX_OUTBOX_ATTEMPTS_ARTIFACT_SCAN = Number(process.env.MAX_OUTBOX_ATTEMPTS_ARTIFACT_SCAN ?? 100);
 const OUTBOX_LOCK_TIMEOUT_SEC = Number(process.env.OUTBOX_LOCK_TIMEOUT_SEC ?? 600);
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function maxAttemptsForTopic(topic: string): number {
+  const def = Number.isFinite(MAX_OUTBOX_ATTEMPTS_DEFAULT) ? MAX_OUTBOX_ATTEMPTS_DEFAULT : 10;
+  const scan = Number.isFinite(MAX_OUTBOX_ATTEMPTS_ARTIFACT_SCAN) ? MAX_OUTBOX_ATTEMPTS_ARTIFACT_SCAN : 100;
+  if (topic === 'artifact.scan.requested') return Math.max(10, Math.min(1000, Math.floor(scan)));
+  return Math.max(1, Math.min(1000, Math.floor(def)));
 }
 
 export async function claimOutboxBatch(input: { topics: string[]; workerId: string; limit?: number }): Promise<OutboxEvent[]> {
@@ -150,9 +160,10 @@ export async function runOutboxLoop(input: {
         const msg = err instanceof Error ? err.message : String(err);
         // Log only stable identifiers + a truncated error string; do not dump payloads.
         console.error(`[outbox] handler_failed topic=${evt.topic} id=${evt.id} attempt=${attemptNo} err=${msg.slice(0, 500)}`);
-        if (attemptNo >= MAX_OUTBOX_ATTEMPTS) {
+        const maxAttempts = maxAttemptsForTopic(evt.topic);
+        if (attemptNo >= maxAttempts) {
           await markOutboxDead({ id: evt.id, error: err });
-          console.error(`[outbox] deadletter topic=${evt.topic} id=${evt.id} attempts=${attemptNo}`);
+          console.error(`[outbox] deadletter topic=${evt.topic} id=${evt.id} attempts=${attemptNo} max_attempts=${maxAttempts}`);
           continue;
         }
         await rescheduleOutbox({ id: evt.id, error: err, delaySec: backoffSeconds(attemptNo) });
