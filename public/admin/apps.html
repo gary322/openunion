@@ -1,111 +1,119 @@
 <!doctype html>
 <html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Proofwork • Apps Dashboard</title>
-  <style>
-    :root {
-      --bg: #0b1220;
-      --panel: rgba(255, 255, 255, 0.06);
-      --border: rgba(255, 255, 255, 0.12);
-      --text: rgba(255, 255, 255, 0.92);
-      --muted: rgba(255, 255, 255, 0.7);
-      --accent: #a78bfa;
-      --good: #34d399;
-      --bad: #fb7185;
-      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-      --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
-    }
-    body {
-      margin: 0;
-      font-family: var(--sans);
-      background: radial-gradient(1200px 800px at 10% 10%, rgba(167, 139, 250, 0.14), transparent 55%),
-        radial-gradient(1000px 700px at 80% 0%, rgba(56, 189, 248, 0.12), transparent 55%),
-        var(--bg);
-      color: var(--text);
-    }
-    .wrap { max-width: 1100px; margin: 24px auto; padding: 0 16px; }
-    .title { font-size: 22px; font-weight: 800; }
-    .sub { color: var(--muted); font-size: 13px; margin-top: 6px; }
-    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 14px; }
-    .card { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 16px; }
-    label { display: block; font-size: 12px; color: var(--muted); margin: 10px 0 6px; }
-    input { width: 100%; box-sizing: border-box; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border); background: rgba(0,0,0,0.25); color: var(--text); }
-    button { border: 1px solid var(--border); background: rgba(255,255,255,0.08); color: var(--text); padding: 10px 12px; border-radius: 10px; cursor: pointer; }
-    button.primary { border-color: rgba(167, 139, 250, 0.35); background: rgba(167, 139, 250, 0.12); }
-    table { width: 100%; border-collapse: collapse; font-size: 13px; }
-    th, td { padding: 10px 8px; border-bottom: 1px solid rgba(255,255,255,0.08); text-align: left; }
-    th { color: var(--muted); font-weight: 600; text-transform: uppercase; font-size: 11px; letter-spacing: 0.08em; }
-    .mono { font-family: var(--mono); }
-    a { color: #c4b5fd; text-decoration: none; }
-    .pill { display:inline-block; padding: 4px 8px; border-radius: 999px; background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.12); }
-  </style>
-</head>
-<body>
-  <div class="wrap">
-    <div class="title">Apps Dashboard</div>
-    <div class="sub">Cross-app metrics grouped by taskDescriptor.type</div>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Proofwork • Apps Dashboard</title>
+    <link rel="stylesheet" href="/ui/ui.css" />
+  </head>
+  <body class="theme-admin">
+    <header class="pw-topbar">
+      <div class="pw-topbar-inner">
+        <a class="pw-brand" href="/apps/" aria-label="Proofwork home">
+          <span class="pw-brand-badge pw-mono">PW</span>
+          Proofwork
+        </a>
+        <nav class="pw-topnav" aria-label="Primary">
+          <a class="pw-navlink" href="/apps/">Catalog</a>
+          <a class="pw-navlink" href="/buyer/">Platforms</a>
+          <a class="pw-navlink" href="/worker/">Workers</a>
+          <a class="pw-navlink" href="/admin/" aria-current="page">Admin</a>
+          <a class="pw-navlink" href="/docs/" target="_blank" rel="noreferrer">Docs</a>
+        </nav>
+      </div>
+    </header>
 
-    <div class="row">
-      <div class="card">
-        <label>Admin token</label>
-        <input id="adminToken" placeholder="pw_adm_internal" />
-        <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:12px">
-          <button id="btnSave" class="primary">Save token</button>
-          <button id="btnRefresh">Refresh</button>
-          <a class="pill" href="/admin/index.html">Admin console</a>
-          <a class="pill" href="/admin/descriptor-builder.html">Descriptor builder</a>
-          <a class="pill" href="/apps/">Apps UI</a>
+    <main class="pw-container">
+      <section class="pw-hero">
+        <h1>Apps Dashboard</h1>
+        <p>Cross‑app metrics grouped by <span class="pw-mono">taskDescriptor.type</span> + registry moderation tools.</p>
+      </section>
+
+      <div class="pw-row">
+        <div class="pw-card">
+          <div class="pw-card-title">
+            <h2>Auth</h2>
+            <span class="pw-kicker">Admin token</span>
+          </div>
+          <div class="pw-field">
+            <label>Admin token</label>
+            <input class="pw-input" id="adminToken" placeholder="pw_adm_internal" />
+          </div>
+          <div class="pw-actions">
+            <button class="pw-btn primary" id="btnSave">Save token</button>
+            <button class="pw-btn" id="btnRefresh">Refresh</button>
+            <a class="pw-btn" href="/admin/index.html">Admin console</a>
+            <a class="pw-btn" href="/admin/descriptor-builder.html">Descriptor builder</a>
+            <a class="pw-btn" href="/apps/">Apps UI</a>
+          </div>
+          <div id="status" class="pw-status" role="status"></div>
         </div>
-        <div id="status" class="sub" style="margin-top:10px"></div>
+
+        <div class="pw-card soft">
+          <div class="pw-card-title">
+            <h2>What’s here</h2>
+            <span class="pw-kicker">API surfaces</span>
+          </div>
+          <p class="pw-muted">
+            Summary API: <span class="pw-mono">GET /api/admin/apps/summary</span>
+          </p>
+          <p class="pw-muted">
+            Registry moderation: <span class="pw-mono">GET /api/admin/apps</span> and <span class="pw-mono">POST /api/admin/apps/:id/status</span>
+          </p>
+          <p class="pw-muted">Metrics shown: job counts, pass/fail, avg payout, avg completion, total paid.</p>
+        </div>
       </div>
 
-      <div class="card">
-        <div class="sub">API: <span class="mono">GET /api/admin/apps/summary</span></div>
-        <div class="sub">Metrics shown: job counts, pass/fail, avg payout, avg completion, total paid</div>
+      <div class="pw-card">
+        <div class="pw-card-title">
+          <h2>Metrics</h2>
+          <span class="pw-kicker">By task type</span>
+        </div>
+        <div class="pw-scroll">
+          <table class="pw-table">
+            <thead>
+              <tr>
+                <th>Task Type</th>
+                <th>Jobs</th>
+                <th>Open</th>
+                <th>Done</th>
+                <th>Pass</th>
+                <th>Fail</th>
+                <th>Avg Payout</th>
+                <th>Total Paid</th>
+                <th>Avg Paid/Worker</th>
+                <th>Avg Time (s)</th>
+              </tr>
+            </thead>
+            <tbody id="rows"></tbody>
+          </table>
+        </div>
       </div>
-    </div>
 
-    <div class="card" style="margin-top:14px">
-      <table>
-        <thead>
-          <tr>
-            <th>Task Type</th>
-            <th>Jobs</th>
-            <th>Open</th>
-            <th>Done</th>
-            <th>Pass</th>
-            <th>Fail</th>
-            <th>Avg Payout</th>
-            <th>Total Paid</th>
-            <th>Avg Paid/Worker</th>
-            <th>Avg Time (s)</th>
-          </tr>
-        </thead>
-        <tbody id="rows"></tbody>
-      </table>
-    </div>
+      <div class="pw-card">
+        <div class="pw-card-title">
+          <h2>Apps registry</h2>
+          <span class="pw-kicker">Moderation</span>
+        </div>
+        <div class="pw-scroll">
+          <table class="pw-table">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Slug</th>
+                <th>Task Type</th>
+                <th>Status</th>
+                <th>Public</th>
+                <th>Dashboard</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody id="appsList"></tbody>
+          </table>
+        </div>
+      </div>
+    </main>
 
-    <div class="card" style="margin-top:14px">
-      <div class="sub">Apps registry (moderation): <span class="mono">GET /api/admin/apps</span> · <span class="mono">POST /api/admin/apps/:id/status</span></div>
-      <table style="margin-top:10px">
-        <thead>
-          <tr>
-            <th>ID</th>
-            <th>Slug</th>
-            <th>Task Type</th>
-            <th>Status</th>
-            <th>Public</th>
-            <th>Dashboard</th>
-            <th>Action</th>
-          </tr>
-        </thead>
-        <tbody id="appsList"></tbody>
-      </table>
-    </div>
-  </div>
-
-  <script src="./apps.js"></script>
-</body>
+    <script src="./apps.js"></script>
+  </body>
 </html>

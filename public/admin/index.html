@@ -4,150 +4,138 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Proofwork • Admin Console</title>
-    <style>
-      :root {
-        --bg: #0b1220;
-        --panel: rgba(255, 255, 255, 0.06);
-        --border: rgba(255, 255, 255, 0.12);
-        --text: rgba(255, 255, 255, 0.92);
-        --muted: rgba(255, 255, 255, 0.7);
-        --accent: #fbbf24;
-        --good: #34d399;
-        --bad: #fb7185;
-        --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-        --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
-      }
-      body {
-        margin: 0;
-        font-family: var(--sans);
-        background: radial-gradient(1200px 800px at 10% 10%, rgba(251, 191, 36, 0.14), transparent 55%),
-          radial-gradient(1000px 700px at 80% 0%, rgba(251, 113, 133, 0.12), transparent 55%),
-          var(--bg);
-        color: var(--text);
-      }
-      .wrap { max-width: 1100px; margin: 32px auto; padding: 0 16px; }
-      .title { font-size: 22px; font-weight: 700; }
-      .sub { color: var(--muted); font-size: 13px; margin-top: 6px; }
-      .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; }
-      .card { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 16px; }
-      .card h2 { margin: 0 0 10px 0; font-size: 14px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; }
-      label { display: block; font-size: 12px; color: var(--muted); margin: 10px 0 6px; }
-      input, textarea, select {
-        width: 100%;
-        box-sizing: border-box;
-        padding: 10px 12px;
-        border-radius: 10px;
-        border: 1px solid var(--border);
-        background: rgba(0,0,0,0.25);
-        color: var(--text);
-        outline: none;
-      }
-      textarea { min-height: 90px; resize: vertical; font-family: var(--mono); font-size: 12px; }
-      .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-      .btnrow { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
-      button {
-        border: 1px solid var(--border);
-        background: rgba(255, 255, 255, 0.08);
-        color: var(--text);
-        padding: 10px 12px;
-        border-radius: 10px;
-        cursor: pointer;
-      }
-      button.primary { border-color: rgba(251, 191, 36, 0.35); background: rgba(251, 191, 36, 0.12); }
-      button.danger { border-color: rgba(251, 113, 133, 0.35); background: rgba(251, 113, 133, 0.12); }
-      pre {
-        margin: 0;
-        padding: 12px;
-        border-radius: 12px;
-        border: 1px solid var(--border);
-        background: rgba(0,0,0,0.35);
-        overflow: auto;
-        font-family: var(--mono);
-        font-size: 12px;
-        line-height: 1.45;
-      }
-      .status { margin-top: 12px; font-size: 12px; color: var(--muted); }
-      .status.good { color: var(--good); }
-      .status.bad { color: var(--bad); }
-      @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
-    </style>
+    <link rel="stylesheet" href="/ui/ui.css" />
   </head>
-  <body>
-    <div class="wrap">
-      <div class="title">Admin Console</div>
-      <div class="sub">Use with care. Actions are audit-logged. <a href="/admin/apps.html" style="color: var(--accent); text-decoration:none;">Apps dashboard</a> · <a href="/admin/alerts.html" style="color: var(--accent); text-decoration:none;">Alerts</a> · <a href="/admin/payouts.html" style="color: var(--accent); text-decoration:none;">Payouts</a> · <a href="/admin/disputes.html" style="color: var(--accent); text-decoration:none;">Disputes</a> · <a href="/admin/blocked-domains.html" style="color: var(--accent); text-decoration:none;">Blocked domains</a> · <a href="/admin/artifacts.html" style="color: var(--accent); text-decoration:none;">Artifacts</a> · <a href="/admin/descriptor-builder.html" style="color: var(--accent); text-decoration:none;">Descriptor builder</a></div>
+  <body class="theme-admin">
+    <header class="pw-topbar">
+      <div class="pw-topbar-inner">
+        <a class="pw-brand" href="/apps/" aria-label="Proofwork home">
+          <span class="pw-brand-badge pw-mono">PW</span>
+          Proofwork
+        </a>
+        <nav class="pw-topnav" aria-label="Primary">
+          <a class="pw-navlink" href="/apps/">Catalog</a>
+          <a class="pw-navlink" href="/buyer/">Platforms</a>
+          <a class="pw-navlink" href="/worker/">Workers</a>
+          <a class="pw-navlink" href="/admin/" aria-current="page">Admin</a>
+          <a class="pw-navlink" href="/docs/" target="_blank" rel="noreferrer">Docs</a>
+        </nav>
+      </div>
+    </header>
 
-      <div class="grid">
-        <div class="card">
-          <h2>Auth</h2>
-          <label>Admin token</label>
-          <input id="adminToken" placeholder="pw_adm_internal" />
-          <div class="btnrow">
-            <button id="btnSave" class="primary">Save token</button>
+    <main class="pw-container">
+      <section class="pw-hero">
+        <h1>Admin Console</h1>
+        <p>Use with care. Admin actions are audit‑logged.</p>
+        <div class="pw-hero-actions">
+          <div class="pw-badge">Quick links: <a href="/admin/apps.html">Apps dashboard</a> · <a href="/admin/alerts.html">Alerts</a> · <a href="/admin/payouts.html">Payouts</a> · <a href="/admin/disputes.html">Disputes</a> · <a href="/admin/blocked-domains.html">Blocked domains</a> · <a href="/admin/artifacts.html">Artifacts</a> · <a href="/admin/descriptor-builder.html">Descriptor builder</a></div>
+          <div class="pw-actions">
+            <a class="pw-btn" href="/admin/apps.html">Apps dashboard</a>
+            <a class="pw-btn primary" href="/admin/payouts.html">Payouts</a>
           </div>
-          <div id="authStatus" class="status"></div>
+        </div>
+      </section>
+
+      <div class="pw-grid">
+        <div class="pw-card">
+          <div class="pw-card-title">
+            <h2>Auth</h2>
+            <span class="pw-kicker">Admin token</span>
+          </div>
+          <div class="pw-field">
+            <label>Admin token</label>
+            <input class="pw-input" id="adminToken" placeholder="pw_adm_internal" />
+          </div>
+          <div class="pw-actions">
+            <button class="pw-btn primary" id="btnSave">Save token</button>
+          </div>
+          <div id="authStatus" class="pw-status" role="status"></div>
         </div>
 
-        <div class="card">
-          <h2>Workers</h2>
-          <label>Worker ID</label>
-          <input id="workerId" placeholder="workerId" />
-          <div class="row">
-            <div>
-              <label>Rate limit (seconds)</label>
-              <input id="durationSec" value="600" />
+        <div class="pw-card">
+          <div class="pw-card-title">
+            <h2>Workers</h2>
+            <span class="pw-kicker">Ban or throttle</span>
+          </div>
+          <div class="pw-field">
+            <label>Worker ID</label>
+            <input class="pw-input" id="workerId" placeholder="workerId" />
+          </div>
+          <div class="pw-field">
+            <label>Rate limit (seconds)</label>
+            <input class="pw-input" id="durationSec" value="600" />
+          </div>
+          <div class="pw-actions">
+            <button class="pw-btn danger" id="btnBan">POST /api/admin/workers/:id/ban</button>
+            <button class="pw-btn" id="btnRateLimit">POST /api/admin/workers/:id/rate-limit</button>
+          </div>
+          <div id="workerStatus" class="pw-status" role="status"></div>
+          <details class="pw-details">
+            <summary>Response</summary>
+            <div class="pw-details-body">
+              <pre class="pw-codeblock" id="workerOut">{}</pre>
             </div>
-            <div></div>
-          </div>
-          <div class="btnrow">
-            <button id="btnBan" class="danger">POST /api/admin/workers/:id/ban</button>
-            <button id="btnRateLimit">POST /api/admin/workers/:id/rate-limit</button>
-          </div>
-          <div id="workerStatus" class="status"></div>
-          <label>Response</label>
-          <pre id="workerOut">{}</pre>
+          </details>
         </div>
 
-        <div class="card">
-          <h2>Verifications</h2>
-          <label>Verification ID</label>
-          <input id="verificationId" placeholder="verificationId" />
-          <div class="btnrow">
-            <button id="btnRequeue" class="primary">POST /api/admin/verifications/:id/requeue</button>
+        <div class="pw-card">
+          <div class="pw-card-title">
+            <h2>Verifications</h2>
+            <span class="pw-kicker">Requeue</span>
           </div>
-          <div id="verStatus" class="status"></div>
-          <label>Response</label>
-          <pre id="verOut">{}</pre>
+          <div class="pw-field">
+            <label>Verification ID</label>
+            <input class="pw-input" id="verificationId" placeholder="verificationId" />
+          </div>
+          <div class="pw-actions">
+            <button class="pw-btn primary" id="btnRequeue">POST /api/admin/verifications/:id/requeue</button>
+          </div>
+          <div id="verStatus" class="pw-status" role="status"></div>
+          <details class="pw-details">
+            <summary>Response</summary>
+            <div class="pw-details-body">
+              <pre class="pw-codeblock" id="verOut">{}</pre>
+            </div>
+          </details>
         </div>
 
-        <div class="card">
-          <h2>Submissions</h2>
-          <label>Submission ID</label>
-          <input id="submissionId" placeholder="submissionId" />
-          <div class="row">
-            <div>
+        <div class="pw-card">
+          <div class="pw-card-title">
+            <h2>Submissions</h2>
+            <span class="pw-kicker">Override / mark duplicate</span>
+          </div>
+          <div class="pw-field">
+            <label>Submission ID</label>
+            <input class="pw-input" id="submissionId" placeholder="submissionId" />
+          </div>
+          <div class="pw-row">
+            <div class="pw-field">
               <label>Override verdict</label>
-              <select id="verdict">
+              <select class="pw-select" id="verdict">
                 <option value="pass">pass</option>
                 <option value="fail">fail</option>
                 <option value="inconclusive">inconclusive</option>
               </select>
             </div>
-            <div>
+            <div class="pw-field">
               <label>Quality score</label>
-              <input id="qualityScore" value="100" />
+              <input class="pw-input" id="qualityScore" value="100" />
             </div>
           </div>
-          <div class="btnrow">
-            <button id="btnMarkDup">POST /api/admin/submissions/:id/mark-duplicate</button>
-            <button id="btnOverride" class="primary">POST /api/admin/submissions/:id/override-verdict</button>
+          <div class="pw-actions">
+            <button class="pw-btn" id="btnMarkDup">POST /api/admin/submissions/:id/mark-duplicate</button>
+            <button class="pw-btn primary" id="btnOverride">POST /api/admin/submissions/:id/override-verdict</button>
           </div>
-          <div id="subStatus" class="status"></div>
-          <label>Response</label>
-          <pre id="subOut">{}</pre>
+          <div id="subStatus" class="pw-status" role="status"></div>
+          <details class="pw-details">
+            <summary>Response</summary>
+            <div class="pw-details-body">
+              <pre class="pw-codeblock" id="subOut">{}</pre>
+            </div>
+          </details>
         </div>
       </div>
-    </div>
+    </main>
 
     <script src="./app.js"></script>
   </body>

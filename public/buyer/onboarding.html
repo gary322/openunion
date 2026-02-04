@@ -4,29 +4,47 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Proofwork • Platform Onboarding</title>
-    <style>
-      body { margin: 0; font-family: system-ui, sans-serif; background: #0b1220; color: #eef2ff; }
-      header { padding: 18px 20px; background: linear-gradient(135deg, #0f172a, #111827); border-bottom: 1px solid #24324d; }
-      main { max-width: 980px; margin: 0 auto; padding: 20px; }
-      .card { background: #11172b; border: 1px solid #23304d; border-radius: 14px; padding: 16px; }
-      .muted { color: #9fb3c8; font-size: 13px; }
-      ol { margin: 0; padding-left: 18px; }
-      li { margin: 12px 0; }
-      a { color: #93c5fd; text-decoration: none; }
-      code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 12px; }
-    </style>
+    <link rel="stylesheet" href="/ui/ui.css" />
   </head>
-  <body>
-    <header>
-      <div style="font-weight: 700">Platform onboarding</div>
-      <div class="muted">Self-serve checklist to attach your app(s), publish tasks, and get paid.</div>
+  <body class="theme-buyer">
+    <header class="pw-topbar">
+      <div class="pw-topbar-inner">
+        <a class="pw-brand" href="/apps/" aria-label="Proofwork home">
+          <span class="pw-brand-badge pw-mono">PW</span>
+          Proofwork
+        </a>
+        <nav class="pw-topnav" aria-label="Primary">
+          <a class="pw-navlink" href="/apps/">Catalog</a>
+          <a class="pw-navlink" href="/buyer/" aria-current="page">Platforms</a>
+          <a class="pw-navlink" href="/worker/">Workers</a>
+          <a class="pw-navlink" href="/admin/">Admin</a>
+          <a class="pw-navlink" href="/docs/" target="_blank" rel="noreferrer">Docs</a>
+        </nav>
+      </div>
     </header>
-    <main>
-      <div class="card">
-        <div class="muted" style="margin-bottom: 10px">
-          Full docs: <a href="/docs/runbooks/ThirdPartyOnboarding.md">ThirdPartyOnboarding.md</a>
+
+    <main class="pw-container">
+      <section class="pw-hero">
+        <h1>Platform onboarding</h1>
+        <p>Self‑serve checklist to attach your app(s), publish tasks, and get paid.</p>
+        <div class="pw-hero-actions">
+          <div class="pw-badge">
+            Full docs: <a href="/docs/runbooks/ThirdPartyOnboarding.md" target="_blank" rel="noreferrer">ThirdPartyOnboarding.md</a>
+          </div>
+          <div class="pw-actions">
+            <a class="pw-btn" href="/buyer/index.html">Open Buyer Portal</a>
+            <a class="pw-btn primary" href="/apps/">Browse apps</a>
+          </div>
         </div>
-        <ol>
+      </section>
+
+      <div class="pw-card">
+        <div class="pw-card-title">
+          <h2>Checklist</h2>
+          <span class="pw-kicker">~10 minutes</span>
+        </div>
+
+        <ol class="pw-muted">
           <li>
             Create your platform org + first API key:
             <code>POST /api/org/register</code>
@@ -36,7 +54,7 @@
             <code>POST /api/origins</code> then <code>POST /api/origins/:id/check</code>
           </li>
           <li>
-            (Optional) Allow third-party browser UIs for your org:
+            (Optional) Allow third‑party browser UIs for your org:
             <code>PUT /api/org/cors-allow-origins</code>
           </li>
           <li>
@@ -56,20 +74,17 @@
             <a href="/admin/apps.html">Admin Apps dashboard</a> and <a href="/apps/">Apps list</a>
           </li>
           <li>
-            Disputes posture: default 1-day hold window (production). During hold you can open a dispute; after hold, refunds auto-run as
-            <code>refund = gross - Proofwork fee</code>.
-            Buyer tools: <code>/buyer/index.html</code> → Disputes.
+            Disputes posture: default 1‑day hold window (production). During hold you can open a dispute; after hold, refunds auto‑run as
+            <code>refund = gross - Proofwork fee</code>. Buyer tools: <a href="/buyer/index.html">Buyer portal</a> → Disputes.
           </li>
         </ol>
 
-        <div class="muted" style="margin-top: 12px">
-          UI shortcuts:
-          <a href="/buyer/index.html">Buyer portal</a> ·
-          <a href="/worker/index.html">Worker portal</a> ·
-          <a href="/apps/">Apps</a>
+        <div class="pw-actions">
+          <a class="pw-btn" href="/worker/index.html">Worker portal</a>
+          <a class="pw-btn" href="/admin/index.html">Admin console</a>
+          <a class="pw-btn" href="/apps/">Apps marketplace</a>
         </div>
       </div>
     </main>
   </body>
 </html>
-

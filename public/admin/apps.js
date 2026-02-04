@@ -90,7 +90,7 @@ async function refresh() {
       <td>${a.status}</td>
       <td>${a.public ? 'yes' : 'no'}</td>
       <td>${dash}</td>
-      <td><button data-app-id="${a.id}" data-next="${nextStatus}">${btnLabel}</button></td>
+      <td><button class="pw-btn" data-app-id="${a.id}" data-next="${nextStatus}">${btnLabel}</button></td>
     `;
     appsTbody.appendChild(tr);
   }
