@@ -44,6 +44,9 @@ This is meant to pair with the Proofwork "Universal Worker + task_descriptor" im
 export PROOFWORK_API_BASE_URL="http://localhost:3000"
 # Optional: provide an existing worker token, otherwise the script will auto-register:
 export PROOFWORK_WORKER_TOKEN="..."
+
+# Optional: tolerate slow S3/ClamAV async scans (default 300s)
+export PROOFWORK_ARTIFACT_SCAN_MAX_WAIT_SEC="900"
 ```
 
 2. Configure capabilities this worker supports (declared once):

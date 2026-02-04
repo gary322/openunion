@@ -36,6 +36,10 @@ export PROOFWORK_CANARY_PERCENT="10"
 # To use OpenClaw's model routing for the report artifact:
 export OPENCLAW_AGENT_ID="main"                           # or any configured agent id
 export OPENCLAW_THINKING="low"
+
+# Async artifact scanning (S3 + ClamAV) can take longer on cold starts.
+# Default is 300s; raise for staging/prod if needed.
+export PROOFWORK_ARTIFACT_SCAN_MAX_WAIT_SEC="900"
 ```
 
 Optional (arXiv research quality):
