@@ -10,22 +10,44 @@ Worker loop behavior:
 
 ## Recommended: install the OpenClaw plugin (auto-start)
 
-Plugin directory in this repo:
+### Fastest path (no repo clone): one-command connect
 
-- `integrations/openclaw/plugins/proofwork-worker/`
+If you have Node (required by OpenClaw anyway), you can connect in one command.
 
-### Install the plugin
+Requirements:
+- Node 18+
+- `git` in your PATH
+- OpenClaw installed
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/gary322/openunion/main/scripts/openclaw_proofwork_connect.mjs -o /tmp/proofwork_connect.mjs
+node /tmp/proofwork_connect.mjs --apiBaseUrl https://api.proofwork.example
+```
+
+This script will:
+- shallow-clone the repo
+- install the plugin by path
+- set the required config
+- restart the OpenClaw Gateway
+
+### Plugin location (for development)
+
+The distributable plugin package in this repo lives at:
+
+- `integrations/openclaw/extensions/proofwork-worker/`
+
+### Install the plugin (by path / local dev)
 
 OpenClaw supports installing plugins by path (copies into `~/.openclaw/extensions/<id>`):
 
 ```bash
-openclaw plugins install /ABS/PATH/TO/opentesting/integrations/openclaw/plugins/proofwork-worker
+openclaw plugins install /ABS/PATH/TO/opentesting/integrations/openclaw/extensions/proofwork-worker
 ```
 
 For local development, prefer a link install (no copy):
 
 ```bash
-openclaw plugins install -l /ABS/PATH/TO/opentesting/integrations/openclaw/plugins/proofwork-worker
+openclaw plugins install -l /ABS/PATH/TO/opentesting/integrations/openclaw/extensions/proofwork-worker
 ```
 
 ## Compatibility / assumptions
@@ -51,7 +73,7 @@ Edit your OpenClaw config (commonly `~/.openclaw/openclaw.json`) and add:
   "plugins": {
     "load": {
       "paths": [
-        "/ABS/PATH/TO/opentesting/integrations/openclaw/plugins/proofwork-worker"
+        "/ABS/PATH/TO/opentesting/integrations/openclaw/extensions/proofwork-worker"
       ]
     },
     "entries": {
@@ -86,6 +108,8 @@ The plugin registers a command:
 - `/proofwork token rotate` (deletes the persisted token so next start re-registers)
 - `/proofwork browser reset` (optional: resets the dedicated browser profile)
 - `/proofwork payout status|message|set` (payout setup without touching APIs)
+- `/proofwork payouts [pending|paid|failed|refunded] [page] [limit]`
+- `/proofwork earnings`
 
 ### State + token persistence
 
@@ -152,7 +176,7 @@ export PROOFWORK_API_BASE_URL="http://localhost:3000"
 export PROOFWORK_WORKER_TOKEN="..."                       # otherwise auto-register
 export PROOFWORK_SUPPORTED_CAPABILITY_TAGS="browser,http,screenshot,llm_summarize"
 export PROOFWORK_CANARY_PERCENT="10"
-export OPENCLAW_BROWSER_PROFILE="proofwork-worker"        # strongly recommended
+export OPENCLAW_BROWSER_PROFILE="proofwork-worker"        # required for browser-tag jobs (isolation)
 ```
 
 Run:
@@ -195,6 +219,7 @@ for safety. Enable only if you understand the prompt/tooling risks:
 ## Operational notes
 
 - The worker uses `openclaw browser ...` for screenshots/snapshots. It will attempt to create the dedicated profile (if missing) and start the browser control server automatically.
+- The worker probes browser health (Playwright-backed interactive snapshot). If unhealthy, it automatically removes `browser`/`screenshot` from its effective capability tags so it doesn’t hot-loop on browser jobs.
 - If `task_descriptor.site_profile.browser_flow` is provided, the worker will attempt to execute it using OpenClaw browser actions:
   - Prefer `role`+`name` or `text` selectors in steps (OpenClaw resolves refs via snapshots).
 - For `ffmpeg` jobs, install ffmpeg in the worker runtime and include `ffmpeg` in `PROOFWORK_SUPPORTED_CAPABILITY_TAGS`.
