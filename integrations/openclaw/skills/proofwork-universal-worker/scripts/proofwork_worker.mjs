@@ -137,8 +137,11 @@ async function waitForArtifactScanned({ token, finalUrl }) {
       .toLowerCase() === "true" ||
     String(process.env.PROOFWORK_ARTIFACT_WAIT_DEBUG ?? process.env.ARTIFACT_WAIT_DEBUG ?? "")
       .trim() === "1";
+  const maxWaitRaw = Number(process.env.PROOFWORK_ARTIFACT_SCAN_MAX_WAIT_SEC ?? process.env.ARTIFACT_SCAN_MAX_WAIT_SEC ?? 300);
+  // Clamp to avoid infinite hangs while still allowing slow clamd cold starts in real deployments.
+  const maxWaitSec = Number.isFinite(maxWaitRaw) ? Math.max(30, Math.min(30 * 60, Math.floor(maxWaitRaw))) : 300;
   let lastStatus = null;
-  for (let i = 0; i < 300; i++) {
+  for (let i = 0; i < maxWaitSec; i++) {
     const resp = await fetch(url, { method: "GET", headers, redirect: "manual" });
     // Avoid buffering large artifacts. For 422 we may read a small JSON body with scanReason.
     if (resp.status !== 422) resp.body?.cancel?.();

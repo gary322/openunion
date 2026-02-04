@@ -30,6 +30,7 @@ Environment variables:
 - `UNIVERSAL_WORKER_CANARY_PERCENT` (0..100, default `100`) – deterministically claim only a % of jobs (hash(jobId))
 - `ONCE=true` to exit after one submit
 - `WAIT_FOR_DONE=true` to poll until `status=done`
+- `ARTIFACT_SCAN_MAX_WAIT_SEC` (default `300`) – max seconds to wait for S3/ClamAV async scan before failing a job
 
 ## Backpressure / kill switches
 Worker intake may be paused by:
