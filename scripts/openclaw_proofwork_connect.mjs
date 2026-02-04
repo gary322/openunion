@@ -10,11 +10,12 @@ import { pathToFileURL, fileURLToPath } from "node:url";
 function parseArgs(argv) {
   const out = {
     apiBaseUrl: "",
-    // "auto" means:
-    // - if running inside the repo, install the local extension dir
+    // Default: install from npm (no repo clone).
+    // If you pass `--plugin auto`, we:
+    // - install the local extension dir when running inside the repo
     // - otherwise, shallow-clone the repo and install from that path
-    pluginSpec: "auto",
-    repoUrl: String(process.env.PROOFWORK_CONNECT_REPO_URL ?? "https://github.com/gary322/openunion.git"),
+    pluginSpec: "@proofwork/proofwork-worker",
+    repoUrl: String(process.env.PROOFWORK_CONNECT_REPO_URL ?? "https://github.com/gary322/opentesting.git"),
     repoRef: String(process.env.PROOFWORK_CONNECT_REPO_REF ?? "main"),
     openclawBin: "openclaw",
     browserProfile: "proofwork-worker",
@@ -277,8 +278,8 @@ async function main() {
         "  node scripts/openclaw_proofwork_connect.mjs --apiBaseUrl https://api.proofwork.xyz [options]",
         "",
         "Options:",
-        "  --plugin <auto|path|.tgz|npm-spec>  Plugin to install (default: auto)",
-        "  --repoUrl <git-url>                Repo URL used by --plugin auto (default: https://github.com/gary322/openunion.git)",
+        "  --plugin <auto|path|.tgz|npm-spec>  Plugin to install (default: @proofwork/proofwork-worker)",
+        "  --repoUrl <git-url>                Repo URL used by --plugin auto (default: https://github.com/gary322/opentesting.git)",
         "  --repoRef <ref>                    Repo ref used by --plugin auto (default: main)",
         "  --openclaw <bin>                   OpenClaw CLI path (default: openclaw)",
         "  --browserProfile <name>            Dedicated worker browser profile (default: proofwork-worker)",

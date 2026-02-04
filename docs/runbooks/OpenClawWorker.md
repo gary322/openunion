@@ -12,23 +12,41 @@ Worker loop behavior:
 
 ### Fastest path (no repo clone): one-command connect
 
-If you have Node (required by OpenClaw anyway), you can connect in one command.
-
 Requirements:
 - Node 18+
-- `git` in your PATH
 - OpenClaw installed
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/gary322/openunion/main/scripts/openclaw_proofwork_connect.mjs -o /tmp/proofwork_connect.mjs
-node /tmp/proofwork_connect.mjs --apiBaseUrl https://api.proofwork.example
+npx --yes @proofwork/proofwork-worker --apiBaseUrl https://api.proofwork.example
 ```
 
-This script will:
-- shallow-clone the repo
-- install the plugin by path
+This runs the package’s `proofwork-connect` command, which will:
+- install the plugin from npm
 - set the required config
 - restart the OpenClaw Gateway
+
+If you prefer the explicit bin form:
+
+```bash
+npx --yes -p @proofwork/proofwork-worker proofwork-connect --apiBaseUrl https://api.proofwork.example
+```
+
+### Install from npm (manual)
+
+Install the plugin:
+
+```bash
+openclaw plugins install @proofwork/proofwork-worker
+```
+
+Configure (only `apiBaseUrl` is required) and restart:
+
+```bash
+openclaw config set --json plugins.enabled true
+openclaw config set --json plugins.entries.proofwork-worker.enabled true
+openclaw config set --json plugins.entries.proofwork-worker.config '{"apiBaseUrl":"https://api.proofwork.example"}'
+openclaw gateway restart
+```
 
 ### Plugin location (for development)
 

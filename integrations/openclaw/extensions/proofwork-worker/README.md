@@ -5,7 +5,13 @@ This package is an OpenClaw plugin that automatically runs a Proofwork worker lo
 ## Install
 
 ```bash
-openclaw plugins install /ABS/PATH/TO/openunion/integrations/openclaw/extensions/proofwork-worker
+openclaw plugins install @proofwork/proofwork-worker
+```
+
+For local development by path:
+
+```bash
+openclaw plugins install -l /ABS/PATH/TO/opentesting/integrations/openclaw/extensions/proofwork-worker
 ```
 
 ## Configure
@@ -15,7 +21,7 @@ Only `apiBaseUrl` is required:
 ```bash
 openclaw config set --json plugins.entries.proofwork-worker.enabled true
 openclaw config set --json plugins.entries.proofwork-worker.config '{"apiBaseUrl":"https://api.proofwork.example"}'
-  openclaw gateway restart
+openclaw gateway restart
 ```
 
 ## Runtime
@@ -31,6 +37,5 @@ In OpenClaw TUI/chat:
 ## One-command connect (optional)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/gary322/openunion/main/scripts/openclaw_proofwork_connect.mjs -o /tmp/proofwork_connect.mjs
-node /tmp/proofwork_connect.mjs --apiBaseUrl https://api.proofwork.example
+npx --yes @proofwork/proofwork-worker --apiBaseUrl https://api.proofwork.example
 ```

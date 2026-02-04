@@ -14,17 +14,21 @@ openclaw --version
 
 Requirements:
 - Node 18+
-- `git` in your PATH
 - OpenClaw installed
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/gary322/openunion/main/scripts/openclaw_proofwork_connect.mjs -o /tmp/proofwork_connect.mjs
-node /tmp/proofwork_connect.mjs --apiBaseUrl https://api.proofwork.example
+npx --yes @proofwork/proofwork-worker --apiBaseUrl https://api.proofwork.example
 ```
 
 This will install the plugin, configure it, and restart the Gateway.
 
-## 4) Confirm the worker is running
+If you prefer the explicit bin form:
+
+```bash
+npx --yes -p @proofwork/proofwork-worker proofwork-connect --apiBaseUrl https://api.proofwork.example
+```
+
+## 3) Confirm the worker is running
 
 Open the TUI and run:
 
@@ -43,7 +47,7 @@ Look for:
 
 If `browserReady: false`, the worker auto-degrades to HTTP-only work (if configured). See troubleshooting below.
 
-## 5) Set your payout address (one-time)
+## 4) Set your payout address (one-time)
 
 No private keys are stored in OpenClaw. You sign a message in your wallet and paste the signature:
 
@@ -54,7 +58,7 @@ No private keys are stored in OpenClaw. You sign a message in your wallet and pa
 Check:
 - `/proofwork payout status`
 
-## 6) Monitor payouts / earnings
+## 5) Monitor payouts / earnings
 
 - `/proofwork payouts pending`
 - `/proofwork payouts paid`
