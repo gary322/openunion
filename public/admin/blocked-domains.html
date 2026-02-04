@@ -6,7 +6,7 @@
     <title>Proofwork • Admin • Blocked Domains</title>
     <link rel="stylesheet" href="/ui/ui.css" />
   </head>
-  <body class="theme-admin">
+  <body class="theme-admin" data-portal="admin">
     <header class="pw-topbar">
       <div class="pw-topbar-inner">
         <a class="pw-brand" href="/apps/" aria-label="Proofwork home">
@@ -38,74 +38,97 @@
         </div>
       </section>
 
-      <div class="pw-grid">
-        <div class="pw-card">
-          <div class="pw-card-title">
-            <h2>Auth</h2>
-            <span class="pw-kicker">Admin token</span>
-          </div>
-          <div class="pw-field">
-            <label>Admin token</label>
-            <input class="pw-input" id="adminToken" placeholder="pw_adm_internal" />
-          </div>
-          <div class="pw-actions">
-            <button class="pw-btn primary" id="btnSave">Save token</button>
-          </div>
-          <div id="authStatus" class="pw-status" role="status"></div>
-        </div>
+      <div class="pw-console">
+        <aside class="pw-sidebar" aria-label="Admin navigation">
+          <nav class="pw-sidenav">
+            <div class="pw-sidenav-title">Ops</div>
+            <a href="/admin/">Overview</a>
+            <a href="/admin/alerts.html">Alerts</a>
+            <a href="/admin/apps.html">Apps dashboard</a>
+            <div class="pw-sidenav-title">Finance</div>
+            <a href="/admin/payouts.html">Payouts</a>
+            <a href="/admin/disputes.html">Disputes</a>
+            <div class="pw-sidenav-title">Governance</div>
+            <a href="/admin/artifacts.html">Artifacts</a>
+            <a href="/admin/blocked-domains.html" aria-current="page">Blocked domains</a>
+            <div class="pw-sidenav-title">Tools</div>
+            <a href="/admin/descriptor-builder.html">Descriptor builder</a>
+            <a href="/admin/explorer.html">Explorer</a>
+          </nav>
+        </aside>
 
-        <div class="pw-card">
-          <div class="pw-card-title">
-            <h2>Add / Update</h2>
-            <span class="pw-kicker">Policy control</span>
-          </div>
-          <div class="pw-field">
-            <label>Domain or URL</label>
-            <input class="pw-input" id="domain" placeholder="example.com or https://example.com" />
-          </div>
-          <div class="pw-field">
-            <label>Reason (optional)</label>
-            <textarea class="pw-textarea" id="reason" placeholder="spam / abuse / policy"></textarea>
-          </div>
-          <div class="pw-actions">
-            <button class="pw-btn primary" id="btnUpsert">POST /api/admin/blocked-domains</button>
-          </div>
-          <div id="upsertStatus" class="pw-status" role="status"></div>
-        </div>
-
-        <div class="pw-card pw-span-all">
-          <div class="pw-card-title">
-            <h2>List</h2>
-            <span class="pw-kicker">Current denylist</span>
-          </div>
-          <div class="pw-actions">
-            <button class="pw-btn primary" id="btnList">GET /api/admin/blocked-domains</button>
-          </div>
-          <div id="listStatus" class="pw-status" role="status"></div>
-          <div class="pw-scroll">
-            <table class="pw-table">
-              <thead>
-                <tr>
-                  <th>ID</th>
-                  <th>Domain</th>
-                  <th>Reason</th>
-                  <th>Created</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody id="rows"></tbody>
-            </table>
-          </div>
-          <details class="pw-details">
-            <summary>Raw response</summary>
-            <div class="pw-details-body">
-              <pre class="pw-codeblock" id="out">{}</pre>
+        <section class="pw-stack" aria-label="Blocked domains tools">
+          <div class="pw-grid">
+            <div class="pw-card">
+              <div class="pw-card-title">
+                <h2>Auth</h2>
+                <span class="pw-kicker">Admin token</span>
+              </div>
+              <div class="pw-field">
+                <label>Admin token</label>
+                <input class="pw-input" id="adminToken" placeholder="pw_adm_internal" />
+              </div>
+              <div class="pw-actions">
+                <button class="pw-btn primary" id="btnSave">Save token</button>
+              </div>
+              <div id="authStatus" class="pw-status" role="status"></div>
             </div>
-          </details>
-        </div>
+
+            <div class="pw-card">
+              <div class="pw-card-title">
+                <h2>Add / update</h2>
+                <span class="pw-kicker">Policy control</span>
+              </div>
+              <div class="pw-field">
+                <label>Domain or URL</label>
+                <input class="pw-input" id="domain" placeholder="example.com or https://example.com" />
+              </div>
+              <div class="pw-field">
+                <label>Reason (optional)</label>
+                <textarea class="pw-textarea" id="reason" placeholder="spam / abuse / policy"></textarea>
+              </div>
+              <div class="pw-actions">
+                <button class="pw-btn primary" id="btnUpsert">Save blocked domain</button>
+              </div>
+              <div id="upsertStatus" class="pw-status" role="status"></div>
+            </div>
+
+            <div class="pw-card pw-span-all">
+              <div class="pw-card-title">
+                <h2>Denylist</h2>
+                <span class="pw-kicker">Current blocked domains</span>
+              </div>
+              <div class="pw-actions">
+                <button class="pw-btn primary" id="btnList">Refresh list</button>
+              </div>
+              <div id="listStatus" class="pw-status" role="status"></div>
+              <div class="pw-scroll">
+                <table class="pw-table">
+                  <thead>
+                    <tr>
+                      <th>ID</th>
+                      <th>Domain</th>
+                      <th>Reason</th>
+                      <th>Created</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody id="rows"></tbody>
+                </table>
+              </div>
+              <details class="pw-details pw-dev">
+                <summary>Developer response</summary>
+                <div class="pw-details-body">
+                  <pre class="pw-codeblock" id="out">{}</pre>
+                </div>
+              </details>
+            </div>
+          </div>
+        </section>
       </div>
     </main>
 
     <script src="./blocked-domains.js"></script>
+    <script type="module" src="/ui/shell.js"></script>
   </body>
 </html>

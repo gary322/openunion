@@ -3,10 +3,10 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Proofwork • Worker Portal</title>
+    <title>Proofwork • Worker Console</title>
     <link rel="stylesheet" href="/ui/ui.css" />
   </head>
-  <body class="theme-worker">
+  <body class="theme-worker" data-portal="worker">
     <header class="pw-topbar">
       <div class="pw-topbar-inner">
         <a class="pw-brand" href="/apps/" aria-label="Proofwork home">
@@ -24,23 +24,64 @@
     </header>
 
     <main class="pw-container">
-      <section class="pw-hero">
-        <h1>Worker Portal</h1>
-        <p>Register → pull the next job → claim → upload artifacts → submit → get paid.</p>
+      <section class="pw-hero" id="home">
+        <h1>Worker Console</h1>
+        <p>Find work, upload what is required, submit, and get paid - with the least possible effort.</p>
         <div class="pw-hero-actions">
           <div class="pw-badge">API base: <span class="pw-mono" id="apiBase"></span></div>
           <div class="pw-actions">
-            <a class="pw-btn" href="/apps/">Find tasks</a>
-            <a class="pw-btn primary" href="/docs/" target="_blank" rel="noreferrer">Docs</a>
+            <a class="pw-btn" href="/apps/">Browse apps</a>
+            <a class="pw-btn primary" href="#find">Find work</a>
           </div>
         </div>
       </section>
 
-      <div class="pw-split">
+      <div class="pw-console">
+        <aside class="pw-sidebar">
+          <nav class="pw-sidenav" aria-label="Worker navigation">
+            <div class="pw-sidenav-title">Worker</div>
+            <a href="#ready">Ready to earn <span class="pw-sidenav-badge" id="navBadgeReady">2</span></a>
+            <a href="#find">Find work</a>
+            <a href="#job">Active job</a>
+            <a href="#outputs">Outputs</a>
+            <a href="#submit">Submit</a>
+            <a href="#payouts">Payouts</a>
+            <div class="pw-sidenav-group">
+              <div class="pw-sidenav-title">Tools</div>
+              <a href="/worker/explorer.html">Explorer</a>
+            </div>
+          </nav>
+        </aside>
+
         <section class="pw-stack">
-          <div class="pw-card">
+          <section class="pw-card" id="ready">
             <div class="pw-card-title">
-              <h2>Auth</h2>
+              <h2>Ready to earn</h2>
+              <span class="pw-kicker">Checklist</span>
+            </div>
+            <div class="pw-stepper">
+              <div class="pw-step" id="stepWorkerToken">
+                <div class="pw-step-dot">1</div>
+                <div>
+                  <div class="pw-step-title">Worker token</div>
+                  <div class="pw-step-desc">Register once, or paste an existing worker token.</div>
+                </div>
+                <a class="pw-btn" href="#auth">Set up</a>
+              </div>
+              <div class="pw-step" id="stepWorkerPayout">
+                <div class="pw-step-dot">2</div>
+                <div>
+                  <div class="pw-step-title">Payout address</div>
+                  <div class="pw-step-desc">Set an EVM address on Base so you can be paid automatically.</div>
+                </div>
+                <a class="pw-btn" href="#payouts">Set</a>
+              </div>
+            </div>
+          </section>
+
+          <section class="pw-card" id="auth">
+            <div class="pw-card-title">
+              <h2>Access</h2>
               <span class="pw-kicker">Create or reuse your worker token</span>
             </div>
 
@@ -68,108 +109,148 @@
             </div>
             <div class="pw-actions">
               <button class="pw-btn" id="btnSaveToken">Save token</button>
-              <button class="pw-btn" id="btnMe">/api/worker/me</button>
+              <button class="pw-btn" id="btnMe">Check token</button>
             </div>
             <div id="authStatus" class="pw-status" role="status"></div>
-          </div>
+          </section>
 
-          <div class="pw-card">
+          <section class="pw-card" id="find">
             <div class="pw-card-title">
-              <h2>Job</h2>
-              <span class="pw-kicker">Claimable work</span>
+              <h2>Find work</h2>
+              <span class="pw-kicker">Claimable jobs</span>
             </div>
+            <p class="pw-muted">
+              Tip: you can filter by capability tag and minimum payout. If you already have an active job, finish it first.
+            </p>
+
+            <div class="pw-row">
+              <div class="pw-field">
+                <label>Min payout (cents)</label>
+                <input class="pw-input" id="minPayoutCents" placeholder="e.g. 1200" />
+              </div>
+              <div class="pw-field">
+                <label>Capability tag (optional)</label>
+                <input class="pw-input" id="capabilityTag" placeholder="browser|http|ffmpeg|llm_summarize|screenshot" />
+              </div>
+            </div>
+
             <div class="pw-actions">
-              <button class="pw-btn primary" id="btnNext">GET /api/jobs/next</button>
-              <button class="pw-btn" id="btnClaim">POST /api/jobs/:jobId/claim</button>
+              <button class="pw-btn primary" id="btnNext">Find next job</button>
+              <button class="pw-btn" id="btnClaim">Claim loaded job</button>
             </div>
-            <details class="pw-details" open>
-              <summary>Current job spec / state</summary>
+
+            <details class="pw-details pw-dev" open>
+              <summary>Developer: current job spec / state</summary>
               <div class="pw-details-body">
                 <pre class="pw-codeblock" id="jobOut">{}</pre>
               </div>
             </details>
             <div id="jobStatus" class="pw-status" role="status"></div>
-          </div>
+          </section>
 
-          <div class="pw-card">
+          <section class="pw-card" id="job">
             <div class="pw-card-title">
-              <h2>Artifacts</h2>
-              <span class="pw-kicker">Presign + upload</span>
+              <h2>Active job</h2>
+              <span class="pw-kicker">What to do next</span>
             </div>
-            <div class="pw-field">
-              <label>Pick a file</label>
-              <input class="pw-input" id="file" type="file" />
-            </div>
-            <div class="pw-row">
-              <div class="pw-field">
-                <label>Kind</label>
-                <select class="pw-select" id="kind">
-                  <option value="screenshot">screenshot</option>
-                  <option value="snapshot">snapshot</option>
-                  <option value="pdf">pdf</option>
-                  <option value="log">log</option>
-                  <option value="video">video</option>
-                  <option value="other" selected>other</option>
-                </select>
-              </div>
-              <div class="pw-field">
-                <label>Label</label>
-                <input class="pw-input" id="label" placeholder="e.g. repro" value="repro" />
-              </div>
-            </div>
+            <div class="pw-muted" id="jobSummary">Load a job from "Find work".</div>
             <div class="pw-actions">
-              <button class="pw-btn primary" id="btnUpload">Presign + upload</button>
+              <a class="pw-btn" href="#outputs">Jump to outputs</a>
+              <a class="pw-btn primary" href="#submit">Jump to submit</a>
             </div>
-            <details class="pw-details">
-              <summary>Artifact ref (auto‑filled)</summary>
+          </section>
+
+          <section class="pw-card" id="outputs">
+            <div class="pw-card-title">
+              <h2>Outputs</h2>
+              <span class="pw-kicker">Upload what is required</span>
+            </div>
+            <p class="pw-muted">
+              This checklist is derived from <span class="pw-mono">task_descriptor.output_spec</span> when available.
+            </p>
+
+            <div id="requiredOutputs"></div>
+            <div id="requiredOutputsStatus" class="pw-status" role="status"></div>
+
+            <input class="pw-input pw-offscreen" id="slotFile" type="file" />
+
+            <details class="pw-details" id="advancedUploads">
+              <summary>Advanced: upload extra artifacts</summary>
               <div class="pw-details-body">
-                <pre class="pw-codeblock" id="artifactOut">{}</pre>
+                <div class="pw-field">
+                  <label>Pick a file</label>
+                  <input class="pw-input" id="file" type="file" />
+                </div>
+                <div class="pw-row">
+                  <div class="pw-field">
+                    <label>Kind</label>
+                    <select class="pw-select" id="kind">
+                      <option value="screenshot">screenshot</option>
+                      <option value="snapshot">snapshot</option>
+                      <option value="pdf">pdf</option>
+                      <option value="log">log</option>
+                      <option value="video">video</option>
+                      <option value="other" selected>other</option>
+                    </select>
+                  </div>
+                  <div class="pw-field">
+                    <label>Label</label>
+                    <input class="pw-input" id="label" placeholder="e.g. repro" value="repro" />
+                  </div>
+                </div>
+                <div class="pw-actions">
+                  <button class="pw-btn primary" id="btnUpload">Presign + upload</button>
+                </div>
+                <details class="pw-details pw-dev">
+                  <summary>Developer: artifact ref</summary>
+                  <div class="pw-details-body">
+                    <pre class="pw-codeblock" id="artifactOut">{}</pre>
+                  </div>
+                </details>
+                <div id="uploadStatus" class="pw-status" role="status"></div>
               </div>
             </details>
-            <div id="uploadStatus" class="pw-status" role="status"></div>
-          </div>
+          </section>
 
-          <div class="pw-card">
+          <section class="pw-card" id="submit">
             <div class="pw-card-title">
               <h2>Submit</h2>
               <span class="pw-kicker">Finalize your work</span>
             </div>
+
             <div class="pw-row">
               <div class="pw-field">
                 <label>Expected</label>
-                <input class="pw-input" id="expected" value="Expected behavior" />
+                <input class="pw-input" id="expected" value="Expected deliverables" />
               </div>
               <div class="pw-field">
                 <label>Observed</label>
-                <input class="pw-input" id="observed" value="Observed behavior" />
+                <input class="pw-input" id="observed" value="Attached deliverables" />
               </div>
             </div>
             <div class="pw-field">
-              <label>Repro steps (one per line)</label>
-              <textarea class="pw-textarea" id="steps">1. Do X
-2. Do Y
-3. Observe issue</textarea>
+              <label>Steps / notes (one per line)</label>
+              <textarea class="pw-textarea" id="steps">1. Completed the requested task
+2. Uploaded required artifacts</textarea>
             </div>
             <div class="pw-actions">
-              <button class="pw-btn primary" id="btnSubmit">POST /api/jobs/:jobId/submit</button>
+              <button class="pw-btn primary" id="btnSubmit">Submit</button>
             </div>
-            <details class="pw-details" open>
-              <summary>Response</summary>
+            <details class="pw-details pw-dev" open>
+              <summary>Developer: response</summary>
               <div class="pw-details-body">
                 <pre class="pw-codeblock" id="submitOut">{}</pre>
               </div>
             </details>
             <div id="submitStatus" class="pw-status" role="status"></div>
-          </div>
-        </section>
+          </section>
 
-        <aside class="pw-stack">
-          <div class="pw-card">
+          <section class="pw-card" id="payouts">
             <div class="pw-card-title">
               <h2>Payouts</h2>
-              <span class="pw-kicker">Base address + history</span>
+              <span class="pw-kicker">Address + history</span>
             </div>
-            <p class="pw-muted">Set a payout address (Base / EVM) once; then check payout history.</p>
+            <p class="pw-muted">Set a payout address once; then check payout history (holds show as pending).</p>
 
             <div class="pw-field">
               <label>Payout chain</label>
@@ -188,8 +269,8 @@
               <button class="pw-btn primary" id="btnSetPayoutAddress">Verify payout address</button>
             </div>
 
-            <details class="pw-details">
-              <summary>Message to sign</summary>
+            <details class="pw-details pw-dev">
+              <summary>Developer: message to sign</summary>
               <div class="pw-details-body">
                 <pre class="pw-codeblock" id="payoutMessage"></pre>
               </div>
@@ -206,20 +287,22 @@
               <input class="pw-input" id="payoutStatus" placeholder="pending|paid|failed|refunded" />
             </div>
             <div class="pw-actions">
-              <button class="pw-btn primary" id="btnListPayouts">GET /api/worker/payouts</button>
+              <button class="pw-btn primary" id="btnListPayouts">List payouts</button>
             </div>
-            <details class="pw-details" open>
-              <summary>Response</summary>
+            <details class="pw-details pw-dev" open>
+              <summary>Developer: response</summary>
               <div class="pw-details-body">
                 <pre class="pw-codeblock" id="payoutOut">{}</pre>
               </div>
             </details>
             <div id="payoutStatusMsg" class="pw-status" role="status"></div>
-          </div>
-        </aside>
+          </section>
+        </section>
       </div>
     </main>
 
     <script src="./app.js"></script>
+    <script type="module" src="/ui/shell.js"></script>
   </body>
 </html>
+

@@ -314,6 +314,7 @@ export interface AppsTable {
   public: boolean;
   status: string;
   default_descriptor: unknown;
+  ui_schema: unknown;
   created_at: Timestamp;
   updated_at: Timestamp;
 }

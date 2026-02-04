@@ -1,45 +1,114 @@
 # OpenClaw worker integration
 
-This repo includes an **OpenClaw skill pack** that can act as a Proofwork worker:
+This repo includes an **OpenClaw plugin** that runs a Proofwork worker loop automatically (recommended), plus a manual skill/script mode.
+
+Worker loop behavior:
+- polls `GET /api/jobs/next`
+- self-selects by `task_descriptor.capability_tags`
+- claims, executes (including `site_profile.browser_flow` click/type), uploads artifacts, submits
+- enforces worker safety defaults (see below)
+
+## Recommended: install the OpenClaw plugin (auto-start)
+
+Plugin directory in this repo:
+
+- `integrations/openclaw/plugins/proofwork-worker/`
+
+## Compatibility / assumptions
+
+- OpenClaw must support:
+  - plugins loaded by path via `openclaw.plugin.json`
+  - `registerService(...)` and `registerCommand(...)`
+  - `openclaw browser ... --browser-profile <name>` and `openclaw browser reset-profile --browser-profile <name>`
+- Worker runtime requires Node **18+** (the worker script asserts this at startup).
+- Optional: remote gateway mode is supported by passing `OPENCLAW_GATEWAY_URL` (and optional `OPENCLAW_GATEWAY_TOKEN`)
+  into the plugin/Gateway environment.
+
+### Configure OpenClaw to load the plugin by path
+
+Edit your OpenClaw config (commonly `~/.openclaw/openclaw.json`) and add:
+
+```json
+{
+  "plugins": {
+    "load": {
+      "paths": [
+        "/ABS/PATH/TO/opentesting/integrations/openclaw/plugins/proofwork-worker"
+      ]
+    },
+    "entries": {
+      "proofwork-worker": {
+        "enabled": true,
+        "config": {
+          "apiBaseUrl": "http://localhost:3000",
+          "browserProfile": "proofwork-worker",
+          "supportedCapabilityTags": ["browser", "screenshot", "http", "llm_summarize"],
+          "originEnforcement": "strict",
+          "noLogin": true,
+          "valueEnvAllowlist": []
+        }
+      }
+    }
+  }
+}
+```
+
+Restart the OpenClaw Gateway. The plugin registers a background service that starts/stops the worker with the Gateway.
+
+### Runtime controls (commands)
+
+The plugin registers a command:
+
+- `/proofwork status`
+- `/proofwork pause` / `/proofwork resume`
+- `/proofwork token rotate` (deletes the persisted token so next start re-registers)
+- `/proofwork browser reset` (optional: resets the dedicated browser profile)
+
+### State + token persistence
+
+The plugin persists state under `$OPENCLAW_STATE_DIR/plugins/proofwork-worker/<workspaceHash>/`, including:
+- `worker-token.json` (persisted `token` + `workerId`)
+- `pause.flag`
+- `lock.json` (single-instance)
+- `status.json` (last poll/job/error timestamps)
+
+### Safety defaults (public worker pool)
+
+When installed via plugin, the worker enforces:
+- **Dedicated browser profile** (`browserProfile`) so jobs never run with personal cookies/sessions
+- **Origin enforcement**: explicit URLs visited/fetched/clipped must be within `job.constraints.allowedOrigins`
+- **No login**: blocks login/OTP/OAuth-ish flows
+- **No arbitrary JS**: forbids descriptor-provided `extract.fn` (safe extraction only)
+- **No env exfil**: `value_env` is allowlist-only (default empty) and hard-blocks secret-ish env names
+
+See `docs/runbooks/TaskDescriptor.md` for authoring guidance.
+
+## Manual mode: copy the skill pack and run the worker script
+
+Skill pack:
 
 - `integrations/openclaw/skills/proofwork-universal-worker/`
 
-It polls `/api/jobs/next`, self-selects by `task_descriptor.capability_tags`, claims, uploads artifacts, and submits.
-
-## Install into OpenClaw
-
-Copy the skill folder into the OpenClaw workspace you want to use:
+Copy into the OpenClaw workspace you want to use:
 
 ```bash
-# Example (adjust to your OpenClaw workspace path):
 cp -R integrations/openclaw/skills/proofwork-universal-worker ~/.openclaw/workspace/skills/
 ```
 
-Restart the OpenClaw gateway/agent if needed so it reloads workspace skills.
-
-## Configure
-
-At minimum:
+Configure:
 
 ```bash
 export PROOFWORK_API_BASE_URL="http://localhost:3000"
-```
-
-Optional (recommended):
-
-```bash
 export PROOFWORK_WORKER_TOKEN="..."                       # otherwise auto-register
 export PROOFWORK_SUPPORTED_CAPABILITY_TAGS="browser,http,screenshot,llm_summarize"
-export PROOFWORK_MIN_PAYOUT_CENTS="100"
 export PROOFWORK_CANARY_PERCENT="10"
+export OPENCLAW_BROWSER_PROFILE="proofwork-worker"        # strongly recommended
+```
 
-# To use OpenClaw's model routing for the report artifact:
-export OPENCLAW_AGENT_ID="main"                           # or any configured agent id
-export OPENCLAW_THINKING="low"
+Run:
 
-# Async artifact scanning (S3 + ClamAV) can take longer on cold starts.
-# Default is 300s; raise for staging/prod if needed.
-export PROOFWORK_ARTIFACT_SCAN_MAX_WAIT_SEC="900"
+```bash
+node ~/.openclaw/workspace/skills/proofwork-universal-worker/scripts/proofwork_worker.mjs
 ```
 
 Optional (arXiv research quality):
@@ -65,11 +134,13 @@ export ARXIV_API_BASE_URL="https://export.arxiv.org/api/query"
 export ARXIV_MAX_RESULTS="5"
 ```
 
-## Run
+## Optional (dangerous): OpenClaw agent summarize
 
-```bash
-node ~/.openclaw/workspace/skills/proofwork-universal-worker/scripts/proofwork_worker.mjs
-```
+The worker can generate the `report_summary` artifact via `openclaw agent ...`, but this is **disabled by default**
+for safety. Enable only if you understand the prompt/tooling risks:
+
+- Plugin config: `dangerouslyEnableOpenclawAgentSummarize: true`
+- Manual env: `PROOFWORK_DANGEROUS_ENABLE_OPENCLAW_AGENT_SUMMARIZE="true"` and `OPENCLAW_AGENT_ID="..."` (plus optional `OPENCLAW_THINKING`)
 
 ## Operational notes
 

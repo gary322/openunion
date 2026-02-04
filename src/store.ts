@@ -73,6 +73,7 @@ function appFromRow(row: Selectable<AppsTable>): App {
     public: Boolean(row.public),
     status: (row.status as any) === 'disabled' ? 'disabled' : 'active',
     defaultDescriptor: ((row.default_descriptor ?? {}) as any) || {},
+    uiSchema: ((row.ui_schema ?? {}) as any) || {},
     createdAt: (row.created_at as any as Date).getTime(),
     updatedAt: (row.updated_at as any as Date).getTime(),
   };
@@ -304,6 +305,90 @@ export async function seedBuiltInApps() {
         },
         freshness_sla_sec: 3600,
       },
+      ui_schema: {
+        schema_version: 'v1',
+        category: 'Streaming',
+        bounty_defaults: { payout_cents: 1500, required_proofs: 3 },
+        sections: [
+          {
+            id: 'inputs',
+            title: 'What to clip',
+            description: 'Provide a VOD and tell the worker what counts as a highlight.',
+            fields: [
+              {
+                key: 'vod_url',
+                label: 'VOD URL',
+                type: 'url',
+                required: true,
+                placeholder: 'https://…',
+                help: 'A public VOD link or a signed URL your verifier can access.',
+                target: 'input_spec.vod_url',
+              },
+              {
+                key: 'mode',
+                label: 'Mode',
+                type: 'select',
+                required: true,
+                default: 'highlights',
+                options: [
+                  { label: 'Highlights (best moments)', value: 'highlights' },
+                  { label: 'Timestamping only (no clips)', value: 'timestamps_only' },
+                ],
+                target: 'input_spec.mode',
+              },
+              {
+                key: 'rules',
+                label: 'Highlight rules',
+                type: 'textarea',
+                required: true,
+                placeholder: 'Example: pick 3 moments with peak chat excitement; 20–30s each; include 2s of lead-in.',
+                help: 'Be explicit: count, duration, and what signals to look for (kills, spikes, reactions, etc.).',
+                target: 'input_spec.rules',
+              },
+            ],
+          },
+          {
+            id: 'constraints',
+            title: 'Constraints',
+            description: 'Optional constraints to keep outputs consistent and verifiable.',
+            fields: [
+              {
+                key: 'clip_count',
+                label: 'Clip count',
+                type: 'number',
+                required: false,
+                placeholder: '3',
+                help: 'How many clips you want in the final deliverable.',
+                min: 1,
+                max: 50,
+                target: 'input_spec.clip_count',
+              },
+              {
+                key: 'clip_duration_sec',
+                label: 'Clip duration (seconds)',
+                type: 'number',
+                required: false,
+                placeholder: '25',
+                min: 5,
+                max: 600,
+                target: 'input_spec.clip_duration_sec',
+              },
+            ],
+          },
+        ],
+        templates: [
+          {
+            id: 'highlights_3x25',
+            name: '3 highlights (25s each)',
+            preset: { mode: 'highlights', clip_count: 3, clip_duration_sec: 25, rules: 'Pick 3 moments with the biggest excitement; 25s each; include 2s lead-in.' },
+          },
+          {
+            id: 'timestamps_only',
+            name: 'Timestamping only',
+            preset: { mode: 'timestamps_only', rules: 'Return a JSON timeline of noteworthy moments with short descriptions.' },
+          },
+        ],
+      },
     },
     {
       id: 'app_marketplace',
@@ -325,6 +410,77 @@ export async function seedBuiltInApps() {
           screenshots: true,
         },
         freshness_sla_sec: 600,
+      },
+      ui_schema: {
+        schema_version: 'v1',
+        category: 'Commerce',
+        bounty_defaults: { payout_cents: 1200, required_proofs: 2 },
+        sections: [
+          {
+            id: 'query',
+            title: 'What to watch',
+            description: 'Describe what you want monitored or price-checked.',
+            fields: [
+              {
+                key: 'query',
+                label: 'Search query / SKU',
+                type: 'text',
+                required: true,
+                placeholder: 'Example: “RTX 4090 FE”',
+                target: 'input_spec.query',
+              },
+              {
+                key: 'max_price_usd',
+                label: 'Max price (USD)',
+                type: 'number',
+                required: false,
+                placeholder: '1999',
+                min: 0,
+                max: 1_000_000,
+                target: 'input_spec.max_price_usd',
+              },
+              {
+                key: 'sites',
+                label: 'Sites (optional)',
+                type: 'textarea',
+                required: false,
+                placeholder: 'one per line (e.g., https://example.com/search?q=...)',
+                help: 'If empty, the worker may use their default sources.',
+                format: 'lines',
+                target: 'input_spec.sites',
+              },
+            ],
+          },
+          {
+            id: 'advanced',
+            title: 'Advanced (optional)',
+            description: 'Only fill this if you need precise DOM extraction.',
+            fields: [
+              {
+                key: 'price_selector',
+                label: 'Price selector (CSS)',
+                type: 'text',
+                required: false,
+                placeholder: '.price',
+                advanced: true,
+                target: 'site_profile.price_selector',
+              },
+              {
+                key: 'stock_selector',
+                label: 'In-stock selector (CSS)',
+                type: 'text',
+                required: false,
+                placeholder: '#add-to-cart',
+                advanced: true,
+                target: 'site_profile.stock_selector',
+              },
+            ],
+          },
+        ],
+        templates: [
+          { id: 'drops_monitor', name: 'Drop monitor', preset: { max_price_usd: 0, query: 'New release', sites: '' } },
+          { id: 'price_check', name: 'Price check', preset: { query: 'Example product', max_price_usd: 999, sites: '' } },
+        ],
       },
     },
     {
@@ -349,6 +505,57 @@ export async function seedBuiltInApps() {
         },
         freshness_sla_sec: 86400,
       },
+      ui_schema: {
+        schema_version: 'v1',
+        category: 'Career',
+        bounty_defaults: { payout_cents: 800, required_proofs: 2 },
+        sections: [
+          {
+            id: 'targets',
+            title: 'Search targets',
+            description: 'Define what jobs you want returned.',
+            fields: [
+              {
+                key: 'titles',
+                label: 'Job titles (one per line)',
+                type: 'textarea',
+                required: true,
+                placeholder: 'Software Engineer\nMachine Learning Engineer',
+                format: 'lines',
+                target: 'input_spec.titles',
+              },
+              {
+                key: 'location',
+                label: 'Location',
+                type: 'text',
+                required: true,
+                placeholder: 'Remote / NYC / Bangalore',
+                target: 'input_spec.location',
+              },
+              {
+                key: 'remote_ok',
+                label: 'Remote OK',
+                type: 'boolean',
+                required: false,
+                default: true,
+                target: 'input_spec.remote_ok',
+              },
+            ],
+          },
+          {
+            id: 'filters',
+            title: 'Filters (optional)',
+            fields: [
+              { key: 'include_keywords', label: 'Include keywords', type: 'text', required: false, placeholder: 'TypeScript, LLMs', target: 'input_spec.include_keywords' },
+              { key: 'exclude_keywords', label: 'Exclude keywords', type: 'text', required: false, placeholder: 'Senior, Staff', target: 'input_spec.exclude_keywords' },
+            ],
+          },
+        ],
+        templates: [
+          { id: 'new_grad', name: 'New grad sweep', preset: { titles: 'New Grad Engineer\nJunior Engineer', location: 'Remote', remote_ok: true } },
+          { id: 'senior_remote', name: 'Senior remote', preset: { titles: 'Senior Software Engineer', location: 'Remote', remote_ok: true } },
+        ],
+      },
     },
     {
       id: 'app_travel',
@@ -372,6 +579,34 @@ export async function seedBuiltInApps() {
         },
         freshness_sla_sec: 1800,
       },
+      ui_schema: {
+        schema_version: 'v1',
+        category: 'Travel',
+        bounty_defaults: { payout_cents: 1000, required_proofs: 2 },
+        sections: [
+          {
+            id: 'route',
+            title: 'Trip',
+            fields: [
+              { key: 'origin', label: 'Origin', type: 'text', required: true, placeholder: 'SFO', target: 'input_spec.origin' },
+              { key: 'dest', label: 'Destination', type: 'text', required: true, placeholder: 'JFK', target: 'input_spec.dest' },
+            ],
+          },
+          {
+            id: 'dates',
+            title: 'Dates & budget (optional)',
+            fields: [
+              { key: 'depart_date', label: 'Depart date', type: 'date', required: false, target: 'input_spec.depart_date' },
+              { key: 'return_date', label: 'Return date', type: 'date', required: false, target: 'input_spec.return_date' },
+              { key: 'max_price_usd', label: 'Max price (USD)', type: 'number', required: false, placeholder: '500', min: 0, max: 1_000_000, target: 'input_spec.max_price_usd' },
+            ],
+          },
+        ],
+        templates: [
+          { id: 'weekend', name: 'Weekend trip', preset: { origin: 'SFO', dest: 'LAX', max_price_usd: 250 } },
+          { id: 'intl', name: 'International deal hunt', preset: { origin: 'SFO', dest: 'NRT', max_price_usd: 900 } },
+        ],
+      },
     },
     {
       id: 'app_research',
@@ -393,6 +628,35 @@ export async function seedBuiltInApps() {
           references: true,
         },
         freshness_sla_sec: 86400,
+      },
+      ui_schema: {
+        schema_version: 'v1',
+        category: 'Research',
+        bounty_defaults: { payout_cents: 2500, required_proofs: 2 },
+        sections: [
+          {
+            id: 'idea',
+            title: 'Idea',
+            description: 'Describe the idea; the worker returns a research-grade plan with citations.',
+            fields: [
+              { key: 'idea', label: 'Idea', type: 'textarea', required: true, placeholder: 'Describe your idea in plain language…', target: 'input_spec.idea' },
+              { key: 'keywords', label: 'Keywords (optional)', type: 'text', required: false, placeholder: 'LLMs, retrieval, diffusion', target: 'input_spec.keywords' },
+              { key: 'min_papers', label: 'Minimum papers', type: 'number', required: false, placeholder: '15', min: 1, max: 200, target: 'input_spec.min_papers' },
+            ],
+          },
+          {
+            id: 'constraints',
+            title: 'Constraints (optional)',
+            fields: [
+              { key: 'timeline_weeks', label: 'Timeline (weeks)', type: 'number', required: false, placeholder: '4', min: 1, max: 52, target: 'input_spec.timeline_weeks' },
+              { key: 'eval_focus', label: 'Evaluation focus', type: 'text', required: false, placeholder: 'benchmarks, ablations, user study', target: 'input_spec.eval_focus' },
+            ],
+          },
+        ],
+        templates: [
+          { id: 'paper_plan', name: 'Paper plan', preset: { min_papers: 20, timeline_weeks: 6 } },
+          { id: 'quick_survey', name: 'Quick survey', preset: { min_papers: 10, timeline_weeks: 2 } },
+        ],
       },
     },
     {
@@ -416,6 +680,27 @@ export async function seedBuiltInApps() {
         },
         freshness_sla_sec: 86400,
       },
+      ui_schema: {
+        schema_version: 'v1',
+        category: 'Developer tools',
+        bounty_defaults: { payout_cents: 2000, required_proofs: 2 },
+        sections: [
+          {
+            id: 'idea',
+            title: 'What you want to build',
+            fields: [
+              { key: 'idea', label: 'Idea / problem statement', type: 'textarea', required: true, placeholder: 'Describe the product or feature…', target: 'input_spec.idea' },
+              { key: 'languages', label: 'Languages (one per line)', type: 'textarea', required: false, placeholder: 'TypeScript\nPython', format: 'lines', target: 'input_spec.languages' },
+              { key: 'license_allow', label: 'Allowed licenses (optional)', type: 'textarea', required: false, placeholder: 'MIT\nApache-2.0', format: 'lines', target: 'input_spec.license_allow' },
+              { key: 'min_stars', label: 'Minimum stars', type: 'number', required: false, placeholder: '50', min: 0, max: 10_000_000, target: 'input_spec.min_stars' },
+            ],
+          },
+        ],
+        templates: [
+          { id: 'oss_components', name: 'Find OSS components', preset: { min_stars: 50 } },
+          { id: 'competitors', name: 'Find similar repos', preset: { min_stars: 10 } },
+        ],
+      },
     },
   ];
 
@@ -433,6 +718,7 @@ export async function seedBuiltInApps() {
         public: true,
         status: 'active',
         default_descriptor: a.default_descriptor ?? {},
+        ui_schema: (a as any).ui_schema ?? {},
         created_at: now,
         updated_at: now,
       } satisfies Selectable<AppsTable>)
@@ -446,6 +732,7 @@ export async function seedBuiltInApps() {
           public: true,
           status: 'active',
           default_descriptor: a.default_descriptor ?? {},
+          ui_schema: (a as any).ui_schema ?? {},
           updated_at: now,
         })
       )
@@ -559,11 +846,12 @@ async function workerDuplicateRate(workerId: string, window = 100): Promise<numb
 
 export async function findClaimableJob(
   worker: Worker,
-  opts: { capabilityTag?: string; supportedCapabilityTags?: string[]; minPayoutCents?: number; taskType?: string } = {}
+  opts: { capabilityTag?: string; supportedCapabilityTags?: string[]; minPayoutCents?: number; taskType?: string; excludeJobIds?: string[] } = {}
 ): Promise<{ job: Job; bounty: Bounty } | undefined> {
   const now = new Date();
   const rep = await expectedPassRate(worker.id);
   const dupRate = await workerDuplicateRate(worker.id);
+  const excludeSet = opts.excludeJobIds && opts.excludeJobIds.length ? new Set(opts.excludeJobIds) : null;
 
   let q = db
     .selectFrom('jobs')
@@ -621,11 +909,17 @@ export async function findClaimableJob(
     );
   }
 
+  if (opts.excludeJobIds && opts.excludeJobIds.length) {
+    const uniq = Array.from(new Set(opts.excludeJobIds)).slice(0, 50);
+    q = q.where('jobs.id', 'not in', uniq);
+  }
+
   const candidates = await q.execute();
 
   let best: { score: number; job: Job; bounty: Bounty } | undefined;
 
   for (const row of candidates as any[]) {
+    if (excludeSet && excludeSet.has(String(row.job_id))) continue;
     const job: Job = {
       id: row.job_id,
       bountyId: row.job_bounty_id,
@@ -765,6 +1059,24 @@ export async function leaseJob(jobId: string, workerId: string, ttlMs: number): 
   } finally {
     client.release();
   }
+}
+
+export async function releaseJobLease(jobId: string, workerId: string, leaseNonce: string): Promise<Job | undefined> {
+  const row = await db
+    .updateTable('jobs')
+    .set({
+      status: 'open',
+      lease_worker_id: null,
+      lease_expires_at: null,
+      lease_nonce: null,
+    })
+    .where('id', '=', jobId)
+    .where('lease_worker_id', '=', workerId)
+    .where('lease_nonce', '=', leaseNonce)
+    .where('status', '=', 'claimed')
+    .returningAll()
+    .executeTakeFirst();
+  return row ? jobFromRow(row as any) : undefined;
 }
 
 export async function getJob(jobId: string): Promise<Job | undefined> {
@@ -1579,6 +1891,7 @@ export async function createOrgApp(
     dashboardUrl?: string | null;
     public?: boolean;
     defaultDescriptor?: Record<string, unknown>;
+    uiSchema?: Record<string, unknown>;
   }
 ): Promise<App> {
   const id = nanoid(12);
@@ -1596,6 +1909,7 @@ export async function createOrgApp(
       public: input.public ?? true,
       status: 'active',
       default_descriptor: input.defaultDescriptor ?? {},
+      ui_schema: input.uiSchema ?? {},
       created_at: now,
       updated_at: now,
     } satisfies Selectable<AppsTable>)
@@ -1617,6 +1931,7 @@ export async function updateOrgApp(
     public: boolean;
     status: 'active' | 'disabled';
     defaultDescriptor: Record<string, unknown>;
+    uiSchema: Record<string, unknown>;
   }>
 ): Promise<App | undefined> {
   const now = new Date();
@@ -1629,6 +1944,7 @@ export async function updateOrgApp(
   if (patch.public !== undefined) update.public = patch.public;
   if (patch.status !== undefined) update.status = patch.status;
   if (patch.defaultDescriptor !== undefined) update.default_descriptor = patch.defaultDescriptor;
+  if (patch.uiSchema !== undefined) update.ui_schema = patch.uiSchema;
 
   const row = await db
     .updateTable('apps')
@@ -2240,9 +2556,10 @@ export async function listDisputesByOrg(
   const limit = Math.max(1, Math.min(200, Number(opts.limit ?? 50)));
   const offset = (page - 1) * limit;
 
-  let q = db.selectFrom('disputes').selectAll().where('org_id', '=', orgId);
+  // IMPORTANT: keep the count query aggregate-only (no `selectAll`) to avoid invalid SQL.
+  let q = db.selectFrom('disputes').where('org_id', '=', orgId);
   if (opts.status) q = q.where('status', '=', opts.status);
-  const rows = await q.orderBy('created_at', 'desc').offset(offset).limit(limit).execute();
+  const rows = await q.selectAll().orderBy('created_at', 'desc').offset(offset).limit(limit).execute();
   const totalRow = await q.select(({ fn }) => fn.countAll<number>().as('c')).executeTakeFirst();
   return { rows: rows.map(disputeFromRow), total: Number(totalRow?.c ?? 0) };
 }
@@ -2254,9 +2571,10 @@ export async function listDisputesAdmin(
   const limit = Math.max(1, Math.min(200, Number(opts.limit ?? 50)));
   const offset = (page - 1) * limit;
 
-  let q = db.selectFrom('disputes').selectAll();
+  // IMPORTANT: keep the count query aggregate-only (no `selectAll`) to avoid invalid SQL.
+  let q = db.selectFrom('disputes');
   if (opts.status) q = q.where('status', '=', opts.status);
-  const rows = await q.orderBy('created_at', 'desc').offset(offset).limit(limit).execute();
+  const rows = await q.selectAll().orderBy('created_at', 'desc').offset(offset).limit(limit).execute();
   const totalRow = await q.select(({ fn }) => fn.countAll<number>().as('c')).executeTakeFirst();
   return { rows: rows.map(disputeFromRow), total: Number(totalRow?.c ?? 0) };
 }
@@ -2820,4 +3138,243 @@ export async function listAllCorsAllowOrigins(): Promise<string[]> {
     `
   );
   return res.rows.map((r) => String(r.origin)).filter(Boolean);
+}
+
+export type ResolveResult = { found: boolean; type?: string; meta?: Record<string, any> };
+
+function normalizeResolveId(id: string): string {
+  const s = String(id ?? '').trim();
+  // Guard: prevent log spam / accidental large queries.
+  if (s.length > 200) return s.slice(0, 200);
+  return s;
+}
+
+export async function resolveIdAdmin(idRaw: string): Promise<ResolveResult> {
+  const id = normalizeResolveId(idRaw);
+  if (!id) return { found: false };
+
+  const app = await db.selectFrom('apps').select(['id', 'slug', 'task_type']).where('id', '=', id).executeTakeFirst();
+  if (app) return { found: true, type: 'app', meta: { slug: app.slug, taskType: app.task_type } };
+
+  const bounty = await db.selectFrom('bounties').select(['id', 'org_id', 'title']).where('id', '=', id).executeTakeFirst();
+  if (bounty) return { found: true, type: 'bounty', meta: { orgId: bounty.org_id, title: bounty.title } };
+
+  const job = await db.selectFrom('jobs').select(['id', 'bounty_id', 'status']).where('id', '=', id).executeTakeFirst();
+  if (job) return { found: true, type: 'job', meta: { bountyId: job.bounty_id, status: job.status } };
+
+  const sub = await db.selectFrom('submissions').select(['id', 'job_id', 'worker_id', 'status']).where('id', '=', id).executeTakeFirst();
+  if (sub) return { found: true, type: 'submission', meta: { jobId: sub.job_id, workerId: sub.worker_id, status: sub.status } };
+
+  const payout = await db
+    .selectFrom('payouts')
+    .select(['id', 'submission_id', 'worker_id', 'status', 'blocked_reason', 'hold_until'])
+    .where('id', '=', id)
+    .executeTakeFirst();
+  if (payout)
+    return {
+      found: true,
+      type: 'payout',
+      meta: {
+        submissionId: payout.submission_id,
+        workerId: payout.worker_id,
+        status: payout.status,
+        blockedReason: payout.blocked_reason ?? null,
+        holdUntil: payout.hold_until ? (payout.hold_until as any as Date).toISOString() : null,
+      },
+    };
+
+  const dispute = await db
+    .selectFrom('disputes')
+    .select(['id', 'org_id', 'submission_id', 'payout_id', 'status', 'resolution'])
+    .where('id', '=', id)
+    .executeTakeFirst();
+  if (dispute)
+    return {
+      found: true,
+      type: 'dispute',
+      meta: {
+        orgId: dispute.org_id,
+        submissionId: dispute.submission_id ?? null,
+        payoutId: dispute.payout_id ?? null,
+        status: dispute.status,
+        resolution: dispute.resolution ?? null,
+      },
+    };
+
+  const artifact = await db
+    .selectFrom('artifacts')
+    .select(['id', 'submission_id', 'job_id', 'worker_id', 'kind', 'status'])
+    .where('id', '=', id)
+    .executeTakeFirst();
+  if (artifact)
+    return {
+      found: true,
+      type: 'artifact',
+      meta: {
+        submissionId: artifact.submission_id ?? null,
+        jobId: artifact.job_id ?? null,
+        workerId: artifact.worker_id ?? null,
+        kind: artifact.kind,
+        status: artifact.status,
+      },
+    };
+
+  const origin = await db.selectFrom('origins').select(['id', 'org_id', 'origin', 'status']).where('id', '=', id).executeTakeFirst();
+  if (origin) return { found: true, type: 'origin', meta: { orgId: origin.org_id, origin: origin.origin, status: origin.status } };
+
+  const ver = await db
+    .selectFrom('verifications')
+    .select(['id', 'submission_id', 'attempt_no', 'status', 'verdict'])
+    .where('id', '=', id)
+    .executeTakeFirst();
+  if (ver)
+    return {
+      found: true,
+      type: 'verification',
+      meta: { submissionId: ver.submission_id, attemptNo: ver.attempt_no, status: ver.status, verdict: ver.verdict ?? null },
+    };
+
+  const worker = await db.selectFrom('workers').select(['id', 'display_name', 'status']).where('id', '=', id).executeTakeFirst();
+  if (worker) return { found: true, type: 'worker', meta: { displayName: worker.display_name ?? null, status: worker.status } };
+
+  const alarm = await db.selectFrom('alarm_notifications').select(['id', 'environment', 'alarm_name']).where('id', '=', id).executeTakeFirst();
+  if (alarm) return { found: true, type: 'alarm_notification', meta: { environment: alarm.environment, alarmName: alarm.alarm_name ?? null } };
+
+  return { found: false };
+}
+
+export async function resolveIdOrg(orgId: string, idRaw: string): Promise<ResolveResult> {
+  const id = normalizeResolveId(idRaw);
+  if (!id) return { found: false };
+
+  const app = await db.selectFrom('apps').select(['id', 'slug', 'task_type']).where('id', '=', id).where('owner_org_id', '=', orgId).executeTakeFirst();
+  if (app) return { found: true, type: 'app', meta: { slug: app.slug, taskType: app.task_type } };
+
+  const origin = await db.selectFrom('origins').select(['id', 'origin', 'status']).where('id', '=', id).where('org_id', '=', orgId).executeTakeFirst();
+  if (origin) return { found: true, type: 'origin', meta: { origin: origin.origin, status: origin.status } };
+
+  const bounty = await db.selectFrom('bounties').select(['id', 'title', 'status']).where('id', '=', id).where('org_id', '=', orgId).executeTakeFirst();
+  if (bounty) return { found: true, type: 'bounty', meta: { title: bounty.title, status: bounty.status } };
+
+  const job = await db
+    .selectFrom('jobs as j')
+    .innerJoin('bounties as b', 'b.id', 'j.bounty_id')
+    .select(['j.id as id', 'j.bounty_id as bounty_id', 'j.status as status'])
+    .where('j.id', '=', id)
+    .where('b.org_id', '=', orgId)
+    .executeTakeFirst();
+  if (job) return { found: true, type: 'job', meta: { bountyId: (job as any).bounty_id, status: (job as any).status } };
+
+  const sub = await db
+    .selectFrom('submissions as s')
+    .innerJoin('jobs as j', 'j.id', 's.job_id')
+    .innerJoin('bounties as b', 'b.id', 'j.bounty_id')
+    .select(['s.id as id', 's.job_id as job_id', 's.worker_id as worker_id', 's.status as status'])
+    .where('s.id', '=', id)
+    .where('b.org_id', '=', orgId)
+    .executeTakeFirst();
+  if (sub) return { found: true, type: 'submission', meta: { jobId: (sub as any).job_id, workerId: (sub as any).worker_id, status: (sub as any).status } };
+
+  const payout = await db
+    .selectFrom('payouts as p')
+    .innerJoin('submissions as s', 's.id', 'p.submission_id')
+    .innerJoin('jobs as j', 'j.id', 's.job_id')
+    .innerJoin('bounties as b', 'b.id', 'j.bounty_id')
+    .select(['p.id as id', 'p.status as status', 'p.blocked_reason as blocked_reason', 'p.hold_until as hold_until'])
+    .where('p.id', '=', id)
+    .where('b.org_id', '=', orgId)
+    .executeTakeFirst();
+  if (payout)
+    return {
+      found: true,
+      type: 'payout',
+      meta: {
+        status: (payout as any).status,
+        blockedReason: (payout as any).blocked_reason ?? null,
+        holdUntil: (payout as any).hold_until ? ((payout as any).hold_until as Date).toISOString() : null,
+      },
+    };
+
+  const dispute = await db
+    .selectFrom('disputes')
+    .select(['id', 'submission_id', 'payout_id', 'status', 'resolution'])
+    .where('id', '=', id)
+    .where('org_id', '=', orgId)
+    .executeTakeFirst();
+  if (dispute)
+    return {
+      found: true,
+      type: 'dispute',
+      meta: {
+        submissionId: dispute.submission_id ?? null,
+        payoutId: dispute.payout_id ?? null,
+        status: dispute.status,
+        resolution: dispute.resolution ?? null,
+      },
+    };
+
+  const artifact = await db
+    .selectFrom('artifacts as a')
+    .innerJoin('jobs as j', (jb) => jb.onRef('j.id', '=', 'a.job_id'))
+    .innerJoin('bounties as b', 'b.id', 'j.bounty_id')
+    .select(['a.id as id', 'a.kind as kind', 'a.status as status'])
+    .where('a.id', '=', id)
+    .where('b.org_id', '=', orgId)
+    .executeTakeFirst();
+  if (artifact) return { found: true, type: 'artifact', meta: { kind: (artifact as any).kind, status: (artifact as any).status } };
+
+  return { found: false };
+}
+
+export async function resolveIdWorker(workerId: string, idRaw: string): Promise<ResolveResult> {
+  const id = normalizeResolveId(idRaw);
+  if (!id) return { found: false };
+
+  if (id === workerId) {
+    return { found: true, type: 'worker', meta: { workerId } };
+  }
+
+  const sub = await db.selectFrom('submissions').select(['id', 'job_id', 'status']).where('id', '=', id).where('worker_id', '=', workerId).executeTakeFirst();
+  if (sub) return { found: true, type: 'submission', meta: { jobId: sub.job_id, status: sub.status } };
+
+  const payout = await db.selectFrom('payouts').select(['id', 'status', 'blocked_reason', 'hold_until']).where('id', '=', id).where('worker_id', '=', workerId).executeTakeFirst();
+  if (payout)
+    return {
+      found: true,
+      type: 'payout',
+      meta: {
+        status: payout.status,
+        blockedReason: payout.blocked_reason ?? null,
+        holdUntil: payout.hold_until ? (payout.hold_until as any as Date).toISOString() : null,
+      },
+    };
+
+  const artifact = await db
+    .selectFrom('artifacts')
+    .select(['id', 'kind', 'status'])
+    .where('id', '=', id)
+    .where('worker_id', '=', workerId)
+    .executeTakeFirst();
+  if (artifact) return { found: true, type: 'artifact', meta: { kind: artifact.kind, status: artifact.status } };
+
+  const leasedJob = await db
+    .selectFrom('jobs')
+    .select(['id', 'bounty_id', 'status'])
+    .where('id', '=', id)
+    .where('lease_worker_id', '=', workerId)
+    .executeTakeFirst();
+  if (leasedJob) return { found: true, type: 'job', meta: { bountyId: leasedJob.bounty_id, status: leasedJob.status } };
+
+  const hasSub = await db
+    .selectFrom('submissions')
+    .select(['id'])
+    .where('job_id', '=', id)
+    .where('worker_id', '=', workerId)
+    .executeTakeFirst();
+  if (hasSub) {
+    const job = await db.selectFrom('jobs').select(['id', 'bounty_id', 'status']).where('id', '=', id).executeTakeFirst();
+    if (job) return { found: true, type: 'job', meta: { bountyId: job.bounty_id, status: job.status } };
+  }
+
+  return { found: false };
 }

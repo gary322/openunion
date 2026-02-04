@@ -25,6 +25,18 @@ function setToken(token) {
   $('token').value = token;
 }
 
+function setBadge(id, text) {
+  const el = $(id);
+  if (!el) return;
+  el.textContent = String(text ?? '');
+}
+
+function setStepDone(id, done) {
+  const el = $(id);
+  if (!el) return;
+  el.classList.toggle('done', Boolean(done));
+}
+
 async function api(path, { method = 'GET', token, body } = {}) {
   const headers = { 'Content-Type': 'application/json' };
   if (token) headers['Authorization'] = `Bearer ${token}`;
@@ -50,6 +62,55 @@ async function sha256Hex(file) {
 let lastNext = null;
 let lastClaim = null;
 let lastArtifact = null;
+let extraArtifacts = [];
+
+let requiredSlots = [];
+let activeSlotIdx = null;
+let scanPollTimers = new Map();
+
+async function refreshReadyStatus() {
+  const token = $('token').value.trim() || getToken();
+  const hasToken = Boolean(token);
+  setStepDone('stepWorkerToken', hasToken);
+
+  let payoutOk = false;
+  if (hasToken) {
+    try {
+      const me = await api('/api/worker/me', { token });
+      payoutOk = Boolean(me.res.ok && me.json?.payout?.verifiedAt);
+    } catch {
+      payoutOk = false;
+    }
+  }
+
+  setStepDone('stepWorkerPayout', payoutOk);
+  const remaining = (hasToken ? 0 : 1) + (payoutOk ? 0 : 1);
+  setBadge('navBadgeReady', String(remaining));
+}
+
+function currentJobEnvelope() {
+  return lastClaim || lastNext;
+}
+
+function currentJobSpec() {
+  return currentJobEnvelope()?.data?.job || null;
+}
+
+function setJobSummary(text) {
+  const el = $('jobSummary');
+  if (!el) return;
+  el.textContent = String(text ?? '');
+}
+
+function clearScanPoll(slotId) {
+  const t = scanPollTimers.get(slotId);
+  if (t) clearTimeout(t);
+  scanPollTimers.delete(slotId);
+}
+
+function clearAllScanPolls() {
+  for (const k of Array.from(scanPollTimers.keys())) clearScanPoll(k);
+}
 
 function requireTokenUI() {
   const token = $('token').value.trim();
@@ -69,6 +130,213 @@ function requireBountyIdUI() {
   return bountyId;
 }
 
+function expandRequiredArtifactSpecs(requiredArtifacts) {
+  const slots = [];
+  const specs = Array.isArray(requiredArtifacts) ? requiredArtifacts : [];
+  for (const spec of specs) {
+    const kind = String(spec?.kind ?? '').trim();
+    if (!kind) continue;
+    const count = Number.isFinite(Number(spec?.count)) ? Math.max(1, Math.min(20, Number(spec.count))) : 1;
+    for (let i = 1; i <= count; i++) {
+      const label =
+        String(spec?.label ?? '').trim() ||
+        (String(spec?.label_prefix ?? '').trim()
+          ? count > 1
+            ? `${String(spec.label_prefix).trim()}-${i}`
+            : String(spec.label_prefix).trim()
+          : count > 1
+            ? `${kind}-${i}`
+            : kind);
+      slots.push({
+        id: `${kind}:${label}:${i}:${Math.random().toString(16).slice(2)}`,
+        kind,
+        label,
+        artifactId: null,
+        ref: null,
+        scanStatus: null,
+        scanReason: null,
+      });
+    }
+  }
+  return slots;
+}
+
+function buildRequiredOutputsFromJob() {
+  clearAllScanPolls();
+  requiredSlots = [];
+  activeSlotIdx = null;
+
+  const spec = currentJobSpec();
+  const td = spec?.taskDescriptor;
+  const required = td?.output_spec?.required_artifacts;
+  const slots = expandRequiredArtifactSpecs(required);
+  requiredSlots = slots;
+  renderRequiredOutputs();
+}
+
+function renderRequiredOutputs() {
+  const wrap = $('requiredOutputs');
+  const status = $('requiredOutputsStatus');
+  if (!wrap || !status) return;
+
+  if (!requiredSlots.length) {
+    const adv = $('advancedUploads');
+    if (adv) adv.open = true;
+    wrap.innerHTML =
+      '<div class="pw-muted">No structured output requirements found for this job. Use "Advanced: upload extra artifacts" or follow the job spec.</div>';
+    status.textContent = '';
+    updateSubmitEnabled();
+    return;
+  }
+
+  const adv = $('advancedUploads');
+  if (adv) adv.open = false;
+
+  const rows = requiredSlots
+    .map((s, idx) => {
+      const scan = String(s.scanStatus ?? 'pending');
+      const reason = s.scanReason ? ` (${String(s.scanReason).slice(0, 90)})` : '';
+      const actionLabel = s.ref ? 'Replace file' : 'Upload file';
+      const actionDisabled = s.scanStatus === 'blocked' ? 'disabled' : '';
+      return `
+        <tr>
+          <td class="pw-mono">${escapeHtml(s.kind)}</td>
+          <td>${escapeHtml(s.label)}</td>
+          <td class="pw-mono">${escapeHtml(scan)}${escapeHtml(reason)}</td>
+          <td>
+            <button class="pw-btn" data-slot="${idx}" ${actionDisabled}>${actionLabel}</button>
+          </td>
+        </tr>
+      `;
+    })
+    .join('');
+
+  wrap.innerHTML = `
+    <div class="pw-scroll">
+      <table class="pw-table">
+        <thead>
+          <tr>
+            <th>Kind</th>
+            <th>Label</th>
+            <th>Status</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  `;
+
+  const done = requiredSlots.filter((s) => s.scanStatus === 'scanned' || s.scanStatus === 'accepted').length;
+  const blocked = requiredSlots.filter((s) => s.scanStatus === 'blocked').length;
+  const total = requiredSlots.length;
+  status.textContent = blocked ? `Blocked: ${blocked}. Ready: ${done}/${total}.` : `Ready: ${done}/${total}.`;
+
+  updateSubmitEnabled();
+}
+
+function escapeHtml(s) {
+  return String(s ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;');
+}
+
+function canSubmitNow() {
+  if (!requiredSlots.length) return Boolean(lastArtifact || extraArtifacts.length);
+  return requiredSlots.every((s) => s.scanStatus === 'scanned' || s.scanStatus === 'accepted');
+}
+
+function updateSubmitEnabled() {
+  const btn = $('btnSubmit');
+  if (!btn) return;
+  btn.disabled = !canSubmitNow();
+}
+
+async function fetchArtifactStatus(token, artifactId) {
+  const { res, json } = await api(`/api/artifacts/${encodeURIComponent(artifactId)}`, { token });
+  if (!res.ok) return { status: null, reason: null };
+  return { status: json?.status ?? null, reason: json?.scanReason ?? null };
+}
+
+async function pollSlotStatus(slotIdx) {
+  const token = requireTokenUI();
+  const slot = requiredSlots[slotIdx];
+  if (!slot || !slot.artifactId) return;
+
+  clearScanPoll(slot.id);
+  const tick = async () => {
+    try {
+      const { status, reason } = await fetchArtifactStatus(token, slot.artifactId);
+      if (status) {
+        slot.scanStatus = status;
+        slot.scanReason = reason;
+        renderRequiredOutputs();
+      }
+      if (status === 'scanned' || status === 'accepted' || status === 'blocked') {
+        clearScanPoll(slot.id);
+        return;
+      }
+    } catch {
+      // ignore
+    }
+    const t = setTimeout(tick, 1200);
+    scanPollTimers.set(slot.id, t);
+  };
+  const t = setTimeout(tick, 200);
+  scanPollTimers.set(slot.id, t);
+}
+
+async function uploadFileForSlot(slotIdx, file) {
+  const token = requireTokenUI();
+  const jobId = requireJobIdUI();
+  const slot = requiredSlots[slotIdx];
+  if (!slot) throw new Error('invalid slot');
+
+  const { res: presRes, json: presJson } = await api('/api/uploads/presign', {
+    method: 'POST',
+    token,
+    body: {
+      jobId,
+      files: [{ filename: file.name, contentType: file.type || 'application/octet-stream', sizeBytes: file.size }],
+    },
+  });
+  if (!presRes.ok) throw new Error(`presign failed (${presRes.status})`);
+
+  const upload = presJson.uploads[0];
+  const putHeaders = { ...(upload.headers || {}) };
+  if (String(upload.url || '').includes('/api/uploads/local/')) {
+    putHeaders['Authorization'] = `Bearer ${token}`;
+  }
+  const putRes = await fetch(upload.url, { method: 'PUT', headers: putHeaders, body: file });
+  if (!putRes.ok) throw new Error(`upload failed (${putRes.status})`);
+
+  const sha = await sha256Hex(file);
+  try {
+    await api('/api/uploads/complete', { method: 'POST', token, body: { artifactId: upload.artifactId, sha256: sha, sizeBytes: file.size } });
+  } catch {
+    // ignore
+  }
+
+  const ref = {
+    kind: slot.kind,
+    label: slot.label,
+    sha256: sha,
+    url: upload.finalUrl,
+    sizeBytes: file.size,
+    contentType: file.type || 'application/octet-stream',
+  };
+
+  slot.artifactId = upload.artifactId;
+  slot.ref = ref;
+  slot.scanStatus = 'uploaded';
+  slot.scanReason = null;
+  renderRequiredOutputs();
+  await pollSlotStatus(slotIdx);
+}
+
 async function onRegister() {
   setStatus('authStatus', '', null);
   const displayName = $('regName').value.trim();
@@ -83,6 +351,7 @@ async function onRegister() {
   }
   setToken(json.token);
   setStatus('authStatus', `Registered workerId=${json.workerId}`, 'good');
+  refreshReadyStatus().catch(() => {});
 }
 
 async function onSaveToken() {
@@ -91,6 +360,7 @@ async function onSaveToken() {
   if (!token) return setStatus('authStatus', 'Missing token', 'bad');
   setToken(token);
   setStatus('authStatus', 'Token saved', 'good');
+  refreshReadyStatus().catch(() => {});
 }
 
 async function onMe() {
@@ -102,12 +372,19 @@ async function onMe() {
     return;
   }
   setStatus('authStatus', `Hello worker ${json.workerId}`, 'good');
+  refreshReadyStatus().catch(() => {});
 }
 
 async function onNext() {
   setStatus('jobStatus', '', null);
   const token = requireTokenUI();
-  const { res, json } = await api('/api/jobs/next', { token });
+  const qs = new URLSearchParams();
+  const minPayout = $('minPayoutCents')?.value?.trim?.() || '';
+  const capTag = $('capabilityTag')?.value?.trim?.() || '';
+  if (minPayout) qs.set('min_payout_cents', minPayout);
+  if (capTag) qs.set('capability_tag', capTag);
+  const path = qs.toString() ? `/api/jobs/next?${qs.toString()}` : '/api/jobs/next';
+  const { res, json } = await api(path, { token });
   lastNext = json;
   lastClaim = null;
   $('jobOut').textContent = pretty(json);
@@ -116,6 +393,11 @@ async function onNext() {
     return;
   }
   setStatus('jobStatus', `state=${json.state}`, 'good');
+  const spec = json?.data?.job;
+  if (json?.state === 'claimable' && spec?.title) setJobSummary(`Loaded: ${spec.title}. Claim it to start.`);
+  else if (json?.state === 'idle') setJobSummary('No jobs available right now.');
+  else setJobSummary(`State: ${String(json?.state ?? '')}`);
+  buildRequiredOutputsFromJob();
 }
 
 async function onClaim() {
@@ -130,6 +412,9 @@ async function onClaim() {
     return;
   }
   setStatus('jobStatus', `claimed leaseNonce=${json.data?.leaseNonce || ''}`, 'good');
+  const spec = json?.data?.job;
+  if (spec?.title) setJobSummary(`Active: ${spec.title}. Upload required outputs, then submit.`);
+  buildRequiredOutputsFromJob();
 }
 
 async function onUpload() {
@@ -188,9 +473,11 @@ async function onUpload() {
     sizeBytes: file.size,
     contentType: file.type || 'application/octet-stream',
   };
+  extraArtifacts.push(lastArtifact);
 
   $('artifactOut').textContent = pretty(lastArtifact);
   setStatus('uploadStatus', `uploaded artifactId=${upload.artifactId}`, 'good');
+  updateSubmitEnabled();
 }
 
 async function onSubmit() {
@@ -198,9 +485,17 @@ async function onSubmit() {
   const token = requireTokenUI();
   const jobId = requireJobIdUI();
   const bountyId = requireBountyIdUI();
-  const workerId = lastClaim?.data?.job?.worker?.workerId; // not provided; we’ll fetch from /me
 
-  if (!lastArtifact) {
+  if (!canSubmitNow()) {
+    setStatus('submitStatus', 'Upload all required outputs (and wait for scan) before submitting', 'bad');
+    return;
+  }
+
+  const artifacts = [
+    ...requiredSlots.map((s) => s.ref).filter(Boolean),
+    ...extraArtifacts,
+  ].filter(Boolean);
+  if (!artifacts.length) {
     setStatus('submitStatus', 'Upload at least one artifact first', 'bad');
     return;
   }
@@ -241,11 +536,11 @@ async function onSubmit() {
       reproConfidence: 'high',
     },
     reproSteps: steps.length ? steps : ['repro'],
-    artifacts: [lastArtifact],
+    artifacts,
     suggestedChange: { type: 'bugfix', text: 'Fix the issue' },
   };
 
-  const { res, json } = await api(`/api/jobs/${jobId}/submit`, { method: 'POST', token, body: { manifest, artifactIndex: [lastArtifact] } });
+  const { res, json } = await api(`/api/jobs/${jobId}/submit`, { method: 'POST', token, body: { manifest, artifactIndex: artifacts } });
   $('submitOut').textContent = pretty(json);
   if (!res.ok) {
     setStatus('submitStatus', `submit failed (${res.status})`, 'bad');
@@ -305,6 +600,7 @@ async function onSetPayoutAddress() {
     return;
   }
   setStatus('payoutAddrStatus', 'verified', 'good');
+  refreshReadyStatus().catch(() => {});
 }
 
 $('btnRegister').addEventListener('click', () => onRegister().catch((e) => setStatus('authStatus', String(e), 'bad')));
@@ -318,5 +614,45 @@ $('btnPayoutMessage').addEventListener('click', () => onPayoutMessage().catch((e
 $('btnSetPayoutAddress').addEventListener('click', () => onSetPayoutAddress().catch((e) => setStatus('payoutAddrStatus', String(e), 'bad')));
 $('btnListPayouts').addEventListener('click', () => onListPayouts().catch((e) => setStatus('payoutStatusMsg', String(e), 'bad')));
 
+// Required outputs: event delegation for per-slot uploads.
+const reqWrap = $('requiredOutputs');
+if (reqWrap) {
+  reqWrap.addEventListener('click', (ev) => {
+    const target = ev.target;
+    const btn = target && typeof target.closest === 'function' ? target.closest('button[data-slot]') : null;
+    if (!btn) return;
+    const idx = Number(btn.getAttribute('data-slot'));
+    if (!Number.isFinite(idx)) return;
+    activeSlotIdx = idx;
+    const f = $('slotFile');
+    if (f) {
+      f.value = '';
+      f.click();
+    }
+  });
+}
+
+const slotFile = $('slotFile');
+if (slotFile) {
+  slotFile.addEventListener('change', async () => {
+    if (activeSlotIdx === null || activeSlotIdx === undefined) return;
+    const file = slotFile.files?.[0];
+    if (!file) return;
+    try {
+      setStatus('requiredOutputsStatus', 'Uploading...', null);
+      await uploadFileForSlot(activeSlotIdx, file);
+      setStatus('requiredOutputsStatus', 'Uploaded. Waiting for scan...', 'good');
+    } catch (err) {
+      setStatus('requiredOutputsStatus', String(err?.message ?? err), 'bad');
+    } finally {
+      activeSlotIdx = null;
+      // Render may have overwritten status; keep submit button in sync.
+      updateSubmitEnabled();
+    }
+  });
+}
+
 // Init
 setToken(getToken());
+refreshReadyStatus().catch(() => {});
+buildRequiredOutputsFromJob();

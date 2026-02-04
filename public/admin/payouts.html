@@ -6,7 +6,7 @@
     <title>Proofwork • Admin • Payouts</title>
     <link rel="stylesheet" href="/ui/ui.css" />
   </head>
-  <body class="theme-admin">
+  <body class="theme-admin" data-portal="admin">
     <header class="pw-topbar">
       <div class="pw-topbar-inner">
         <a class="pw-brand" href="/apps/" aria-label="Proofwork home">
@@ -26,7 +26,7 @@
     <main class="pw-container">
       <section class="pw-hero">
         <h1>Payouts</h1>
-        <p>Admin reconciliation tools.</p>
+        <p>Triage, retry, and break-glass reconcile payouts - without touching the DB.</p>
         <div class="pw-hero-actions">
           <div class="pw-badge">
             Shortcuts: <a href="/admin/index.html">Admin console</a> · <a href="/admin/disputes.html">Disputes</a> · <a href="/admin/apps.html">Apps</a>
@@ -38,107 +38,129 @@
         </div>
       </section>
 
-      <div class="pw-grid">
-        <div class="pw-card">
-          <div class="pw-card-title">
-            <h2>Auth</h2>
-            <span class="pw-kicker">Admin token</span>
-          </div>
-          <div class="pw-field">
-            <label>Admin token</label>
-            <input class="pw-input" id="adminToken" placeholder="pw_adm_internal" />
-          </div>
-          <div class="pw-actions">
-            <button class="pw-btn primary" id="btnSave">Save token</button>
-          </div>
-          <div id="authStatus" class="pw-status" role="status"></div>
-        </div>
+      <div class="pw-console">
+        <aside class="pw-sidebar" aria-label="Admin navigation">
+          <nav class="pw-sidenav">
+            <div class="pw-sidenav-title">Ops</div>
+            <a href="/admin/">Overview</a>
+            <a href="/admin/alerts.html">Alerts</a>
+            <a href="/admin/apps.html">Apps dashboard</a>
+            <div class="pw-sidenav-title">Finance</div>
+            <a href="/admin/payouts.html" aria-current="page">Payouts</a>
+            <a href="/admin/disputes.html">Disputes</a>
+            <div class="pw-sidenav-title">Governance</div>
+            <a href="/admin/artifacts.html">Artifacts</a>
+            <a href="/admin/blocked-domains.html">Blocked domains</a>
+            <div class="pw-sidenav-title">Tools</div>
+            <a href="/admin/descriptor-builder.html">Descriptor builder</a>
+            <a href="/admin/explorer.html">Explorer</a>
+          </nav>
+        </aside>
 
-        <div class="pw-card">
-          <div class="pw-card-title">
-            <h2>List</h2>
-            <span class="pw-kicker">Filters</span>
-          </div>
-          <div class="pw-row">
-            <div class="pw-field">
-              <label>Status</label>
-              <input class="pw-input" id="statusFilter" placeholder="pending|paid|failed|refunded" />
+        <section class="pw-stack" aria-label="Payouts tools">
+          <div class="pw-grid">
+            <div class="pw-card">
+              <div class="pw-card-title">
+                <h2>Auth</h2>
+                <span class="pw-kicker">Admin token</span>
+              </div>
+              <div class="pw-field">
+                <label>Admin token</label>
+                <input class="pw-input" id="adminToken" placeholder="pw_adm_internal" />
+              </div>
+              <div class="pw-actions">
+                <button class="pw-btn primary" id="btnSave">Save token</button>
+              </div>
+              <div id="authStatus" class="pw-status" role="status"></div>
             </div>
-            <div class="pw-field">
-              <label>Org ID (optional)</label>
-              <input class="pw-input" id="orgIdFilter" placeholder="org_..." />
-            </div>
-          </div>
-          <div class="pw-actions">
-            <button class="pw-btn primary" id="btnList">GET /api/admin/payouts</button>
-          </div>
-          <div id="listStatus" class="pw-status" role="status"></div>
-        </div>
 
-        <div class="pw-card">
-          <div class="pw-card-title">
-            <h2>Retry payout</h2>
-            <span class="pw-kicker">Requeue execution</span>
-          </div>
-          <div class="pw-field">
-            <label>Payout ID</label>
-            <input class="pw-input" id="payoutId" placeholder="payoutId" />
-          </div>
-          <div class="pw-actions">
-            <button class="pw-btn primary" id="btnRetry">POST /api/admin/payouts/:id/retry</button>
-          </div>
-          <div id="retryStatus" class="pw-status" role="status"></div>
-        </div>
+            <div class="pw-card">
+              <div class="pw-card-title">
+                <h2>List payouts</h2>
+                <span class="pw-kicker">Filters</span>
+              </div>
+              <div class="pw-row">
+                <div class="pw-field">
+                  <label>Status</label>
+                  <input class="pw-input" id="statusFilter" placeholder="pending|paid|failed|refunded" />
+                </div>
+                <div class="pw-field">
+                  <label>Org ID (optional)</label>
+                  <input class="pw-input" id="orgIdFilter" placeholder="org_..." />
+                </div>
+              </div>
+              <div class="pw-actions">
+                <button class="pw-btn primary" id="btnList">Refresh list</button>
+              </div>
+              <div id="listStatus" class="pw-status" role="status"></div>
+            </div>
 
-        <div class="pw-card">
-          <div class="pw-card-title">
-            <h2>Mark payout status</h2>
-            <span class="pw-kicker">Break‑glass</span>
-          </div>
-          <div class="pw-field">
-            <label>Payout ID</label>
-            <input class="pw-input" id="markPayoutId" placeholder="payoutId" />
-          </div>
-          <div class="pw-row">
-            <div class="pw-field">
-              <label>Status</label>
-              <select class="pw-select" id="markStatus">
-                <option value="paid">paid</option>
-                <option value="failed">failed</option>
-                <option value="refunded">refunded</option>
-              </select>
+            <div class="pw-card">
+              <div class="pw-card-title">
+                <h2>Retry payout</h2>
+                <span class="pw-kicker">Requeue execution</span>
+              </div>
+              <div class="pw-field">
+                <label>Payout ID</label>
+                <input class="pw-input" id="payoutId" placeholder="payoutId" />
+              </div>
+              <div class="pw-actions">
+                <button class="pw-btn primary" id="btnRetry">Retry</button>
+              </div>
+              <div id="retryStatus" class="pw-status" role="status"></div>
             </div>
-            <div class="pw-field">
-              <label>Provider (optional)</label>
-              <input class="pw-input" id="markProvider" placeholder="manual" />
-            </div>
-          </div>
-          <div class="pw-row">
-            <div class="pw-field">
-              <label>Provider ref (optional)</label>
-              <input class="pw-input" id="markProviderRef" placeholder="tx hash / receipt / note" />
-            </div>
-            <div class="pw-field">
-              <label>Reason</label>
-              <input class="pw-input" id="markReason" placeholder="why are we marking this manually?" />
-            </div>
-          </div>
-          <div class="pw-actions">
-            <button class="pw-btn primary" id="btnMark">POST /api/admin/payouts/:id/mark</button>
-          </div>
-          <div id="markStatusMsg" class="pw-status" role="status"></div>
-        </div>
 
-        <div class="pw-card pw-span-all">
-          <div class="pw-card-title">
-            <h2>Response</h2>
-            <span class="pw-kicker pw-mono">/api/admin/payouts</span>
+            <div class="pw-card">
+              <div class="pw-card-title">
+                <h2>Mark payout status</h2>
+                <span class="pw-kicker">Break‑glass</span>
+              </div>
+              <div class="pw-field">
+                <label>Payout ID</label>
+                <input class="pw-input" id="markPayoutId" placeholder="payoutId" />
+              </div>
+              <div class="pw-row">
+                <div class="pw-field">
+                  <label>Status</label>
+                  <select class="pw-select" id="markStatus">
+                    <option value="paid">paid</option>
+                    <option value="failed">failed</option>
+                    <option value="refunded">refunded</option>
+                  </select>
+                </div>
+                <div class="pw-field">
+                  <label>Provider (optional)</label>
+                  <input class="pw-input" id="markProvider" placeholder="manual" />
+                </div>
+              </div>
+              <div class="pw-row">
+                <div class="pw-field">
+                  <label>Provider ref (optional)</label>
+                  <input class="pw-input" id="markProviderRef" placeholder="tx hash / receipt / note" />
+                </div>
+                <div class="pw-field">
+                  <label>Reason</label>
+                  <input class="pw-input" id="markReason" placeholder="why are we marking this manually?" />
+                </div>
+              </div>
+              <div class="pw-actions">
+                <button class="pw-btn primary" id="btnMark">Mark</button>
+              </div>
+              <div id="markStatusMsg" class="pw-status" role="status"></div>
+            </div>
+
+            <details class="pw-details pw-dev pw-span-all">
+              <summary>Developer response</summary>
+              <div class="pw-details-body">
+                <pre class="pw-codeblock" id="out">{}</pre>
+              </div>
+            </details>
           </div>
-          <pre class="pw-codeblock" id="out">{}</pre>
-        </div>
+        </section>
       </div>
     </main>
 
     <script src="./payouts.js"></script>
+    <script type="module" src="/ui/shell.js"></script>
   </body>
 </html>

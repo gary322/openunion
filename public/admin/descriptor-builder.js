@@ -28,9 +28,10 @@ function buildDescriptor() {
   const output_spec = safeParseJSON(els('output_spec').value.trim()) || {};
   const site_profile = safeParseJSON(els('site_profile').value.trim());
   const freshness = els('freshness').value ? Number(els('freshness').value) : undefined;
+  const type = (els('taskType').value || '').trim();
   const desc = {
     schema_version: 'v1',
-    type: 'custom_task',
+    type,
     capability_tags: caps,
     input_spec,
     output_spec,

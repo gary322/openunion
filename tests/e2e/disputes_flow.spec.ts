@@ -99,13 +99,14 @@ test('buyer can open a dispute and admin can resolve (refund) via UI', async ({ 
     await page.click('#btnClaim');
     await expect(page.locator('#jobStatus')).toContainText('claimed leaseNonce=');
 
-    // Upload a minimal PNG (scanner is basic in E2E).
+    // Upload a minimal PNG (scanner is basic in E2E). Use the guided required-outputs flow.
+    await expect(page.locator('#requiredOutputs')).toContainText('repro');
     const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00]);
-    await page.setInputFiles('#file', { name: 'shot.png', mimeType: 'image/png', buffer: png });
-    await page.selectOption('#kind', 'screenshot');
-    await page.fill('#label', 'repro');
-    await page.click('#btnUpload');
-    await expect(page.locator('#uploadStatus')).toContainText('uploaded artifactId=');
+    const fcPromise = page.waitForEvent('filechooser');
+    await page.click('#requiredOutputs button[data-slot="0"]');
+    const fc = await fcPromise;
+    await fc.setFiles({ name: 'shot.png', mimeType: 'image/png', buffer: png });
+    await expect(page.locator('#requiredOutputsStatus')).toContainText('Ready: 1/1');
 
     await page.fill('#expected', 'Expected');
     await page.fill('#observed', 'Observed');
@@ -204,4 +205,3 @@ test('buyer can open a dispute and admin can resolve (refund) via UI', async ({ 
     await new Promise<void>((resolve) => originServer.close(() => resolve()));
   }
 });
-
