@@ -2240,9 +2240,10 @@ export async function listDisputesByOrg(
   const limit = Math.max(1, Math.min(200, Number(opts.limit ?? 50)));
   const offset = (page - 1) * limit;
 
-  let q = db.selectFrom('disputes').selectAll().where('org_id', '=', orgId);
+  // IMPORTANT: keep the count query aggregate-only (no `selectAll`) to avoid invalid SQL.
+  let q = db.selectFrom('disputes').where('org_id', '=', orgId);
   if (opts.status) q = q.where('status', '=', opts.status);
-  const rows = await q.orderBy('created_at', 'desc').offset(offset).limit(limit).execute();
+  const rows = await q.selectAll().orderBy('created_at', 'desc').offset(offset).limit(limit).execute();
   const totalRow = await q.select(({ fn }) => fn.countAll<number>().as('c')).executeTakeFirst();
   return { rows: rows.map(disputeFromRow), total: Number(totalRow?.c ?? 0) };
 }
@@ -2254,9 +2255,10 @@ export async function listDisputesAdmin(
   const limit = Math.max(1, Math.min(200, Number(opts.limit ?? 50)));
   const offset = (page - 1) * limit;
 
-  let q = db.selectFrom('disputes').selectAll();
+  // IMPORTANT: keep the count query aggregate-only (no `selectAll`) to avoid invalid SQL.
+  let q = db.selectFrom('disputes');
   if (opts.status) q = q.where('status', '=', opts.status);
-  const rows = await q.orderBy('created_at', 'desc').offset(offset).limit(limit).execute();
+  const rows = await q.selectAll().orderBy('created_at', 'desc').offset(offset).limit(limit).execute();
   const totalRow = await q.select(({ fn }) => fn.countAll<number>().as('c')).executeTakeFirst();
   return { rows: rows.map(disputeFromRow), total: Number(totalRow?.c ?? 0) };
 }
