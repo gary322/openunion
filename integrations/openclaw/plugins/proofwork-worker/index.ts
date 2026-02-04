@@ -324,6 +324,14 @@ function parseArgsCsv(s: string | undefined): string[] {
     .filter(Boolean);
 }
 
+function formatUsdCents(cents: unknown): string {
+  const n = Number(cents);
+  if (!Number.isFinite(n)) return "(unknown)";
+  const sign = n < 0 ? "-" : "";
+  const abs = Math.abs(Math.floor(n));
+  return `${sign}$${(abs / 100).toFixed(2)}`;
+}
+
 function getWorkerTokenFromTokenFile(tokenFile: string): { token: string; workerId?: string } | null {
   const raw = readTextIfExists(tokenFile);
   if (!raw) return null;
@@ -418,10 +426,17 @@ function buildWorkerEnv(params: {
 }
 
 function resolveWorkerScriptPath(): string {
+  const here = fileURLToPath(import.meta.url);
+  const dir = path.dirname(here);
+
+  // Prefer a bundled worker script (npm-distributed plugin package).
+  const bundled = path.resolve(dir, "assets", "proofwork_worker.mjs");
+  if (exists(bundled)) return bundled;
+
+  // Dev fallback: monorepo layout.
   // Plugin root: integrations/openclaw/plugins/proofwork-worker
   // Worker script: integrations/openclaw/skills/proofwork-universal-worker/scripts/proofwork_worker.mjs
-  const here = fileURLToPath(import.meta.url);
-  return path.resolve(path.dirname(here), "../../skills/proofwork-universal-worker/scripts/proofwork_worker.mjs");
+  return path.resolve(dir, "../../skills/proofwork-universal-worker/scripts/proofwork_worker.mjs");
 }
 
 export const __internal = {
@@ -693,6 +708,13 @@ export default {
           const lastError = typeof status?.lastError === "string" ? status.lastError : undefined;
           const lastJobId = typeof status?.lastJobId === "string" ? status.lastJobId : undefined;
           const lastPollAt = typeof status?.lastPollAt === "number" ? new Date(status.lastPollAt).toISOString() : undefined;
+          const browserReady = typeof status?.browserReady === "boolean" ? status.browserReady : undefined;
+          const lastBrowserHealthAt =
+            typeof status?.lastBrowserHealthAt === "number" ? new Date(status.lastBrowserHealthAt).toISOString() : undefined;
+          const lastBrowserError = typeof status?.lastBrowserError === "string" ? status.lastBrowserError : undefined;
+          const effectiveCapabilityTags = Array.isArray(status?.effectiveCapabilityTags)
+            ? status?.effectiveCapabilityTags.map((t: any) => String(t)).filter(Boolean)
+            : undefined;
           return {
             text: [
               `proofwork-worker`,
@@ -700,6 +722,10 @@ export default {
               `- paused: ${paused}`,
               `- apiBaseUrl: ${(cfg ? cfg.apiBaseUrl : "(unknown)")}`,
               `- browserProfile: ${(cfg ? cfg.browserProfile : "(unknown)")}`,
+              effectiveCapabilityTags ? `- effectiveCapabilityTags: ${effectiveCapabilityTags.join(",")}` : undefined,
+              browserReady === undefined ? undefined : `- browserReady: ${browserReady}`,
+              lastBrowserHealthAt ? `- lastBrowserHealthAt: ${lastBrowserHealthAt}` : undefined,
+              lastBrowserError ? `- lastBrowserError: ${lastBrowserError}` : undefined,
               workerId ? `- workerId: ${workerId}` : `- workerId: (unknown)`,
               lastPollAt ? `- lastPollAt: ${lastPollAt}` : undefined,
               lastJobId ? `- lastJobId: ${lastJobId}` : undefined,
@@ -813,6 +839,113 @@ export default {
           return { text: "usage: /proofwork payout status|message <address> [chain]|set <address> <signature> [chain]" };
         }
 
+        if (verb === "payouts" || verb === "earnings") {
+          const activeCfg = (() => {
+            if (cfg) return cfg;
+            try {
+              return parseConfig(api.pluginConfig);
+            } catch {
+              return null;
+            }
+          })();
+          if (!activeCfg) {
+            return { text: "missing config: set plugins.entries.proofwork-worker.config.apiBaseUrl first" };
+          }
+
+          const tokenMeta = getWorkerTokenFromTokenFile(paths.tokenFile);
+          if (!tokenMeta?.token) {
+            return {
+              text:
+                "worker token not found yet. Wait for the worker to start + register, or run `/proofwork resume` if paused.",
+            };
+          }
+
+          const apiBaseUrl = activeCfg.apiBaseUrl.replace(/\/$/, "");
+          const withBase = (p: string) => `${apiBaseUrl}${p.startsWith("/") ? p : `/${p}`}`;
+
+          const fetchPayouts = async (params: { status?: string; page: number; limit: number }) => {
+            const qs = new URLSearchParams();
+            qs.set("page", String(params.page));
+            qs.set("limit", String(params.limit));
+            if (params.status) qs.set("status", params.status);
+            return await fetchJson({
+              url: withBase(`/api/worker/payouts?${qs.toString()}`),
+              token: tokenMeta.token,
+              timeoutMs: 15_000,
+            });
+          };
+
+          if (verb === "payouts") {
+            const statusArg = String(rest[0] ?? "").trim().toLowerCase();
+            const statusFilter = ["pending", "paid", "failed", "refunded"].includes(statusArg) ? statusArg : undefined;
+            const pageArg = statusFilter ? rest[1] : rest[0];
+            const limitArg = statusFilter ? rest[2] : rest[1];
+            const page = Number.isFinite(Number(pageArg)) ? Math.max(1, Math.floor(Number(pageArg))) : 1;
+            const limit = Number.isFinite(Number(limitArg)) ? Math.max(1, Math.min(50, Math.floor(Number(limitArg)))) : 10;
+
+            const res = await fetchPayouts({ status: statusFilter, page, limit });
+            if (!res.ok) {
+              return {
+                text: `payouts failed: http ${res.status} ${typeof (res.json as any)?.error?.message === "string" ? (res.json as any).error.message : ""}`.trim(),
+              };
+            }
+            const payouts = Array.isArray((res.json as any)?.payouts) ? ((res.json as any).payouts as any[]) : [];
+            const total = Number((res.json as any)?.total ?? payouts.length);
+
+            const lines: string[] = [];
+            lines.push("proofwork payouts");
+            if (statusFilter) lines.push(`- status: ${statusFilter}`);
+            lines.push(`- page: ${page} limit: ${limit} total: ${Number.isFinite(total) ? total : "(unknown)"}`);
+            for (const p of payouts.slice(0, limit)) {
+              const id = String(p?.id ?? "");
+              const st = String(p?.status ?? "");
+              const net = p?.netAmountCents !== null && p?.netAmountCents !== undefined ? formatUsdCents(p.netAmountCents) : "(pending)";
+              const gross = formatUsdCents(p?.amountCents);
+              const blocked = p?.blockedReason ? ` blocked=${String(p.blockedReason)}` : "";
+              const title = p?.bountyTitle ? ` ${String(p.bountyTitle).slice(0, 60)}` : "";
+              lines.push(`- ${id} ${st} net=${net} gross=${gross}${blocked}${title}`);
+            }
+            lines.push("");
+            lines.push("Tip: filter by status with `/proofwork payouts pending|paid|failed|refunded`.");
+            return { text: lines.join("\n") };
+          }
+
+          // earnings
+          const limit = 200;
+          const res = await fetchPayouts({ page: 1, limit });
+          if (!res.ok) {
+            return {
+              text: `earnings failed: http ${res.status} ${typeof (res.json as any)?.error?.message === "string" ? (res.json as any).error.message : ""}`.trim(),
+            };
+          }
+          const payouts = Array.isArray((res.json as any)?.payouts) ? ((res.json as any).payouts as any[]) : [];
+          const total = Number((res.json as any)?.total ?? payouts.length);
+
+          const counts: Record<string, number> = { paid: 0, pending: 0, failed: 0, refunded: 0 };
+          let grossPaidCents = 0;
+          let netPaidCents = 0;
+          let blockedCount = 0;
+
+          for (const p of payouts) {
+            const st = String(p?.status ?? "");
+            if (st in counts) counts[st] += 1;
+            if (p?.blockedReason) blockedCount += 1;
+            if (st === "paid") {
+              grossPaidCents += Number(p?.amountCents ?? 0) || 0;
+              netPaidCents += Number(p?.netAmountCents ?? p?.amountCents ?? 0) || 0;
+            }
+          }
+
+          const lines: string[] = [];
+          lines.push("proofwork earnings (from payouts)");
+          lines.push(`- paid: ${formatUsdCents(netPaidCents)} net (${formatUsdCents(grossPaidCents)} gross)`);
+          lines.push(`- counts (page 1): paid=${counts.paid} pending=${counts.pending} failed=${counts.failed} refunded=${counts.refunded} blocked=${blockedCount}`);
+          if (Number.isFinite(total) && total > limit) {
+            lines.push(`- note: showing first ${limit} payouts (total=${total}); use \`/proofwork payouts <status> <page>\` to browse.`);
+          }
+          return { text: lines.join("\n") };
+        }
+
         if (verb === "pause") {
           writeFileAtomic(paths.pauseFile, "paused\n", 0o600);
           await stopChild(lastCtx);
@@ -875,7 +1008,7 @@ export default {
           return { text: `debug ${on ? "on" : "off"}` };
         }
 
-        return { text: "usage: /proofwork status|pause|resume|token rotate|browser reset|debug on|off|payout ..." };
+        return { text: "usage: /proofwork status|pause|resume|token rotate|browser reset|debug on|off|payout ...|payouts [status] [page] [limit]|earnings" };
       },
     });
   },

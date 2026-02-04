@@ -285,6 +285,49 @@ describe('OpenClaw Proofwork Worker plugin (service + commands)', () => {
           { status: 200, headers: { 'content-type': 'application/json' } },
         );
       }
+      if (u.includes('/api/worker/payouts')) {
+        const urlObj = new URL(u);
+        const statusParam = urlObj.searchParams.get('status');
+        const status = statusParam === 'paid' ? 'paid' : statusParam === 'failed' ? 'failed' : statusParam === 'refunded' ? 'refunded' : statusParam === 'pending' ? 'pending' : null;
+        const payouts = status
+          ? [
+              {
+                id: 'pay_1',
+                status,
+                amountCents: 1200,
+                netAmountCents: status === 'paid' ? 1070 : null,
+                bountyTitle: 'Example bounty',
+                blockedReason: status === 'pending' ? 'worker_payout_address_missing' : null,
+              },
+            ]
+          : [
+              {
+                id: 'pay_paid',
+                status: 'paid',
+                amountCents: 1200,
+                netAmountCents: 1070,
+                bountyTitle: 'Example bounty',
+                blockedReason: null,
+              },
+              {
+                id: 'pay_pending',
+                status: 'pending',
+                amountCents: 500,
+                netAmountCents: null,
+                bountyTitle: 'Example bounty',
+                blockedReason: 'worker_payout_address_missing',
+              },
+            ];
+        return new Response(
+          JSON.stringify({
+            payouts,
+            page: 1,
+            limit: 50,
+            total: payouts.length,
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      }
       return new Response(JSON.stringify({ error: { message: 'not found' } }), {
         status: 404,
         headers: { 'content-type': 'application/json' },
@@ -305,6 +348,14 @@ describe('OpenClaw Proofwork Worker plugin (service + commands)', () => {
       const set = await command.handler({ args: 'payout set 0xabc 0xsig base' });
       expect(String(set.text)).toContain('payout address verified');
       expect(String(set.text)).toContain('unblockedPayouts=2');
+
+      const payouts = await command.handler({ args: 'payouts paid 1 10' });
+      expect(String(payouts.text)).toContain('proofwork payouts');
+      expect(String(payouts.text)).toContain('pay_1');
+
+      const earnings = await command.handler({ args: 'earnings' });
+      expect(String(earnings.text)).toContain('proofwork earnings');
+      expect(String(earnings.text)).toContain('paid: $10.70');
     } finally {
       vi.unstubAllGlobals();
       await service.stop(ctx);

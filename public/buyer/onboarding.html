@@ -26,10 +26,10 @@
     <main class="pw-container">
       <section class="pw-hero">
         <h1>Platform onboarding</h1>
-        <p>Self‑serve checklist to attach your app(s), publish tasks, and get paid.</p>
+        <p>Attach your platform, publish your first app, and get paid - with the least possible effort.</p>
         <div class="pw-hero-actions">
           <div class="pw-badge">
-            Full docs: <a href="/docs/runbooks/ThirdPartyOnboarding.md" target="_blank" rel="noreferrer">ThirdPartyOnboarding.md</a>
+            Full docs: <a href="/docs/view.html?path=runbooks/ThirdPartyOnboarding.md" target="_blank" rel="noreferrer">ThirdPartyOnboarding</a>
           </div>
           <div class="pw-actions">
             <a class="pw-btn" href="/buyer/index.html">Open Buyer Portal</a>
@@ -40,50 +40,89 @@
 
       <div class="pw-card">
         <div class="pw-card-title">
-          <h2>Checklist</h2>
-          <span class="pw-kicker">~10 minutes</span>
+          <h2>Guided checklist</h2>
+          <span class="pw-kicker">5-10 minutes</span>
         </div>
 
-        <ol class="pw-muted">
-          <li>
-            Create your platform org + first API key:
-            <code>POST /api/org/register</code>
-          </li>
-          <li>
-            Verify your domain (required for publishing bounties):
-            <code>POST /api/origins</code> then <code>POST /api/origins/:id/check</code>
-          </li>
-          <li>
-            (Optional) Allow third‑party browser UIs for your org:
-            <code>PUT /api/org/cors-allow-origins</code>
-          </li>
-          <li>
-            Set your platform fee (your cut) + wallet:
-            <code>PUT /api/org/platform-fee</code>
-          </li>
-          <li>
-            Register your app type (no admin approval needed):
-            <code>POST /api/org/apps</code>
-          </li>
-          <li>
-            Create and publish bounties/jobs:
-            <code>POST /api/bounties</code>, <code>POST /api/bounties/:id/publish</code>
-          </li>
-          <li>
-            Monitor activity:
-            <a href="/admin/apps.html">Admin Apps dashboard</a> and <a href="/apps/">Apps list</a>
-          </li>
-          <li>
-            Disputes posture: default 1‑day hold window (production). During hold you can open a dispute; after hold, refunds auto‑run as
-            <code>refund = gross - Proofwork fee</code>. Buyer tools: <a href="/buyer/index.html">Buyer portal</a> → Disputes.
-          </li>
-        </ol>
+        <div class="pw-stepper">
+          <div class="pw-step">
+            <div class="pw-step-dot">1</div>
+            <div>
+              <div class="pw-step-title">Create org + get a token</div>
+              <div class="pw-step-desc">Register your platform (recommended) or sign in with demo credentials.</div>
+            </div>
+            <a class="pw-btn" href="/buyer/#integrations">Start</a>
+          </div>
+          <div class="pw-step">
+            <div class="pw-step-dot">2</div>
+            <div>
+              <div class="pw-step-title">Verify your domain</div>
+              <div class="pw-step-desc">Required to publish bounties. We give you DNS, HTTP-file, and header options with copy buttons.</div>
+            </div>
+            <a class="pw-btn" href="/buyer/#integrations">Verify</a>
+          </div>
+          <div class="pw-step">
+            <div class="pw-step-dot">3</div>
+            <div>
+              <div class="pw-step-title">Set your platform cut</div>
+              <div class="pw-step-desc">Pick your fee percentage and wallet. Proofwork always takes 1% from the worker portion.</div>
+            </div>
+            <a class="pw-btn" href="/buyer/#settings">Set fees</a>
+          </div>
+          <div class="pw-step">
+            <div class="pw-step-dot">4</div>
+            <div>
+              <div class="pw-step-title">Allow your web UI (optional)</div>
+              <div class="pw-step-desc">If your platform UI calls Proofwork from the browser, add a per-org CORS allowlist.</div>
+            </div>
+            <a class="pw-btn" href="/buyer/#integrations">Set CORS</a>
+          </div>
+          <div class="pw-step">
+            <div class="pw-step-dot">5</div>
+            <div>
+              <div class="pw-step-title">Register your app</div>
+              <div class="pw-step-desc">Apps are published instantly (no approval). Each app defines the friendly form for task creation.</div>
+            </div>
+            <a class="pw-btn" href="/buyer/#apps">Create app</a>
+          </div>
+          <div class="pw-step">
+            <div class="pw-step-dot">6</div>
+            <div>
+              <div class="pw-step-title">Publish work</div>
+              <div class="pw-step-desc">Pick an app in the catalog, create a bounty draft, and publish with one click.</div>
+            </div>
+            <a class="pw-btn primary" href="/apps/">Publish</a>
+          </div>
+          <div class="pw-step">
+            <div class="pw-step-dot">7</div>
+            <div>
+              <div class="pw-step-title">Monitor + get paid</div>
+              <div class="pw-step-desc">Watch jobs, submissions, disputes, and payouts. Default disputes posture: 1-day hold.</div>
+            </div>
+            <a class="pw-btn" href="/buyer/#money">View money</a>
+          </div>
+        </div>
 
         <div class="pw-actions">
           <a class="pw-btn" href="/worker/index.html">Worker portal</a>
           <a class="pw-btn" href="/admin/index.html">Admin console</a>
           <a class="pw-btn" href="/apps/">Apps marketplace</a>
         </div>
+
+        <details class="pw-details pw-dev">
+          <summary>Developer reference: API endpoints</summary>
+          <div class="pw-details-body">
+            <ol class="pw-muted">
+              <li>Create org + first API key: <code>POST /api/org/register</code></li>
+              <li>Verify domain: <code>POST /api/origins</code> then <code>POST /api/origins/:id/check</code></li>
+              <li>Per-org CORS allowlist: <code>PUT /api/org/cors-allow-origins</code></li>
+              <li>Platform fee + wallet: <code>PUT /api/org/platform-fee</code></li>
+              <li>Register app type: <code>POST /api/org/apps</code></li>
+              <li>Create + publish: <code>POST /api/bounties</code>, <code>POST /api/bounties/:id/publish</code></li>
+              <li>Disputes posture: 1-day hold. After hold, auto-refund runs as <code>refund = gross - Proofwork fee</code>.</li>
+            </ol>
+          </div>
+        </details>
       </div>
     </main>
     <script type="module" src="/ui/shell.js"></script>
