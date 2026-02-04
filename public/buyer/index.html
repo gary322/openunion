@@ -4,363 +4,494 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Proofwork • Buyer Portal</title>
-    <style>
-      :root {
-        --bg: #0b1220;
-        --panel: rgba(255, 255, 255, 0.06);
-        --border: rgba(255, 255, 255, 0.12);
-        --text: rgba(255, 255, 255, 0.92);
-        --muted: rgba(255, 255, 255, 0.7);
-        --accent: #7dd3fc;
-        --good: #34d399;
-        --bad: #fb7185;
-        --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-        --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
-      }
-      body {
-        margin: 0;
-        font-family: var(--sans);
-        background: radial-gradient(1200px 800px at 10% 10%, rgba(125, 211, 252, 0.15), transparent 55%),
-          radial-gradient(1000px 700px at 80% 0%, rgba(99, 102, 241, 0.14), transparent 55%),
-          var(--bg);
-        color: var(--text);
-      }
-      .wrap { max-width: 1100px; margin: 32px auto; padding: 0 16px; }
-      .title { font-size: 22px; font-weight: 700; }
-      .sub { color: var(--muted); font-size: 13px; margin-top: 6px; }
-      .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; }
-      .card { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 16px; }
-      .card h2 { margin: 0 0 10px 0; font-size: 14px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; }
-      label { display: block; font-size: 12px; color: var(--muted); margin: 10px 0 6px; }
-      input, textarea {
-        width: 100%;
-        box-sizing: border-box;
-        padding: 10px 12px;
-        border-radius: 10px;
-        border: 1px solid var(--border);
-        background: rgba(0,0,0,0.25);
-        color: var(--text);
-        outline: none;
-      }
-      textarea { min-height: 90px; resize: vertical; font-family: var(--mono); font-size: 12px; }
-      .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-      .btnrow { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
-      button {
-        border: 1px solid var(--border);
-        background: rgba(255, 255, 255, 0.08);
-        color: var(--text);
-        padding: 10px 12px;
-        border-radius: 10px;
-        cursor: pointer;
-      }
-      button.primary { border-color: rgba(125, 211, 252, 0.35); background: rgba(125, 211, 252, 0.12); }
-      pre {
-        margin: 0;
-        padding: 12px;
-        border-radius: 12px;
-        border: 1px solid var(--border);
-        background: rgba(0,0,0,0.35);
-        overflow: auto;
-        font-family: var(--mono);
-        font-size: 12px;
-        line-height: 1.45;
-      }
-      .status { margin-top: 12px; font-size: 12px; color: var(--muted); }
-      .status.good { color: var(--good); }
-      .status.bad { color: var(--bad); }
-      @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
-    </style>
+    <link rel="stylesheet" href="/ui/ui.css" />
   </head>
-  <body>
-    <div class="wrap">
-      <div class="title">Buyer Portal</div>
-      <div class="sub">Login → create API key → manage origins → create/publish bounties</div>
-
-      <div class="grid">
-        <div class="card">
-          <h2>Login (demo)</h2>
-          <div class="row">
-            <div>
-              <label>Email</label>
-              <input id="email" value="buyer@example.com" />
-            </div>
-            <div>
-              <label>Password</label>
-              <input id="password" type="password" value="password" />
-            </div>
-          </div>
-          <div class="btnrow">
-            <button id="btnLogin" class="primary">POST /api/auth/login</button>
-          </div>
-          <div id="loginStatus" class="status"></div>
-          <label>Response</label>
-          <pre id="loginOut">{}</pre>
-        </div>
-
-        <div class="card">
-          <h2>Register (new platform)</h2>
-          <div class="sub">Create a new org + owner user + initial API key. (Demo seeding is disabled by default in production.)</div>
-          <div class="row">
-            <div>
-              <label>Org name</label>
-              <input id="regOrgName" value="My Platform" />
-            </div>
-            <div>
-              <label>API key name</label>
-              <input id="regApiKeyName" value="default" />
-            </div>
-          </div>
-          <div class="row">
-            <div>
-              <label>Email</label>
-              <input id="regEmail" placeholder="you@company.com" />
-            </div>
-            <div>
-              <label>Password</label>
-              <input id="regPassword" type="password" placeholder="min 8 chars" />
-            </div>
-          </div>
-          <div class="btnrow">
-            <button id="btnRegister" class="primary">POST /api/org/register</button>
-          </div>
-          <div id="regStatus" class="status"></div>
-          <label>Response</label>
-          <pre id="regOut">{}</pre>
-        </div>
-
-        <div class="card">
-          <h2>API key</h2>
-          <label>Name</label>
-          <input id="keyName" value="portal" />
-          <div class="btnrow">
-            <button id="btnCreateKey" class="primary">POST /api/session/api-keys</button>
-            <button id="btnListKeys">GET /api/org/api-keys</button>
-            <button id="btnSaveToken">Save token</button>
-          </div>
-          <label>Buyer token</label>
-          <input id="buyerToken" placeholder="pw_bu_..." />
-          <label>Revoke API key (session)</label>
-          <div class="row">
-            <div>
-              <input id="revokeKeyId" placeholder="apiKeyId" />
-            </div>
-            <div>
-              <button id="btnRevokeKey">POST /api/session/api-keys/:id/revoke</button>
-            </div>
-          </div>
-          <div id="keyStatus" class="status"></div>
-          <label>Response</label>
-          <pre id="keyOut">{}</pre>
-        </div>
-
-        <div class="card">
-          <h2>Platform fee (your cut)</h2>
-          <div class="sub">This is your platform’s % cut from worker payouts. Proofwork takes an additional fixed fee (configured server-side).</div>
-          <div class="row">
-            <div>
-              <label>Platform fee bps</label>
-              <input id="pfBps" value="0" />
-            </div>
-            <div>
-              <label>Platform fee wallet (Base / EVM address)</label>
-              <input id="pfWallet" placeholder="0x..." />
-            </div>
-          </div>
-          <div class="btnrow">
-            <button id="btnGetPlatformFee">GET /api/org/platform-fee</button>
-            <button id="btnSetPlatformFee" class="primary">PUT /api/org/platform-fee</button>
-          </div>
-          <div id="pfStatus" class="status"></div>
-          <label>Response</label>
-          <pre id="pfOut">{}</pre>
-        </div>
-
-        <div class="card">
-          <h2>CORS allowlist (browser integrations)</h2>
-          <div class="sub">Allow third-party browser UIs on your domains to call Proofwork buyer APIs using your buyer token. One origin per line.</div>
-          <label>Allowed origins</label>
-          <textarea id="corsOrigins" placeholder="https://app.yourdomain.com"></textarea>
-          <div class="btnrow">
-            <button id="btnGetCors">GET /api/org/cors-allow-origins</button>
-            <button id="btnSetCors" class="primary">PUT /api/org/cors-allow-origins</button>
-          </div>
-          <div id="corsStatus" class="status"></div>
-          <label>Response</label>
-          <pre id="corsOut">{}</pre>
-        </div>
-
-        <div class="card">
-          <h2>Quotas (safety caps)</h2>
-          <div class="sub">Optional spend and concurrency caps per org. Helps prevent runaway costs.</div>
-          <div class="row">
-            <div>
-              <label>Daily spend limit (cents, optional)</label>
-              <input id="quotaDailySpend" placeholder="e.g. 100000 (=$1000)" />
-            </div>
-            <div>
-              <label>Monthly spend limit (cents, optional)</label>
-              <input id="quotaMonthlySpend" placeholder="e.g. 1000000 (=$10k)" />
-            </div>
-          </div>
-          <div class="row">
-            <div>
-              <label>Max open jobs (optional)</label>
-              <input id="quotaMaxOpenJobs" placeholder="e.g. 100" />
-            </div>
-            <div></div>
-          </div>
-          <div class="btnrow">
-            <button id="btnGetQuotas">GET /api/org/quotas</button>
-            <button id="btnSetQuotas" class="primary">PUT /api/org/quotas</button>
-          </div>
-          <div id="quotaStatus" class="status"></div>
-          <label>Response</label>
-          <pre id="quotaOut">{}</pre>
-        </div>
-
-        <div class="card">
-          <h2>Origins</h2>
-          <label>Origin URL (must be absolute)</label>
-          <input id="originUrl" value="https://example.com" />
-          <label>Method</label>
-          <input id="originMethod" value="dns_txt" />
-          <div class="btnrow">
-            <button id="btnAddOrigin" class="primary">POST /api/origins</button>
-            <button id="btnListOrigins">GET /api/origins</button>
-          </div>
-          <label>Origin ID (for check/revoke)</label>
-          <input id="originId" placeholder="originId" />
-          <div class="btnrow">
-            <button id="btnCheckOrigin">POST /api/origins/:id/check</button>
-            <button id="btnRevokeOrigin">POST /api/origins/:id/revoke</button>
-          </div>
-          <div id="originStatus" class="status"></div>
-          <label>Response</label>
-          <pre id="originOut">{}</pre>
-        </div>
-
-        <div class="card">
-          <h2>Bounties</h2>
-          <label>Title</label>
-          <input id="bTitle" value="Portal bounty" />
-          <label>Description</label>
-          <textarea id="bDesc">Created from buyer portal</textarea>
-          <label>Allowed origins (comma separated)</label>
-          <input id="bOrigins" value="https://example.com" />
-          <div class="row">
-            <div>
-              <label>Payout cents</label>
-              <input id="bPayout" value="1200" />
-            </div>
-            <div>
-              <label>Fingerprint classes (comma separated)</label>
-              <input id="bFps" value="desktop_us" />
-            </div>
-          </div>
-          <div class="btnrow">
-            <button id="btnCreateBounty" class="primary">POST /api/bounties</button>
-            <button id="btnListBounties">GET /api/bounties</button>
-          </div>
-          <label>Bounty ID (for publish)</label>
-          <input id="bountyId" placeholder="bountyId" />
-          <div class="btnrow">
-            <button id="btnPublish">POST /api/bounties/:id/publish</button>
-          </div>
-          <div id="bountyStatus" class="status"></div>
-          <label>Response</label>
-          <pre id="bountyOut">{}</pre>
-        </div>
-
-        <div class="card">
-          <h2>Apps registry (your apps)</h2>
-          <div class="sub">Register app types without admin approval. Published apps appear in the main Apps list when public=true.</div>
-          <div class="row">
-            <div>
-              <label>Slug</label>
-              <input id="appSlug" placeholder="my-app" />
-            </div>
-            <div>
-              <label>Task type</label>
-              <input id="appTaskType" placeholder="my_task_type" />
-            </div>
-          </div>
-          <div class="row">
-            <div>
-              <label>Name</label>
-              <input id="appName" placeholder="My App" />
-            </div>
-            <div>
-              <label>Dashboard URL (optional)</label>
-              <input id="appDashboardUrl" placeholder="https://your.app/dashboard or /apps/app/my-app/" />
-            </div>
-          </div>
-          <label>Default descriptor (optional JSON)</label>
-          <textarea id="appDefaultDescriptor" placeholder="{\"schema_version\":\"v1\", ... }"></textarea>
-          <div class="btnrow">
-            <button id="btnListOrgApps">GET /api/org/apps</button>
-            <button id="btnCreateOrgApp" class="primary">POST /api/org/apps</button>
-          </div>
-          <div id="appsStatus" class="status"></div>
-          <label>Response</label>
-          <pre id="appsOut">{}</pre>
-        </div>
-
-        <div class="card">
-          <h2>Earnings + payouts</h2>
-          <div class="sub">Self-serve platform earnings and payout history (includes worker net + fees).</div>
-          <div class="row">
-            <div>
-              <label>Payout status filter</label>
-              <input id="payoutStatusFilter" placeholder="pending|paid|failed|refunded" />
-            </div>
-            <div>
-              <label>Task type filter</label>
-              <input id="payoutTaskTypeFilter" placeholder="github_scan" />
-            </div>
-          </div>
-          <div class="btnrow">
-            <button id="btnGetEarnings" class="primary">GET /api/org/earnings</button>
-            <button id="btnListPayouts">GET /api/org/payouts</button>
-          </div>
-          <div id="earningsStatus" class="status"></div>
-          <label>Response</label>
-          <pre id="earningsOut">{}</pre>
-        </div>
-
-        <div class="card">
-          <h2>Disputes</h2>
-          <div class="sub">Default posture: open a dispute during the hold window; auto-refund executes after the window (refund = gross − Proofwork fee).</div>
-          <div class="row">
-            <div>
-              <label>Payout ID</label>
-              <input id="disputePayoutId" placeholder="payoutId" />
-            </div>
-            <div>
-              <label>Submission ID (optional)</label>
-              <input id="disputeSubmissionId" placeholder="submissionId" />
-            </div>
-          </div>
-          <label>Reason</label>
-          <textarea id="disputeReason">Incorrect result</textarea>
-          <div class="btnrow">
-            <button id="btnCreateDispute" class="primary">POST /api/org/disputes</button>
-            <button id="btnListDisputes">GET /api/org/disputes</button>
-          </div>
-          <label>Cancel dispute (id)</label>
-          <div class="row">
-            <div>
-              <input id="cancelDisputeId" placeholder="disputeId" />
-            </div>
-            <div>
-              <button id="btnCancelDispute">POST /api/org/disputes/:id/cancel</button>
-            </div>
-          </div>
-          <div id="disputeStatus" class="status"></div>
-          <label>Response</label>
-          <pre id="disputeOut">{}</pre>
-        </div>
+  <body class="theme-buyer">
+    <header class="pw-topbar">
+      <div class="pw-topbar-inner">
+        <a class="pw-brand" href="/apps/" aria-label="Proofwork home">
+          <span class="pw-brand-badge pw-mono">PW</span>
+          Proofwork
+        </a>
+        <nav class="pw-topnav" aria-label="Primary">
+          <a class="pw-navlink" href="/apps/">Catalog</a>
+          <a class="pw-navlink" href="/buyer/" aria-current="page">Platforms</a>
+          <a class="pw-navlink" href="/worker/">Workers</a>
+          <a class="pw-navlink" href="/admin/">Admin</a>
+          <a class="pw-navlink" href="/docs/" target="_blank" rel="noreferrer">Docs</a>
+        </nav>
       </div>
-    </div>
+    </header>
+
+    <main class="pw-container">
+      <section class="pw-hero">
+        <h1>Buyer Portal</h1>
+        <p>
+          Onboard a platform, mint buyer tokens, set your fee split, publish bounties with <span class="pw-mono">task_descriptor</span>, and
+          track earnings + disputes.
+        </p>
+        <div class="pw-hero-actions">
+          <div class="pw-badge">New here? Follow the <a href="/buyer/onboarding.html">platform onboarding</a> checklist.</div>
+          <div class="pw-actions">
+            <a class="pw-btn" href="/apps/">Browse apps</a>
+            <a class="pw-btn primary" href="/buyer/onboarding.html">Onboarding checklist</a>
+          </div>
+        </div>
+      </section>
+
+      <div class="pw-split">
+        <section class="pw-stack">
+          <div class="pw-card">
+            <div class="pw-card-title">
+              <h2>Login (demo)</h2>
+              <span class="pw-kicker">Get a session; then mint a buyer token</span>
+            </div>
+
+            <div class="pw-row">
+              <div class="pw-field">
+                <label>Email</label>
+                <input class="pw-input" id="email" value="buyer@example.com" />
+              </div>
+              <div class="pw-field">
+                <label>Password</label>
+                <input class="pw-input" id="password" type="password" value="password" />
+              </div>
+            </div>
+
+            <div class="pw-actions">
+              <button class="pw-btn primary" id="btnLogin">POST /api/auth/login</button>
+            </div>
+
+            <div id="loginStatus" class="pw-status" role="status"></div>
+            <details class="pw-details">
+              <summary>Response</summary>
+              <div class="pw-details-body">
+                <pre class="pw-codeblock" id="loginOut">{}</pre>
+              </div>
+            </details>
+          </div>
+
+          <div class="pw-card">
+            <div class="pw-card-title">
+              <h2>Register (new platform)</h2>
+              <span class="pw-kicker">Creates org + owner + initial API key</span>
+            </div>
+            <p class="pw-muted">
+              Demo seeding is disabled by default in production. Use this flow for real third‑party onboarding.
+            </p>
+
+            <div class="pw-row">
+              <div class="pw-field">
+                <label>Org name</label>
+                <input class="pw-input" id="regOrgName" value="My Platform" />
+              </div>
+              <div class="pw-field">
+                <label>API key name</label>
+                <input class="pw-input" id="regApiKeyName" value="default" />
+              </div>
+            </div>
+
+            <div class="pw-row">
+              <div class="pw-field">
+                <label>Email</label>
+                <input class="pw-input" id="regEmail" placeholder="you@company.com" />
+              </div>
+              <div class="pw-field">
+                <label>Password</label>
+                <input class="pw-input" id="regPassword" type="password" placeholder="min 8 chars" />
+              </div>
+            </div>
+
+            <div class="pw-actions">
+              <button class="pw-btn primary" id="btnRegister">POST /api/org/register</button>
+            </div>
+
+            <div id="regStatus" class="pw-status" role="status"></div>
+            <details class="pw-details">
+              <summary>Response</summary>
+              <div class="pw-details-body">
+                <pre class="pw-codeblock" id="regOut">{}</pre>
+              </div>
+            </details>
+          </div>
+
+          <div class="pw-card">
+            <div class="pw-card-title">
+              <h2>API keys</h2>
+              <span class="pw-kicker">Mint + revoke buyer tokens</span>
+            </div>
+
+            <div class="pw-row">
+              <div class="pw-field">
+                <label>API key name</label>
+                <input class="pw-input" id="keyName" value="default" />
+              </div>
+              <div class="pw-field">
+                <label>&nbsp;</label>
+                <button class="pw-btn primary" id="btnCreateKey">POST /api/session/api-keys</button>
+              </div>
+            </div>
+            <div id="keyStatus" class="pw-status" role="status"></div>
+
+            <div class="pw-field">
+              <label>Buyer token</label>
+              <input class="pw-input" id="buyerToken" placeholder="pw_bu_..." />
+            </div>
+
+            <div class="pw-actions">
+              <button class="pw-btn" id="btnSaveToken">Save token</button>
+              <button class="pw-btn" id="btnListKeys">GET /api/org/api-keys</button>
+            </div>
+
+            <div class="pw-row">
+              <div class="pw-field">
+                <label>Revoke API key (id)</label>
+                <input class="pw-input" id="revokeKeyId" placeholder="apiKeyId" />
+              </div>
+              <div class="pw-field">
+                <label>&nbsp;</label>
+                <button class="pw-btn" id="btnRevokeKey">POST /api/session/api-keys/:id/revoke</button>
+              </div>
+            </div>
+
+            <details class="pw-details">
+              <summary>Response</summary>
+              <div class="pw-details-body">
+                <pre class="pw-codeblock" id="keyOut">{}</pre>
+              </div>
+            </details>
+          </div>
+
+          <div class="pw-card">
+            <div class="pw-card-title">
+              <h2>Origins</h2>
+              <span class="pw-kicker">Verify domains that can publish bounties</span>
+            </div>
+
+            <div class="pw-field">
+              <label>Origin URL (must be absolute)</label>
+              <input class="pw-input" id="originUrl" value="https://example.com" />
+            </div>
+            <div class="pw-field">
+              <label>Method</label>
+              <input class="pw-input" id="originMethod" value="dns_txt" />
+            </div>
+
+            <div class="pw-actions">
+              <button class="pw-btn primary" id="btnAddOrigin">POST /api/origins</button>
+              <button class="pw-btn" id="btnListOrigins">GET /api/origins</button>
+            </div>
+
+            <div class="pw-field">
+              <label>Origin ID (for check/revoke)</label>
+              <input class="pw-input" id="originId" placeholder="originId" />
+            </div>
+
+            <div class="pw-actions">
+              <button class="pw-btn" id="btnCheckOrigin">POST /api/origins/:id/check</button>
+              <button class="pw-btn" id="btnRevokeOrigin">POST /api/origins/:id/revoke</button>
+            </div>
+
+            <div id="originStatus" class="pw-status" role="status"></div>
+            <details class="pw-details">
+              <summary>Response</summary>
+              <div class="pw-details-body">
+                <pre class="pw-codeblock" id="originOut">{}</pre>
+              </div>
+            </details>
+          </div>
+
+          <div class="pw-card">
+            <div class="pw-card-title">
+              <h2>Platform fee (your cut)</h2>
+              <span class="pw-kicker">Your % from worker payouts</span>
+            </div>
+            <p class="pw-muted">
+              Your platform cut is applied first. Proofwork takes an additional fixed fee from the worker portion.
+            </p>
+
+            <div class="pw-row">
+              <div class="pw-field">
+                <label>Platform fee bps</label>
+                <input class="pw-input" id="pfBps" value="0" />
+              </div>
+              <div class="pw-field">
+                <label>Platform fee wallet (Base / EVM address)</label>
+                <input class="pw-input" id="pfWallet" placeholder="0x..." />
+              </div>
+            </div>
+
+            <div class="pw-actions">
+              <button class="pw-btn" id="btnGetPlatformFee">GET /api/org/platform-fee</button>
+              <button class="pw-btn primary" id="btnSetPlatformFee">PUT /api/org/platform-fee</button>
+            </div>
+
+            <div id="pfStatus" class="pw-status" role="status"></div>
+            <details class="pw-details">
+              <summary>Response</summary>
+              <div class="pw-details-body">
+                <pre class="pw-codeblock" id="pfOut">{}</pre>
+              </div>
+            </details>
+          </div>
+
+          <div class="pw-card">
+            <div class="pw-card-title">
+              <h2>CORS allowlist</h2>
+              <span class="pw-kicker">For browser integrations</span>
+            </div>
+            <p class="pw-muted">
+              Allow third‑party web UIs on your domains to call buyer APIs with your buyer token. One origin per line.
+            </p>
+
+            <div class="pw-field">
+              <label>Allowed origins</label>
+              <textarea class="pw-textarea" id="corsOrigins" placeholder="https://app.yourdomain.com"></textarea>
+            </div>
+
+            <div class="pw-actions">
+              <button class="pw-btn" id="btnGetCors">GET /api/org/cors-allow-origins</button>
+              <button class="pw-btn primary" id="btnSetCors">PUT /api/org/cors-allow-origins</button>
+            </div>
+
+            <div id="corsStatus" class="pw-status" role="status"></div>
+            <details class="pw-details">
+              <summary>Response</summary>
+              <div class="pw-details-body">
+                <pre class="pw-codeblock" id="corsOut">{}</pre>
+              </div>
+            </details>
+          </div>
+
+          <div class="pw-card">
+            <div class="pw-card-title">
+              <h2>Quotas (safety caps)</h2>
+              <span class="pw-kicker">Spend + concurrency limits</span>
+            </div>
+            <p class="pw-muted">Optional caps to prevent runaway costs, bad verifiers, or spammy workers.</p>
+
+            <div class="pw-row">
+              <div class="pw-field">
+                <label>Daily spend limit (cents, optional)</label>
+                <input class="pw-input" id="quotaDailySpend" placeholder="e.g. 100000 (=$1000)" />
+              </div>
+              <div class="pw-field">
+                <label>Monthly spend limit (cents, optional)</label>
+                <input class="pw-input" id="quotaMonthlySpend" placeholder="e.g. 1000000 (=$10k)" />
+              </div>
+            </div>
+            <div class="pw-row">
+              <div class="pw-field">
+                <label>Max open jobs (optional)</label>
+                <input class="pw-input" id="quotaMaxOpenJobs" placeholder="e.g. 100" />
+              </div>
+              <div class="pw-field">
+                <label>&nbsp;</label>
+                <span class="pw-muted">Limits apply at publish/create time.</span>
+              </div>
+            </div>
+
+            <div class="pw-actions">
+              <button class="pw-btn" id="btnGetQuotas">GET /api/org/quotas</button>
+              <button class="pw-btn primary" id="btnSetQuotas">PUT /api/org/quotas</button>
+            </div>
+            <div id="quotaStatus" class="pw-status" role="status"></div>
+            <details class="pw-details">
+              <summary>Response</summary>
+              <div class="pw-details-body">
+                <pre class="pw-codeblock" id="quotaOut">{}</pre>
+              </div>
+            </details>
+          </div>
+        </section>
+
+        <section class="pw-stack">
+          <div class="pw-card">
+            <div class="pw-card-title">
+              <h2>Bounties</h2>
+              <span class="pw-kicker">Create work</span>
+            </div>
+
+            <div class="pw-field">
+              <label>Title</label>
+              <input class="pw-input" id="bTitle" value="Portal bounty" />
+            </div>
+            <div class="pw-field">
+              <label>Description</label>
+              <textarea class="pw-textarea" id="bDesc">Created from buyer portal</textarea>
+            </div>
+            <div class="pw-field">
+              <label>Allowed origins (comma separated)</label>
+              <input class="pw-input" id="bOrigins" value="https://example.com" />
+            </div>
+
+            <div class="pw-row">
+              <div class="pw-field">
+                <label>Payout cents</label>
+                <input class="pw-input" id="bPayout" value="1200" />
+              </div>
+              <div class="pw-field">
+                <label>Fingerprint classes (comma separated)</label>
+                <input class="pw-input" id="bFps" value="desktop_us" />
+              </div>
+            </div>
+
+            <div class="pw-actions">
+              <button class="pw-btn primary" id="btnCreateBounty">POST /api/bounties</button>
+              <button class="pw-btn" id="btnListBounties">GET /api/bounties</button>
+            </div>
+
+            <div class="pw-field">
+              <label>Bounty ID (for publish)</label>
+              <input class="pw-input" id="bountyId" placeholder="bountyId" />
+            </div>
+            <div class="pw-actions">
+              <button class="pw-btn" id="btnPublish">POST /api/bounties/:id/publish</button>
+            </div>
+
+            <div id="bountyStatus" class="pw-status" role="status"></div>
+            <details class="pw-details">
+              <summary>Response</summary>
+              <div class="pw-details-body">
+                <pre class="pw-codeblock" id="bountyOut">{}</pre>
+              </div>
+            </details>
+          </div>
+
+          <div class="pw-card">
+            <div class="pw-card-title">
+              <h2>Apps registry (your apps)</h2>
+              <span class="pw-kicker">No admin approval required</span>
+            </div>
+            <p class="pw-muted">
+              Register new <span class="pw-mono">task_descriptor.type</span> values that show up in the apps marketplace when <span class="pw-mono">public=true</span>.
+            </p>
+
+            <div class="pw-row">
+              <div class="pw-field">
+                <label>Slug</label>
+                <input class="pw-input" id="appSlug" placeholder="my-app" />
+              </div>
+              <div class="pw-field">
+                <label>Task type</label>
+                <input class="pw-input" id="appTaskType" placeholder="my_task_type" />
+              </div>
+            </div>
+
+            <div class="pw-row">
+              <div class="pw-field">
+                <label>Name</label>
+                <input class="pw-input" id="appName" placeholder="My App" />
+              </div>
+              <div class="pw-field">
+                <label>Dashboard URL (optional)</label>
+                <input class="pw-input" id="appDashboardUrl" placeholder="https://your.app/dashboard or /apps/app/my-app/" />
+              </div>
+            </div>
+
+            <div class="pw-field">
+              <label>Default descriptor (optional JSON)</label>
+              <textarea class="pw-textarea" id="appDefaultDescriptor" placeholder="{\"schema_version\":\"v1\", ... }"></textarea>
+            </div>
+
+            <div class="pw-actions">
+              <button class="pw-btn" id="btnListOrgApps">GET /api/org/apps</button>
+              <button class="pw-btn primary" id="btnCreateOrgApp">POST /api/org/apps</button>
+            </div>
+
+            <div id="appsStatus" class="pw-status" role="status"></div>
+            <details class="pw-details">
+              <summary>Response</summary>
+              <div class="pw-details-body">
+                <pre class="pw-codeblock" id="appsOut">{}</pre>
+              </div>
+            </details>
+          </div>
+
+          <div class="pw-card">
+            <div class="pw-card-title">
+              <h2>Earnings + payouts</h2>
+              <span class="pw-kicker">Self‑serve finance</span>
+            </div>
+            <p class="pw-muted">Totals include worker net + platform fee + Proofwork fee.</p>
+
+            <div class="pw-row">
+              <div class="pw-field">
+                <label>Payout status filter</label>
+                <input class="pw-input" id="payoutStatusFilter" placeholder="pending|paid|failed|refunded" />
+              </div>
+              <div class="pw-field">
+                <label>Task type filter</label>
+                <input class="pw-input" id="payoutTaskTypeFilter" placeholder="github_scan" />
+              </div>
+            </div>
+
+            <div class="pw-actions">
+              <button class="pw-btn primary" id="btnGetEarnings">GET /api/org/earnings</button>
+              <button class="pw-btn" id="btnListPayouts">GET /api/org/payouts</button>
+            </div>
+
+            <div id="earningsStatus" class="pw-status" role="status"></div>
+            <details class="pw-details" open>
+              <summary>Response</summary>
+              <div class="pw-details-body">
+                <pre class="pw-codeblock" id="earningsOut">{}</pre>
+              </div>
+            </details>
+          </div>
+
+          <div class="pw-card">
+            <div class="pw-card-title">
+              <h2>Disputes</h2>
+              <span class="pw-kicker">Hold window defaults to 1 day</span>
+            </div>
+            <p class="pw-muted">
+              Default posture: open a dispute during the hold window. If unresolved, auto‑refund executes after the window (refund = gross − Proofwork
+              fee).
+            </p>
+
+            <div class="pw-row">
+              <div class="pw-field">
+                <label>Payout ID</label>
+                <input class="pw-input" id="disputePayoutId" placeholder="payoutId" />
+              </div>
+              <div class="pw-field">
+                <label>Submission ID (optional)</label>
+                <input class="pw-input" id="disputeSubmissionId" placeholder="submissionId" />
+              </div>
+            </div>
+            <div class="pw-field">
+              <label>Reason</label>
+              <textarea class="pw-textarea" id="disputeReason">Incorrect result</textarea>
+            </div>
+
+            <div class="pw-actions">
+              <button class="pw-btn primary" id="btnCreateDispute">POST /api/org/disputes</button>
+              <button class="pw-btn" id="btnListDisputes">GET /api/org/disputes</button>
+            </div>
+
+            <div class="pw-row">
+              <div class="pw-field">
+                <label>Cancel dispute (id)</label>
+                <input class="pw-input" id="cancelDisputeId" placeholder="disputeId" />
+              </div>
+              <div class="pw-field">
+                <label>&nbsp;</label>
+                <button class="pw-btn danger" id="btnCancelDispute">POST /api/org/disputes/:id/cancel</button>
+              </div>
+            </div>
+
+            <div id="disputeStatus" class="pw-status" role="status"></div>
+            <details class="pw-details" open>
+              <summary>Response</summary>
+              <div class="pw-details-body">
+                <pre class="pw-codeblock" id="disputeOut">{}</pre>
+              </div>
+            </details>
+          </div>
+        </section>
+      </div>
+    </main>
 
     <script src="./app.js"></script>
   </body>

@@ -4,218 +4,221 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Proofwork • Worker Portal</title>
-    <style>
-      :root {
-        --bg: #0b1220;
-        --panel: rgba(255, 255, 255, 0.06);
-        --border: rgba(255, 255, 255, 0.12);
-        --text: rgba(255, 255, 255, 0.92);
-        --muted: rgba(255, 255, 255, 0.7);
-        --accent: #7dd3fc;
-        --bad: #fb7185;
-        --good: #34d399;
-        --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-        --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
-      }
-      body {
-        margin: 0;
-        font-family: var(--sans);
-        background: radial-gradient(1200px 800px at 10% 10%, rgba(125, 211, 252, 0.15), transparent 55%),
-          radial-gradient(1000px 700px at 80% 0%, rgba(52, 211, 153, 0.12), transparent 55%),
-          var(--bg);
-        color: var(--text);
-      }
-      a { color: var(--accent); }
-      .wrap { max-width: 1100px; margin: 32px auto; padding: 0 16px; }
-      .topbar { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
-      .title { font-size: 22px; font-weight: 700; letter-spacing: 0.2px; }
-      .sub { color: var(--muted); font-size: 13px; }
-      .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-      .card { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 16px; backdrop-filter: blur(8px); }
-      .card h2 { margin: 0 0 10px 0; font-size: 14px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; }
-      label { display: block; font-size: 12px; color: var(--muted); margin: 10px 0 6px; }
-      input, textarea, select {
-        width: 100%;
-        box-sizing: border-box;
-        padding: 10px 12px;
-        border-radius: 10px;
-        border: 1px solid var(--border);
-        background: rgba(0,0,0,0.25);
-        color: var(--text);
-        outline: none;
-      }
-      textarea { min-height: 96px; resize: vertical; font-family: var(--mono); font-size: 12px; }
-      .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-      .btnrow { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
-      button {
-        appearance: none;
-        border: 1px solid var(--border);
-        background: rgba(255, 255, 255, 0.08);
-        color: var(--text);
-        padding: 10px 12px;
-        border-radius: 10px;
-        cursor: pointer;
-      }
-      button.primary { border-color: rgba(125, 211, 252, 0.35); background: rgba(125, 211, 252, 0.12); }
-      button.danger { border-color: rgba(251, 113, 133, 0.35); background: rgba(251, 113, 133, 0.12); }
-      button:disabled { opacity: 0.45; cursor: not-allowed; }
-      pre {
-        margin: 0;
-        padding: 12px;
-        border-radius: 12px;
-        border: 1px solid var(--border);
-        background: rgba(0,0,0,0.35);
-        overflow: auto;
-        font-family: var(--mono);
-        font-size: 12px;
-        line-height: 1.45;
-      }
-      .status { margin-top: 12px; font-size: 12px; color: var(--muted); }
-      .status.good { color: var(--good); }
-      .status.bad { color: var(--bad); }
-      @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
-    </style>
+    <link rel="stylesheet" href="/ui/ui.css" />
   </head>
-  <body>
-    <div class="wrap">
-      <div class="topbar">
-        <div>
-          <div class="title">Worker Portal</div>
-          <div class="sub">Register → next job → claim → presign/upload → submit</div>
-        </div>
-        <div class="sub">API base: <span id="apiBase"></span></div>
+  <body class="theme-worker">
+    <header class="pw-topbar">
+      <div class="pw-topbar-inner">
+        <a class="pw-brand" href="/apps/" aria-label="Proofwork home">
+          <span class="pw-brand-badge pw-mono">PW</span>
+          Proofwork
+        </a>
+        <nav class="pw-topnav" aria-label="Primary">
+          <a class="pw-navlink" href="/apps/">Catalog</a>
+          <a class="pw-navlink" href="/buyer/">Platforms</a>
+          <a class="pw-navlink" href="/worker/" aria-current="page">Workers</a>
+          <a class="pw-navlink" href="/admin/">Admin</a>
+          <a class="pw-navlink" href="/docs/" target="_blank" rel="noreferrer">Docs</a>
+        </nav>
       </div>
+    </header>
 
-      <div class="grid">
-        <div class="card">
-          <h2>Auth</h2>
-
-          <div class="row">
-            <div>
-              <label>Display name</label>
-              <input id="regName" placeholder="e.g. Alice" value="Alice" />
-            </div>
-            <div>
-              <label>Capabilities</label>
-              <select id="regBrowser">
-                <option value="true" selected>browser: true</option>
-                <option value="false">browser: false</option>
-              </select>
-            </div>
+    <main class="pw-container">
+      <section class="pw-hero">
+        <h1>Worker Portal</h1>
+        <p>Register → pull the next job → claim → upload artifacts → submit → get paid.</p>
+        <div class="pw-hero-actions">
+          <div class="pw-badge">API base: <span class="pw-mono" id="apiBase"></span></div>
+          <div class="pw-actions">
+            <a class="pw-btn" href="/apps/">Find tasks</a>
+            <a class="pw-btn primary" href="/docs/" target="_blank" rel="noreferrer">Docs</a>
           </div>
-
-          <div class="btnrow">
-            <button id="btnRegister" class="primary">Register worker</button>
-          </div>
-
-          <label>Worker token</label>
-          <input id="token" placeholder="pw_wk_..." />
-          <div class="btnrow">
-            <button id="btnSaveToken">Save token</button>
-            <button id="btnMe">/api/worker/me</button>
-          </div>
-          <div id="authStatus" class="status"></div>
         </div>
+      </section>
 
-        <div class="card">
-          <h2>Job</h2>
-          <div class="btnrow">
-            <button id="btnNext" class="primary">GET /api/jobs/next</button>
-            <button id="btnClaim">POST /api/jobs/:jobId/claim</button>
-          </div>
-          <label>Current job spec / state</label>
-          <pre id="jobOut">{}</pre>
-          <div id="jobStatus" class="status"></div>
-        </div>
+      <div class="pw-split">
+        <section class="pw-stack">
+          <div class="pw-card">
+            <div class="pw-card-title">
+              <h2>Auth</h2>
+              <span class="pw-kicker">Create or reuse your worker token</span>
+            </div>
 
-        <div class="card">
-          <h2>Artifacts (presign + upload)</h2>
-          <label>Pick a file</label>
-          <input id="file" type="file" />
-          <div class="row">
-            <div>
-              <label>Kind</label>
-              <select id="kind">
-                <option value="screenshot">screenshot</option>
-                <option value="snapshot">snapshot</option>
-                <option value="pdf">pdf</option>
-                <option value="log">log</option>
-                <option value="video">video</option>
-                <option value="other" selected>other</option>
-              </select>
+            <div class="pw-row">
+              <div class="pw-field">
+                <label>Display name</label>
+                <input class="pw-input" id="regName" placeholder="e.g. Alice" value="Alice" />
+              </div>
+              <div class="pw-field">
+                <label>Capabilities</label>
+                <select class="pw-select" id="regBrowser">
+                  <option value="true" selected>browser: true</option>
+                  <option value="false">browser: false</option>
+                </select>
+              </div>
             </div>
-            <div>
-              <label>Label</label>
-              <input id="label" placeholder="e.g. repro" value="repro" />
-            </div>
-          </div>
-          <div class="btnrow">
-            <button id="btnUpload" class="primary">Presign + upload</button>
-          </div>
-          <label>Artifact ref (auto-filled)</label>
-          <pre id="artifactOut">{}</pre>
-          <div id="uploadStatus" class="status"></div>
-        </div>
 
-        <div class="card">
-          <h2>Submit</h2>
-          <div class="row">
-            <div>
-              <label>Expected</label>
-              <input id="expected" value="Expected behavior" />
+            <div class="pw-actions">
+              <button class="pw-btn primary" id="btnRegister">Register worker</button>
             </div>
-            <div>
-              <label>Observed</label>
-              <input id="observed" value="Observed behavior" />
+
+            <div class="pw-field">
+              <label>Worker token</label>
+              <input class="pw-input" id="token" placeholder="pw_wk_..." />
             </div>
+            <div class="pw-actions">
+              <button class="pw-btn" id="btnSaveToken">Save token</button>
+              <button class="pw-btn" id="btnMe">/api/worker/me</button>
+            </div>
+            <div id="authStatus" class="pw-status" role="status"></div>
           </div>
-          <label>Repro steps (one per line)</label>
-          <textarea id="steps">1. Do X
+
+          <div class="pw-card">
+            <div class="pw-card-title">
+              <h2>Job</h2>
+              <span class="pw-kicker">Claimable work</span>
+            </div>
+            <div class="pw-actions">
+              <button class="pw-btn primary" id="btnNext">GET /api/jobs/next</button>
+              <button class="pw-btn" id="btnClaim">POST /api/jobs/:jobId/claim</button>
+            </div>
+            <details class="pw-details" open>
+              <summary>Current job spec / state</summary>
+              <div class="pw-details-body">
+                <pre class="pw-codeblock" id="jobOut">{}</pre>
+              </div>
+            </details>
+            <div id="jobStatus" class="pw-status" role="status"></div>
+          </div>
+
+          <div class="pw-card">
+            <div class="pw-card-title">
+              <h2>Artifacts</h2>
+              <span class="pw-kicker">Presign + upload</span>
+            </div>
+            <div class="pw-field">
+              <label>Pick a file</label>
+              <input class="pw-input" id="file" type="file" />
+            </div>
+            <div class="pw-row">
+              <div class="pw-field">
+                <label>Kind</label>
+                <select class="pw-select" id="kind">
+                  <option value="screenshot">screenshot</option>
+                  <option value="snapshot">snapshot</option>
+                  <option value="pdf">pdf</option>
+                  <option value="log">log</option>
+                  <option value="video">video</option>
+                  <option value="other" selected>other</option>
+                </select>
+              </div>
+              <div class="pw-field">
+                <label>Label</label>
+                <input class="pw-input" id="label" placeholder="e.g. repro" value="repro" />
+              </div>
+            </div>
+            <div class="pw-actions">
+              <button class="pw-btn primary" id="btnUpload">Presign + upload</button>
+            </div>
+            <details class="pw-details">
+              <summary>Artifact ref (auto‑filled)</summary>
+              <div class="pw-details-body">
+                <pre class="pw-codeblock" id="artifactOut">{}</pre>
+              </div>
+            </details>
+            <div id="uploadStatus" class="pw-status" role="status"></div>
+          </div>
+
+          <div class="pw-card">
+            <div class="pw-card-title">
+              <h2>Submit</h2>
+              <span class="pw-kicker">Finalize your work</span>
+            </div>
+            <div class="pw-row">
+              <div class="pw-field">
+                <label>Expected</label>
+                <input class="pw-input" id="expected" value="Expected behavior" />
+              </div>
+              <div class="pw-field">
+                <label>Observed</label>
+                <input class="pw-input" id="observed" value="Observed behavior" />
+              </div>
+            </div>
+            <div class="pw-field">
+              <label>Repro steps (one per line)</label>
+              <textarea class="pw-textarea" id="steps">1. Do X
 2. Do Y
 3. Observe issue</textarea>
-          <div class="btnrow">
-            <button id="btnSubmit" class="primary">POST /api/jobs/:jobId/submit</button>
+            </div>
+            <div class="pw-actions">
+              <button class="pw-btn primary" id="btnSubmit">POST /api/jobs/:jobId/submit</button>
+            </div>
+            <details class="pw-details" open>
+              <summary>Response</summary>
+              <div class="pw-details-body">
+                <pre class="pw-codeblock" id="submitOut">{}</pre>
+              </div>
+            </details>
+            <div id="submitStatus" class="pw-status" role="status"></div>
           </div>
-          <label>Response</label>
-          <pre id="submitOut">{}</pre>
-          <div id="submitStatus" class="status"></div>
-        </div>
+        </section>
 
-        <div class="card">
-          <h2>Payouts</h2>
-          <div class="sub">Payout address verification (Base) + payout history (pending/paid/failed/refunded).</div>
+        <aside class="pw-stack">
+          <div class="pw-card">
+            <div class="pw-card-title">
+              <h2>Payouts</h2>
+              <span class="pw-kicker">Base address + history</span>
+            </div>
+            <p class="pw-muted">Set a payout address (Base / EVM) once; then check payout history.</p>
 
-          <label>Payout chain</label>
-          <select id="payoutChain">
-            <option value="base" selected>base</option>
-          </select>
+            <div class="pw-field">
+              <label>Payout chain</label>
+              <select class="pw-select" id="payoutChain">
+                <option value="base" selected>base</option>
+              </select>
+            </div>
 
-          <label>Payout address (EVM)</label>
-          <input id="payoutAddress" placeholder="0x..." />
+            <div class="pw-field">
+              <label>Payout address (EVM)</label>
+              <input class="pw-input" id="payoutAddress" placeholder="0x..." />
+            </div>
 
-          <div class="btnrow">
-            <button id="btnPayoutMessage">Get message to sign</button>
-            <button id="btnSetPayoutAddress" class="primary">Verify payout address</button>
+            <div class="pw-actions">
+              <button class="pw-btn" id="btnPayoutMessage">Get message to sign</button>
+              <button class="pw-btn primary" id="btnSetPayoutAddress">Verify payout address</button>
+            </div>
+
+            <details class="pw-details">
+              <summary>Message to sign</summary>
+              <div class="pw-details-body">
+                <pre class="pw-codeblock" id="payoutMessage"></pre>
+              </div>
+            </details>
+
+            <div class="pw-field">
+              <label>Signature</label>
+              <input class="pw-input" id="payoutSignature" placeholder="0x..." />
+            </div>
+            <div id="payoutAddrStatus" class="pw-status" role="status"></div>
+
+            <div class="pw-field">
+              <label>Status filter</label>
+              <input class="pw-input" id="payoutStatus" placeholder="pending|paid|failed|refunded" />
+            </div>
+            <div class="pw-actions">
+              <button class="pw-btn primary" id="btnListPayouts">GET /api/worker/payouts</button>
+            </div>
+            <details class="pw-details" open>
+              <summary>Response</summary>
+              <div class="pw-details-body">
+                <pre class="pw-codeblock" id="payoutOut">{}</pre>
+              </div>
+            </details>
+            <div id="payoutStatusMsg" class="pw-status" role="status"></div>
           </div>
-
-          <label>Message to sign</label>
-          <pre id="payoutMessage"></pre>
-
-          <label>Signature</label>
-          <input id="payoutSignature" placeholder="0x..." />
-          <div id="payoutAddrStatus" class="status"></div>
-
-          <label>Status filter</label>
-          <input id="payoutStatus" placeholder="pending|paid|failed|refunded" />
-          <div class="btnrow">
-            <button id="btnListPayouts" class="primary">GET /api/worker/payouts</button>
-          </div>
-          <label>Response</label>
-          <pre id="payoutOut">{}</pre>
-          <div id="payoutStatusMsg" class="status"></div>
-        </div>
+        </aside>
       </div>
-    </div>
+    </main>
 
     <script src="./app.js"></script>
   </body>

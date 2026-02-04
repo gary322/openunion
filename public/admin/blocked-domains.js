@@ -56,7 +56,7 @@ async function list() {
       <td class="mono">${r.domain}</td>
       <td>${r.reason || ''}</td>
       <td class="mono">${r.createdAt || ''}</td>
-      <td><button class="danger" data-del="${r.id}">Delete</button></td>
+      <td><button class="pw-btn danger" data-del="${r.id}">Delete</button></td>
     `;
     tbody.appendChild(tr);
   }
@@ -109,4 +109,3 @@ $('btnList').addEventListener('click', () => list().catch((e) => setStatus('list
 $('btnUpsert').addEventListener('click', () => upsert().catch((e) => setStatus('upsertStatus', String(e), 'bad')));
 
 setToken(getToken());
-
