@@ -3,6 +3,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
 import fs from "node:fs";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -203,6 +204,40 @@ function randomGatewayToken() {
   return randomBytes(32).toString("hex");
 }
 
+async function isPortFree(port) {
+  return await new Promise((resolve) => {
+    const server = net.createServer();
+    server.unref?.();
+    server.once("error", () => resolve(false));
+    server.listen(port, "127.0.0.1", () => {
+      server.close(() => resolve(true));
+    });
+  });
+}
+
+async function pickFreePort(preferredPort) {
+  const preferred = Number(preferredPort);
+  if (Number.isFinite(preferred) && preferred > 0) {
+    const ok = await isPortFree(preferred);
+    if (ok) return Math.floor(preferred);
+  }
+
+  // Ask the OS for an ephemeral free port.
+  return await new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.unref?.();
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const addr = server.address();
+      const port = typeof addr === "object" && addr ? addr.port : null;
+      server.close(() => {
+        if (!port) return reject(new Error("failed_to_pick_port"));
+        resolve(Number(port));
+      });
+    });
+  });
+}
+
 async function ensureGatewayConfigured(input, deps = {}) {
   const run = deps.run;
   const runRaw = deps.runRaw;
@@ -362,6 +397,7 @@ async function ensureGatewayRunning(input, deps = {}) {
   const run = deps.run;
   const runRaw = deps.runRaw;
   const log = deps.log ?? (() => {});
+  const openclawProfile = typeof input?.openclawProfile === "string" ? input.openclawProfile.trim() : "";
 
   // Detect "not loaded" gateway service and install it automatically. This is the most common
   // failure mode on fresh OpenClaw installs: `openclaw gateway restart` returns ok=true but
@@ -378,10 +414,33 @@ async function ensureGatewayRunning(input, deps = {}) {
     statusJson?.service?.loaded === false ||
     statusJson?.service?.runtime?.missingUnit === true;
 
+  const portConflict =
+    statusJson?.service?.loaded === true &&
+    statusJson?.port?.status === "busy" &&
+    (statusJson?.service?.runtime?.status ?? "") !== "running" &&
+    Array.isArray(statusJson?.port?.listeners) &&
+    statusJson.port.listeners.length > 0;
+
+  // If the caller requested an isolated profile and the default port is already in use (e.g. the
+  // user's main OpenClaw gateway is running), pick a free port and install/reinstall the profile's
+  // gateway service there.
+  if (openclawProfile && portConflict) {
+    const port = await pickFreePort(extractGatewayPort(statusJson) ?? 18789);
+    log(`[connect] gateway port is busy; reinstalling profile gateway on port ${port} …`);
+    await run(["gateway", "install", "--json", "--force", "--port", String(port)], { timeoutMs: 2 * 60_000 });
+    await run(["config", "set", "--json", "gateway.port", String(port)], { timeoutMs: 15_000 });
+  }
+
   if (needsInstall) {
     log("[connect] gateway service not installed; installing…");
+    const installArgs = ["gateway", "install", "--json"];
+    if (openclawProfile) {
+      const port = await pickFreePort(18789);
+      installArgs.push("--port", String(port));
+      await run(["config", "set", "--json", "gateway.port", String(port)], { timeoutMs: 15_000 });
+    }
     try {
-      await run(["gateway", "install", "--json"], { timeoutMs: 2 * 60_000 });
+      await run(installArgs, { timeoutMs: 2 * 60_000 });
     } catch (err) {
       throw new Error(
         [
@@ -413,7 +472,13 @@ async function ensureGatewayRunning(input, deps = {}) {
   if (restartJson?.result === "not-loaded" || restartJson?.service?.loaded === false) {
     log("[connect] gateway service not loaded after restart; installing + starting…");
     try {
-      await run(["gateway", "install", "--json"], { timeoutMs: 2 * 60_000 });
+      const installArgs = ["gateway", "install", "--json"];
+      if (openclawProfile) {
+        const port = await pickFreePort(18789);
+        installArgs.push("--port", String(port));
+        await run(["config", "set", "--json", "gateway.port", String(port)], { timeoutMs: 15_000 });
+      }
+      await run(installArgs, { timeoutMs: 2 * 60_000 });
       await run(["gateway", "start", "--json"], { timeoutMs: 2 * 60_000 });
     } catch (err) {
       throw new Error(
@@ -614,7 +679,7 @@ async function runConnect(input, deps = {}) {
 
   let gatewayStatusJson = null;
   await ensureGatewayRunning(
-    {},
+    { openclawProfile },
     {
       run,
       runRaw,

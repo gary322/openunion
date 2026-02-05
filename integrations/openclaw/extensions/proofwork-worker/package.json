@@ -1,6 +1,6 @@
 {
   "name": "@proofwork/proofwork-worker",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "OpenClaw plugin that runs a Proofwork worker loop in the background.",
   "private": false,
   "type": "module",
