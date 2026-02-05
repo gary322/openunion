@@ -124,6 +124,24 @@ const ARXIV_MAX_RESULTS = (() => {
   return Math.max(1, Math.min(10, Math.floor(n)));
 })();
 
+const REMOTIVE_API_URL = (() => {
+  const explicit = String(process.env.REMOTIVE_API_URL ?? "").trim();
+  if (explicit) return explicit;
+  const base = String(process.env.REMOTIVE_API_BASE_URL ?? "").trim();
+  if (!base) return "https://remotive.com/api/remote-jobs";
+  try {
+    return new URL("/api/remote-jobs", base).toString();
+  } catch {
+    return "https://remotive.com/api/remote-jobs";
+  }
+})();
+
+const GITHUB_API_BASE_URL = (() => {
+  const base = String(process.env.GITHUB_API_BASE_URL ?? "").trim();
+  if (base) return base.replace(/\/$/, "");
+  return "https://api.github.com";
+})();
+
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
@@ -1031,7 +1049,7 @@ async function getRemotiveJobsRowsFromApi(input) {
   const include = splitKeywordQuery(inputSpec?.include_keywords);
   const exclude = splitKeywordQuery(inputSpec?.exclude_keywords);
 
-  const apiUrl = "https://remotive.com/api/remote-jobs";
+  const apiUrl = REMOTIVE_API_URL;
   const res = await fetchJsonLimited({
     url: apiUrl,
     allowedOrigins: input.allowedOrigins,
@@ -1110,7 +1128,7 @@ async function getGithubReposFromApi(input) {
   for (const l of languages) qParts.push(`language:${l}`);
   if (licenseAllow[0]) qParts.push(`license:${licenseAllow[0]}`);
   const q = qParts.join(" ").trim();
-  const url = new URL("https://api.github.com/search/repositories");
+  const url = new URL("/search/repositories", GITHUB_API_BASE_URL);
   url.searchParams.set("q", q);
   url.searchParams.set("sort", "stars");
   url.searchParams.set("order", "desc");
@@ -1507,6 +1525,241 @@ async function runOpenClawBrowserFlowModule(input) {
   );
 
   return { artifacts, extracted };
+}
+
+function parseSitesList(raw) {
+  if (Array.isArray(raw)) {
+    return raw
+      .map((s) => String(s ?? "").trim())
+      .filter(Boolean)
+      .slice(0, 25);
+  }
+  if (typeof raw === "string") {
+    return raw
+      .split(/\r?\n/)
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .slice(0, 25);
+  }
+  return [];
+}
+
+function normalizeCssSelector(raw) {
+  const s = String(raw ?? "").trim();
+  if (!s) return "";
+  if (s.length > 400) throw new Error("selector_too_long");
+  return s;
+}
+
+function getMarketplaceSelectorConfig(job) {
+  const sp = job?.taskDescriptor?.site_profile ?? null;
+  if (!sp || typeof sp !== "object") return null;
+  const selectorsRaw = sp?.selectors && typeof sp.selectors === "object" ? sp.selectors : {};
+
+  const items = normalizeCssSelector(selectorsRaw?.items ?? selectorsRaw?.item ?? sp.items_selector ?? sp.itemsSelector ?? "");
+  const title = normalizeCssSelector(selectorsRaw?.title ?? sp.title_selector ?? sp.titleSelector ?? "");
+  const price = normalizeCssSelector(selectorsRaw?.price ?? sp.price_selector ?? sp.priceSelector ?? "");
+  const availability = normalizeCssSelector(
+    selectorsRaw?.availability ?? selectorsRaw?.stock ?? sp.stock_selector ?? sp.stockSelector ?? "",
+  );
+  const url = normalizeCssSelector(selectorsRaw?.url ?? sp.url_selector ?? sp.urlSelector ?? "");
+
+  if (!items && !title && !price && !availability && !url) return null;
+  return { items, title, price, availability, url };
+}
+
+function currencyFromText(raw) {
+  const s = String(raw ?? "");
+  if (s.includes("$")) return "USD";
+  if (s.includes("€")) return "EUR";
+  if (s.includes("£")) return "GBP";
+  return null;
+}
+
+function parsePriceNumber(raw) {
+  const s = String(raw ?? "").replace(/,/g, " ");
+  const m = s.match(/(\d+(?:\.\d{1,2})?)/);
+  if (!m?.[1]) return null;
+  const n = Number(m[1]);
+  return Number.isFinite(n) ? n : null;
+}
+
+function makeMarketplaceExtractFn(selectors) {
+  const itemsSel = selectors?.items ? JSON.stringify(selectors.items) : "null";
+  const titleSel = selectors?.title ? JSON.stringify(selectors.title) : "null";
+  const priceSel = selectors?.price ? JSON.stringify(selectors.price) : "null";
+  const availSel = selectors?.availability ? JSON.stringify(selectors.availability) : "null";
+  const urlSel = selectors?.url ? JSON.stringify(selectors.url) : "null";
+  // Keep this string stable so tests can detect the extractor call in mock openclaw.
+  const marker = "proofwork_marketplace_extract_v1";
+  return `() => {
+    const __pw = ${JSON.stringify(marker)};
+    void __pw;
+    const norm = (s) => String(s ?? "").replace(/\\s+/g, " ").trim();
+    const itemsSelector = ${itemsSel};
+    const titleSelector = ${titleSel};
+    const priceSelector = ${priceSel};
+    const availabilitySelector = ${availSel};
+    const urlSelector = ${urlSel};
+
+    const pickText = (root, sel) => {
+      try {
+        const el = sel ? root.querySelector(sel) : root;
+        return el ? norm(el.textContent) : "";
+      } catch {
+        return "";
+      }
+    };
+
+    const pickUrl = (root, sel) => {
+      try {
+        const el = sel
+          ? root.querySelector(sel)
+          : root.querySelector("a[href]") || (root.matches && root.matches("a[href]") ? root : null);
+        if (!el) return "";
+        const href = el.href || el.getAttribute("href") || "";
+        if (!href) return "";
+        try {
+          return new URL(href, location.href).toString();
+        } catch {
+          return String(href);
+        }
+      } catch {
+        return "";
+      }
+    };
+
+    let nodes = [];
+    try {
+      if (itemsSelector) nodes = Array.from(document.querySelectorAll(itemsSelector));
+    } catch {
+      nodes = [];
+    }
+    if (!nodes.length) nodes = [document.body];
+    nodes = nodes.slice(0, 20);
+
+    const out = [];
+    for (const n of nodes) {
+      const title = titleSelector ? pickText(n, titleSelector) : pickText(n, null) || pickText(n, "a[href]") || "";
+      const price_text = priceSelector ? pickText(n, priceSelector) : "";
+      const availability_text = availabilitySelector ? pickText(n, availabilitySelector) : "";
+      const url = pickUrl(n, urlSelector);
+      out.push({ title, price_text, availability_text, url });
+    }
+    return out;
+  }`;
+}
+
+function sanitizeMarketplaceItems(rawItems, pageUrl, allowedOrigins) {
+  const items = Array.isArray(rawItems) ? rawItems : [];
+  const out = [];
+  for (const it of items) {
+    if (!it || typeof it !== "object") continue;
+    const title = String(it.title ?? "").trim().slice(0, 400);
+    const priceText = String(it.price_text ?? it.priceText ?? "").trim().slice(0, 200);
+    const availabilityText = String(it.availability_text ?? it.availabilityText ?? "").trim().slice(0, 200);
+    const urlRaw = String(it.url ?? "").trim();
+    let url = pageUrl;
+    if (urlRaw) {
+      try {
+        url = new URL(urlRaw, pageUrl).toString();
+      } catch {
+        url = pageUrl;
+      }
+    }
+    try {
+      if (ORIGIN_ENFORCEMENT === "strict") assertUrlAllowed(url, allowedOrigins, "marketplace_item_url");
+      if (NO_LOGIN && looksLikeLoginText(url)) continue;
+    } catch {
+      continue;
+    }
+    const currency = currencyFromText(priceText) ?? undefined;
+    const price = parsePriceNumber(priceText) ?? undefined;
+    out.push({
+      title: title || "item",
+      price,
+      currency,
+      url,
+      availability_text: availabilityText || undefined,
+      observed_at: new Date().toISOString(),
+    });
+    if (out.length >= 20) break;
+  }
+  return out;
+}
+
+async function runOpenClawMarketplacePageModule(input) {
+  const td = input.job?.taskDescriptor ?? {};
+  const inputSpec = td?.input_spec ?? {};
+  const selectorCfg = getMarketplaceSelectorConfig(input.job);
+  const sites = parseSitesList(inputSpec?.sites);
+  const descriptorUrl = typeof inputSpec?.url === "string" ? inputSpec.url : null;
+  const startUrl = descriptorUrl || sites[0] || String(input.job?.journey?.startUrl ?? "");
+  if (!startUrl) throw new Error("missing_start_url");
+
+  await ensureOpenClawBrowserReady();
+
+  const allowedOrigins = input.allowedOrigins ?? compileAllowedOrigins(input.job);
+  const deadlineMs = Number.isFinite(Number(input.deadlineMs)) ? Number(input.deadlineMs) : Infinity;
+
+  if (Date.now() > deadlineMs) throw new Error("job_time_budget_exceeded");
+  if (ORIGIN_ENFORCEMENT === "strict") assertUrlAllowed(startUrl, allowedOrigins, "start_url");
+  if (NO_LOGIN && looksLikeLoginText(startUrl)) throw new Error(`no_login_blocked_url:${startUrl}`);
+
+  const opened = await runOpenClaw(["browser", "open", startUrl, "--json"], { timeoutMs: 30_000 });
+  const openJson = parseJsonFromStdout(opened.stdout);
+  const targetId = String(openJson?.targetId ?? "").trim();
+  if (!targetId) throw new Error("openclaw_browser_open_missing_target_id");
+
+  try {
+    await enforcePagePolicy({ targetId, allowedOrigins, what: "after_open" });
+
+    let extractedItems = [];
+    if (selectorCfg) {
+      try {
+        const fn = makeMarketplaceExtractFn(selectorCfg);
+        const r = await runOpenClaw(["browser", "evaluate", "--fn", fn, "--target-id", targetId, "--json"], {
+          timeoutMs: normalizeTimeoutMs({}, 25_000),
+        });
+        const j = parseJsonFromStdout(r.stdout);
+        extractedItems = sanitizeMarketplaceItems(j?.result, startUrl, allowedOrigins);
+      } catch (err) {
+        debugLog("marketplace selector extract failed", String(err?.message ?? err));
+        extractedItems = [];
+      }
+    }
+
+    const maxPriceRaw =
+      inputSpec?.max_price_usd ?? inputSpec?.maxPriceUsd ?? inputSpec?.max_price ?? inputSpec?.maxPrice ?? null;
+    const maxPrice = Number(maxPriceRaw);
+    if (Number.isFinite(maxPrice) && maxPrice > 0) {
+      extractedItems = extractedItems.filter((it) => !Number.isFinite(Number(it?.price)) || Number(it.price) <= maxPrice);
+    }
+
+    const shot = await runOpenClaw(
+      ["browser", "screenshot", targetId, "--full-page", "--type", "png", "--json"],
+      { timeoutMs: 45_000 },
+    );
+    const shotJson = parseJsonFromStdout(shot.stdout);
+    const outPath = String(shotJson?.path ?? "").trim();
+    if (!outPath) throw new Error("openclaw_browser_screenshot_missing_path");
+    const bytes = await readFile(outPath);
+    const detected = detectPngOrJpeg(bytes);
+    if (!detected) throw new Error("screenshot_unknown_format");
+    const screenshotArtifact = await uploadArtifact({
+      token: input.token,
+      jobId: input.job.jobId,
+      filename: `screenshot.${detected.ext}`,
+      contentType: detected.contentType,
+      bytes,
+      kind: "screenshot",
+      label: "openclaw_screenshot",
+    });
+
+    return { screenshotArtifact, extractedItems };
+  } finally {
+    await runOpenClaw(["browser", "close", targetId]).catch(() => undefined);
+  }
 }
 
 async function runOpenClawScreenshotModule(input) {
@@ -2404,6 +2657,8 @@ async function loop() {
     const claimedJob = claim.json?.data?.job ?? job;
     const leaseNonce = String(claim.json?.data?.leaseNonce ?? "");
     const td = claimedJob?.taskDescriptor ?? {};
+    const tdType = typeof td?.type === "string" ? td.type : "";
+    const isMarketplace = tdType.toLowerCase().includes("marketplace");
     const normalizedTags = parseCapabilityTags(claimedJob);
     const browserFlow = getBrowserFlowSpec(claimedJob);
     const requiredArtifacts = Array.isArray(td?.output_spec?.required_artifacts)
@@ -2441,7 +2696,13 @@ async function loop() {
         extracted = res.extracted ?? {};
       } else {
         if (wantsScreenshot) {
-          artifacts.push(await runOpenClawScreenshotModule({ token, job: claimedJob, allowedOrigins: jobAllowedOrigins, deadlineMs }));
+          if (isMarketplace) {
+            const mp = await runOpenClawMarketplacePageModule({ token, job: claimedJob, allowedOrigins: jobAllowedOrigins, deadlineMs });
+            artifacts.push(mp.screenshotArtifact);
+            if (mp.extractedItems?.length) extracted = { ...(extracted ?? {}), items: mp.extractedItems };
+          } else {
+            artifacts.push(await runOpenClawScreenshotModule({ token, job: claimedJob, allowedOrigins: jobAllowedOrigins, deadlineMs }));
+          }
         }
         if (wantsSnapshot) {
           const snap = await runOpenClawSnapshotModule({ token, job: claimedJob, allowedOrigins: jobAllowedOrigins, deadlineMs });

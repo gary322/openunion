@@ -127,6 +127,17 @@ function sha256Hex(input) {
   return createHash("sha256").update(String(input)).digest("hex");
 }
 
+function sanitizeWorkerKey(name) {
+  const base = String(name ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  const h = sha256Hex(String(name ?? "")).slice(0, 6);
+  const out = base ? `${base}-${h}` : h;
+  return out.slice(0, 40) || h;
+}
+
 function parseOpenClawVersion(raw) {
   const s = String(raw ?? "").trim();
   const m = s.match(/(\d{4})\.(\d+)\.(\d+)/);
@@ -373,6 +384,72 @@ async function waitForWorkerStatusFile(input) {
   }
 
   return null;
+}
+
+async function waitForWorkerStatusFiles(input) {
+  const start = Date.now();
+  const timeoutMs = Number(input.timeoutMs ?? 25_000);
+  const maxAgeMs = Number(input.maxAgeMs ?? 30_000);
+
+  const pluginRoot = path.join(input.stateDir, "plugins", "proofwork-worker");
+  const expectedHash = input.workspaceDir
+    ? sha256Hex(path.resolve(input.workspaceDir)).slice(0, 12)
+    : sha256Hex("global").slice(0, 12);
+  const expectedDir = path.join(pluginRoot, expectedHash);
+
+  const names = Array.isArray(input.workerNames) ? input.workerNames.map((n) => String(n ?? "").trim()).filter(Boolean) : [];
+  const expectedFiles = names.length
+    ? names.map((n) => ({ name: n, path: path.join(expectedDir, `status.${sanitizeWorkerKey(n)}.json`) }))
+    : [];
+
+  if (!expectedFiles.length) {
+    // Fallback to "any one" mode.
+    const one = await waitForWorkerStatusFile({ ...input, timeoutMs, maxAgeMs });
+    return one ? { statuses: { default: one } } : null;
+  }
+
+  while (Date.now() - start < timeoutMs) {
+    const out = {};
+    let okCount = 0;
+
+    for (const exp of expectedFiles) {
+      try {
+        if (!fs.existsSync(exp.path)) continue;
+        const raw = fs.readFileSync(exp.path, "utf8");
+        const json = safeJsonParse(raw);
+        const workerId = typeof json?.workerId === "string" ? json.workerId : "";
+        if (!workerId) continue;
+        if (json?.paused === true) continue;
+        const lastPollAt = typeof json?.lastPollAt === "number" ? json.lastPollAt : null;
+        if (!lastPollAt) continue;
+        if (Date.now() - lastPollAt > maxAgeMs) continue;
+        out[exp.name] = { statusFile: exp.path, status: json };
+        okCount += 1;
+      } catch {
+        // ignore
+      }
+    }
+
+    if (okCount === expectedFiles.length) return { statuses: out, workspaceHash: expectedHash, statusDir: expectedDir };
+    await new Promise((r) => setTimeout(r, 250));
+  }
+
+  const missing = expectedFiles
+    .map((e) => e.name)
+    .filter((n) => {
+      try {
+        const p = path.join(expectedDir, `status.${sanitizeWorkerKey(n)}.json`);
+        if (!fs.existsSync(p)) return true;
+        const raw = fs.readFileSync(p, "utf8");
+        const json = safeJsonParse(raw);
+        const lastPollAt = typeof json?.lastPollAt === "number" ? json.lastPollAt : 0;
+        return !lastPollAt || Date.now() - lastPollAt > maxAgeMs;
+      } catch {
+        return true;
+      }
+    });
+
+  return { error: { code: "status_timeout", missingWorkers: missing, statusDir: expectedDir, workspaceHash: expectedHash } };
 }
 
 function loadPathsContainProofworkWorker(loadPaths) {
@@ -669,7 +746,7 @@ async function runConnect(input, deps = {}) {
         name: "clips",
         enabled: true,
         allowTaskTypes: ["clips_highlights"],
-        supportedCapabilityTags: ["ffmpeg", "screenshot", "llm_summarize"],
+        supportedCapabilityTags: ["ffmpeg", "llm_summarize"],
       },
     ];
   }
@@ -718,10 +795,26 @@ async function runConnect(input, deps = {}) {
       timeoutMs: input.waitForWorkerMs,
       maxAgeMs: 30_000,
     });
-    if (!status) {
+    const workerNames = Array.isArray(cfg.workers) ? cfg.workers.map((w) => w?.name).filter(Boolean) : [];
+    const multi = preset !== "single";
+    const statuses = multi
+      ? await waitForWorkerStatusFiles({
+          stateDir,
+          workspaceDir,
+          workerNames,
+          timeoutMs: input.waitForWorkerMs,
+          maxAgeMs: 30_000,
+        })
+      : status
+        ? { statuses: { default: status } }
+        : null;
+
+    if (!statuses || statuses?.error) {
+      const missing = statuses?.error?.missingWorkers?.length ? `\nMissing workers: ${statuses.error.missingWorkers.join(", ")}` : "";
       throw new Error(
         [
           "proofwork_worker_not_running: Gateway is up, but the Proofwork worker did not report status in time.",
+          missing,
           "",
           "Try:",
           "- openclaw tui",
@@ -734,10 +827,65 @@ async function runConnect(input, deps = {}) {
         ].join("\n")
       );
     }
-    const workerId = typeof status.status?.workerId === "string" ? status.status.workerId : "";
-    const lastPollAt = typeof status.status?.lastPollAt === "number" ? status.status.lastPollAt : null;
+    const lines = [];
+    const renderOne = (name, st) => {
+      const workerId = typeof st?.workerId === "string" ? st.workerId : "";
+      const lastPollAt = typeof st?.lastPollAt === "number" ? st.lastPollAt : null;
+      const browserReady = typeof st?.browserReady === "boolean" ? st.browserReady : null;
+      const lastBrowserError = typeof st?.lastBrowserError === "string" ? st.lastBrowserError : "";
+      const ffmpegReady = typeof st?.ffmpegReady === "boolean" ? st.ffmpegReady : null;
+      const lastFfmpegError = typeof st?.lastFfmpegError === "string" ? st.lastFfmpegError : "";
+      const effective = Array.isArray(st?.effectiveCapabilityTags) ? st.effectiveCapabilityTags.map(String).filter(Boolean) : [];
+
+      lines.push(
+        `- ${name}: workerId=${workerId || "(unknown)"}${lastPollAt ? ` lastPollAt=${new Date(lastPollAt).toISOString()}` : ""}`
+      );
+      if (effective.length) lines.push(`  effectiveCapabilityTags: ${effective.join(",")}`);
+      if (browserReady === false) lines.push(`  browserReady=false (${lastBrowserError || "browser_unhealthy"})`);
+      if (ffmpegReady === false) lines.push(`  ffmpegReady=false (${lastFfmpegError || "ffmpeg_unhealthy"})`);
+    };
+
     log("");
-    log(`Proofwork worker is running. workerId=${workerId}${lastPollAt ? ` lastPollAt=${new Date(lastPollAt).toISOString()}` : ""}`);
+    if (multi) {
+      log("Proofwork workers are running:");
+      for (const name of workerNames) {
+        const st = statuses.statuses?.[name]?.status;
+        if (st) renderOne(name, st);
+      }
+      if (lines.length) log(lines.join("\n"));
+    } else {
+      const only = statuses.statuses?.default?.status;
+      log(`Proofwork worker is running.${only?.workerId ? ` workerId=${only.workerId}` : ""}`);
+      if (only) renderOne("default", only);
+      if (lines.length) log(lines.join("\n"));
+    }
+
+    // Post-setup warnings for common missing prerequisites.
+    const warnBrowser = multi
+      ? workerNames.some((name) => statuses.statuses?.[name]?.status?.browserReady === false)
+      : statuses.statuses?.default?.status?.browserReady === false;
+    const warnFfmpeg = multi
+      ? workerNames.some((name) => statuses.statuses?.[name]?.status?.ffmpegReady === false)
+      : statuses.statuses?.default?.status?.ffmpegReady === false;
+    if (warnBrowser) {
+      log("");
+      log("Warning: browser automation is not ready on this machine. Jobs/Marketplace tasks require a supported local browser.");
+      log("Install Chrome/Brave/Edge/Chromium, then restart the OpenClaw Gateway:");
+      log(`- openclaw${openclawProfile ? ` --profile ${openclawProfile}` : ""} gateway restart`);
+    }
+    if (warnFfmpeg) {
+      log("");
+      log("Warning: ffmpeg is not available. Clips tasks require ffmpeg on the worker machine.");
+      log("Install ffmpeg and restart the OpenClaw Gateway.");
+    }
+
+    const first = multi ? statuses.statuses?.[workerNames[0]]?.status : statuses.statuses?.default?.status;
+    const workerId = typeof first?.workerId === "string" ? first.workerId : "";
+    const lastPollAt = typeof first?.lastPollAt === "number" ? first.lastPollAt : null;
+    log("");
+    if (workerId) {
+      log(`Worker status ok. workerId=${workerId}${lastPollAt ? ` lastPollAt=${new Date(lastPollAt).toISOString()}` : ""}`);
+    }
   }
 
   log("");
@@ -755,8 +903,10 @@ export const __internal = {
   runCommand,
   safeJsonParse,
   sha256Hex,
+  sanitizeWorkerKey,
   resolveStateDirFromGatewayStatus,
   waitForWorkerStatusFile,
+  waitForWorkerStatusFiles,
   ensureGatewayRunning,
   runConnect,
 };

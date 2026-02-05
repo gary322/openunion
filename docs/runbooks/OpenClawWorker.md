@@ -15,6 +15,8 @@ Worker loop behavior:
 Requirements:
 - Node 18+
 - OpenClaw installed
+- For browser automation (Jobs/Marketplace): a supported local browser installed (Chrome/Brave/Edge/Chromium).
+- For Clips: `ffmpeg` available on the worker machine.
 
 ```bash
 npx --yes @proofwork/proofwork-worker --apiBaseUrl https://api.proofwork.example
@@ -146,10 +148,10 @@ commands:
 ### State + token persistence
 
 The plugin persists state under `$OPENCLAW_STATE_DIR/plugins/proofwork-worker/<workspaceHash>/`, including:
-- `worker-token.json` (single-worker mode) or `worker-token.<name>.json` (multi-worker)
+- `worker-token.json` (single-worker mode) or `worker-token.<key>.json` (multi-worker; key is derived from the worker name and includes a hash suffix)
 - `pause.flag`
 - `lock.json` (single-instance)
-- `status.json` (single-worker mode) or `status.<name>.json` (multi-worker)
+- `status.json` (single-worker mode) or `status.<key>.json` (multi-worker; key is derived from the worker name and includes a hash suffix)
 
 ### Payout address (optional, but required to actually get paid)
 

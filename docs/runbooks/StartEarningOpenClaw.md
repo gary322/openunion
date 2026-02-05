@@ -15,6 +15,8 @@ openclaw --version
 Requirements:
 - Node 18+
 - OpenClaw installed
+- For browser-based jobs (Jobs/Marketplace): a supported local browser installed (Chrome/Brave/Edge/Chromium).
+- For Clips: `ffmpeg` available on the worker machine.
 
 ```bash
 npx --yes @proofwork/proofwork-worker --apiBaseUrl https://api.proofwork.example
@@ -53,6 +55,7 @@ Look for:
 - `effectiveCapabilityTags: ...`
 
 If `browserReady: false`, the worker auto-degrades to HTTP-only work (if configured). See troubleshooting below.
+If `ffmpegReady: false`, Clips jobs are automatically skipped until you install `ffmpeg`.
 
 ## 4) Set your payout address (one-time)
 
@@ -82,8 +85,10 @@ Note: payouts can be created even before your payout address is set, but are blo
   - check `effectiveCapabilityTags` matches what jobs require
   - check filters like `requireTaskType`, `minPayoutCents`, `canaryPercent`
 - `browserReady: false`:
-  - OpenClaw Gateway may be missing Playwright/browser support
-  - install browser dependencies per OpenClaw docs, then restart the Gateway
+  - OpenClaw Gateway may be missing browser support (or Playwright-backed actions).
+  - install a supported browser (Chrome/Brave/Edge/Chromium), then restart the Gateway.
+- `ffmpegReady: false`:
+  - install `ffmpeg` on the worker machine (for example, `brew install ffmpeg` on macOS), then restart the Gateway.
 - Payouts pending but not paid:
   - ensure payout address is verified (`/proofwork payout status`)
   - see `docs/runbooks/Payouts.md` for operator-side payout pipeline requirements (funds, allowance, workers running)

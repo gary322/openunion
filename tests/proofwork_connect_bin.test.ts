@@ -139,9 +139,25 @@ describe('proofwork-connect (npx bin)', () => {
     await mkdir(workspaceDir, { recursive: true });
 
     const hash = __internal.sha256Hex(path.resolve(workspaceDir)).slice(0, 12);
-    const statusFile = path.join(stateDir, 'plugins', 'proofwork-worker', hash, 'status.workerA.json');
-    await mkdir(path.dirname(statusFile), { recursive: true });
-    await writeFile(statusFile, JSON.stringify({ workerId: 'wk_test_123', lastPollAt: Date.now() }, null, 2) + '\n');
+    const statusDir = path.join(stateDir, 'plugins', 'proofwork-worker', hash);
+    await mkdir(statusDir, { recursive: true });
+    const now = Date.now();
+    const workerNames = ['jobs', 'research', 'github', 'marketplace', 'clips'];
+    for (const name of workerNames) {
+      const key = __internal.sanitizeWorkerKey(name);
+      const statusFile = path.join(statusDir, `status.${key}.json`);
+      await writeFile(
+        statusFile,
+        JSON.stringify(
+          {
+            workerId: name === 'jobs' ? 'wk_test_123' : `wk_${name}`,
+            lastPollAt: now,
+          },
+          null,
+          2
+        ) + '\n'
+      );
+    }
 
     const calls: Array<{ cmd: string; args: string[] }> = [];
     const runCommand = async (cmd: string, args: string[]) => {
@@ -185,7 +201,8 @@ describe('proofwork-connect (npx bin)', () => {
       await rm(stateDir, { recursive: true, force: true });
     }
 
-    expect(logs.join('\n')).toContain('Proofwork worker is running. workerId=wk_test_123');
+    expect(logs.join('\n')).toContain('Proofwork workers are running:');
+    expect(logs.join('\n')).toContain('Worker status ok. workerId=wk_test_123');
     expect(calls.map((c) => [c.cmd, ...c.args].join(' '))).toContain('openclaw health --json');
   });
 });

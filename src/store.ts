@@ -294,7 +294,7 @@ export async function seedBuiltInApps() {
       default_descriptor: {
         schema_version: 'v1',
         type: 'clips_highlights',
-        capability_tags: ['ffmpeg', 'llm_summarize', 'screenshot'],
+        capability_tags: ['ffmpeg', 'llm_summarize'],
         input_spec: { vod_url: 'https://vod.example/test' },
         output_spec: {
           required_artifacts: [
@@ -1012,9 +1012,10 @@ export async function findClaimableJob(
 
     if (opts.capabilityTag && !jobTags.includes(opts.capabilityTag)) continue;
 
-    if (opts.supportedCapabilityTags && opts.supportedCapabilityTags.length) {
+    if (opts.supportedCapabilityTags) {
       const supported = new Set(opts.supportedCapabilityTags.filter((t) => typeof t === 'string' && t.length));
       // Job requires a tag the worker doesn't claim to support.
+      // NOTE: An explicitly empty supportedCapabilityTags list means "match nothing".
       if (jobTags.some((t) => !supported.has(t))) continue;
     } else {
       // Fallback: if the worker explicitly disables browser, do not assign browser-required jobs.

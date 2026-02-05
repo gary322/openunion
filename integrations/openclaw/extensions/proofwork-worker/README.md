@@ -2,6 +2,13 @@
 
 This package is an OpenClaw plugin that automatically runs a Proofwork worker loop when the OpenClaw Gateway starts.
 
+## Requirements
+
+- Node 18+
+- OpenClaw installed
+- For browser-based jobs (Jobs/Marketplace): a supported local browser installed (Chrome/Brave/Edge/Chromium).
+- For Clips: `ffmpeg` available on the worker machine.
+
 ## Install
 
 ```bash
