@@ -26,6 +26,9 @@ const API_BASE_URL = (process.env.PROOFWORK_API_BASE_URL ?? "http://localhost:30
 );
 const ONCE = String(process.env.ONCE ?? "").toLowerCase() === "true";
 const WAIT_FOR_DONE = String(process.env.WAIT_FOR_DONE ?? "").toLowerCase() === "true";
+const WORKER_DISPLAY_NAME =
+  String(process.env.PROOFWORK_WORKER_DISPLAY_NAME ?? process.env.WORKER_DISPLAY_NAME ?? "").trim() ||
+  "openclaw-universal";
 
 const OPENCLAW_BIN = String(process.env.OPENCLAW_BIN ?? "openclaw").trim() || "openclaw";
 const OPENCLAW_AGENT_ID_RAW = String(process.env.OPENCLAW_AGENT_ID ?? "").trim() || null;
@@ -64,6 +67,12 @@ const POLL_INTERVAL_MS = parseIntClamped(process.env.PROOFWORK_POLL_INTERVAL_MS 
 const ERROR_BACKOFF_MS = parseIntClamped(process.env.PROOFWORK_ERROR_BACKOFF_MS ?? 2000, 2000, 250, 60_000);
 const BROWSER_HEALTH_INTERVAL_MS = parseIntClamped(
   process.env.PROOFWORK_BROWSER_HEALTH_INTERVAL_MS ?? 60_000,
+  60_000,
+  5_000,
+  10 * 60_000,
+);
+const FFMPEG_HEALTH_INTERVAL_MS = parseIntClamped(
+  process.env.PROOFWORK_FFMPEG_HEALTH_INTERVAL_MS ?? 60_000,
   60_000,
   5_000,
   10 * 60_000,
@@ -392,7 +401,7 @@ async function ensureWorkerToken() {
 
   const reg = await apiFetch("/api/workers/register", {
     method: "POST",
-    body: { displayName: "openclaw-universal", capabilities: { openclaw: true } },
+    body: { displayName: WORKER_DISPLAY_NAME, capabilities: { openclaw: true } },
   });
   if (!reg.resp.ok) throw new Error(`worker_register_failed:${reg.resp.status}`);
   const token = String(reg.json?.token ?? "");
@@ -685,6 +694,9 @@ let lastBrowserHealthAt = 0;
 let browserHealthy = null;
 let lastBrowserHealthError = null;
 let effectiveCapabilityTagsState = null;
+let ffmpegHealthy = null;
+let lastFfmpegHealthAt = 0;
+let lastFfmpegHealthError = null;
 
 async function probeOpenClawBrowserHealth() {
   if (!OPENCLAW_BROWSER_PROFILE) {
@@ -742,8 +754,12 @@ async function probeOpenClawBrowserHealth() {
 }
 
 function computeEffectiveCapabilityTags(baseSupported) {
-  const base = Array.isArray(baseSupported) ? baseSupported.slice() : [];
+  let base = Array.isArray(baseSupported) ? baseSupported.slice() : [];
   if (!base.length) return [];
+
+  const needsFfmpeg = base.includes("ffmpeg");
+  if (needsFfmpeg && ffmpegHealthy === false) base = base.filter((t) => t !== "ffmpeg");
+
   const needsBrowser = base.includes("browser") || base.includes("screenshot");
   if (!needsBrowser) return base;
   // Strict safety: require a dedicated browser profile when claiming browser-tag jobs.
@@ -779,6 +795,45 @@ async function maybeUpdateBrowserHealth(baseSupported) {
     browserReady: browserHealthy,
     lastBrowserHealthAt: now,
     lastBrowserError: lastBrowserHealthError,
+    effectiveCapabilityTags: effectiveCapabilityTagsState,
+  });
+}
+
+async function probeFfmpegHealth() {
+  // Detect presence and basic operability of ffmpeg. This is required for `capability_tags: ["ffmpeg"]` jobs.
+  const res = await runBinary("ffmpeg", ["-version"], { timeoutMs: 5000 });
+  if (res.code === 0) return { ok: true };
+  const msg = String(res.stderr || res.stdout || "").trim().slice(0, 200);
+  return { ok: false, reason: msg ? `ffmpeg_failed:${msg}` : `ffmpeg_failed:${res.code}` };
+}
+
+async function maybeUpdateFfmpegHealth(baseSupported) {
+  const base = Array.isArray(baseSupported) ? baseSupported : [];
+  const needsFfmpeg = base.includes("ffmpeg");
+  if (!needsFfmpeg) {
+    ffmpegHealthy = null;
+    lastFfmpegHealthError = null;
+    effectiveCapabilityTagsState = computeEffectiveCapabilityTags(base);
+    await writeStatus({ effectiveCapabilityTags: effectiveCapabilityTagsState, ffmpegReady: null, lastFfmpegHealthAt: null, lastFfmpegError: null });
+    return;
+  }
+
+  const now = Date.now();
+  if (ffmpegHealthy !== null && now - lastFfmpegHealthAt < FFMPEG_HEALTH_INTERVAL_MS) {
+    effectiveCapabilityTagsState = computeEffectiveCapabilityTags(base);
+    return;
+  }
+
+  lastFfmpegHealthAt = now;
+  const res = await probeFfmpegHealth();
+  ffmpegHealthy = Boolean(res.ok);
+  lastFfmpegHealthError = res.ok ? null : String(res.reason ?? "ffmpeg_unhealthy");
+  effectiveCapabilityTagsState = computeEffectiveCapabilityTags(base);
+
+  await writeStatus({
+    ffmpegReady: ffmpegHealthy,
+    lastFfmpegHealthAt: now,
+    lastFfmpegError: lastFfmpegHealthError,
     effectiveCapabilityTags: effectiveCapabilityTagsState,
   });
 }
@@ -893,31 +948,204 @@ function parseArxivAtomFeed(xml) {
   return out;
 }
 
-async function getArxivReferencesFromApi(query) {
+async function getArxivReferencesFromApi(query, opts = {}) {
   const q = String(query ?? "").trim();
   if (!q) return [];
 
+  function pickArxivApiBaseUrl(allowedOrigins) {
+    const preferred = ARXIV_API_BASE_URL;
+    if (ORIGIN_ENFORCEMENT !== "strict") return preferred;
+    if (!allowedOrigins) return preferred;
+    try {
+      const origin = urlOriginStrict(preferred);
+      if (allowedOrigins.has(origin)) return preferred;
+    } catch {
+      // ignore
+    }
+    // Fallback: use a same-origin API endpoint if the preferred mirror origin isn't allowed.
+    // This keeps "strict origins" jobs working even if only https://arxiv.org is allowlisted.
+    if (allowedOrigins.has("https://arxiv.org")) return "https://arxiv.org/api/query";
+    if (allowedOrigins.has("http://arxiv.org")) return "http://arxiv.org/api/query";
+    if (allowedOrigins.has("https://export.arxiv.org")) return "https://export.arxiv.org/api/query";
+    if (allowedOrigins.has("http://export.arxiv.org")) return "http://export.arxiv.org/api/query";
+    return preferred;
+  }
+
   try {
-    const url = new URL(ARXIV_API_BASE_URL);
+    const url = new URL(pickArxivApiBaseUrl(opts.allowedOrigins ?? null));
     url.searchParams.set("search_query", `all:${q}`);
     url.searchParams.set("start", "0");
     url.searchParams.set("max_results", String(ARXIV_MAX_RESULTS));
 
-    const ac = new AbortController();
-    const t = setTimeout(() => ac.abort(), 30_000);
-    t.unref?.();
-    try {
-      const resp = await fetch(url.toString(), { method: "GET", headers: { Accept: "application/atom+xml" }, signal: ac.signal });
-      if (!resp.ok) return [];
-      const xml = await resp.text();
-      const parsed = parseArxivAtomFeed(xml).slice(0, ARXIV_MAX_RESULTS);
-      return parsed.map((p) => ({ id: `arxiv:${p.id}`, title: p.title, url: `https://arxiv.org/abs/${p.id}` }));
-    } finally {
-      clearTimeout(t);
+    const allowedOrigins = opts.allowedOrigins ?? null;
+    const deadlineMs = Number.isFinite(Number(opts.deadlineMs)) ? Number(opts.deadlineMs) : Infinity;
+    const { resp } = await fetchWithManualRedirects({
+      url: url.toString(),
+      allowedOrigins,
+      deadlineMs,
+      timeoutMs: 30_000,
+      headers: { Accept: "application/atom+xml", "User-Agent": "proofwork-worker" },
+    });
+    if (!resp || !resp.ok) return [];
+    const { bytes } = await readWebStreamLimited({ stream: resp.body, maxBytes: HTTP_MAX_BYTES });
+    const xml = bytes.length ? Buffer.from(bytes).toString("utf8") : "";
+    const parsed = parseArxivAtomFeed(xml).slice(0, ARXIV_MAX_RESULTS);
+    const refs = parsed.map((p) => ({ id: `arxiv:${p.id}`, title: p.title, url: `https://arxiv.org/abs/${p.id}` }));
+
+    if (ORIGIN_ENFORCEMENT === "strict" && allowedOrigins) {
+      for (const r of refs) {
+        assertUrlAllowed(r.url, allowedOrigins, "arxiv_reference_url");
+      }
     }
+
+    return refs;
   } catch {
     return [];
   }
+}
+
+function splitKeywordQuery(s) {
+  const raw = String(s ?? "").trim();
+  if (!raw) return [];
+  return raw
+    .split(/[,|]/g)
+    .map((x) => x.trim())
+    .filter(Boolean)
+    .slice(0, 20);
+}
+
+function includesAny(haystack, needles) {
+  const h = String(haystack ?? "").toLowerCase();
+  if (!h) return false;
+  const ns = Array.isArray(needles) ? needles : [];
+  return ns.some((n) => {
+    const t = String(n ?? "").trim().toLowerCase();
+    return t ? h.includes(t) : false;
+  });
+}
+
+async function getRemotiveJobsRowsFromApi(input) {
+  const inputSpec = input.inputSpec ?? {};
+  const titles = Array.isArray(inputSpec?.titles) ? inputSpec.titles.map((t) => String(t)).filter(Boolean).slice(0, 10) : [];
+  const location = typeof inputSpec?.location === "string" ? inputSpec.location.trim() : "";
+  const include = splitKeywordQuery(inputSpec?.include_keywords);
+  const exclude = splitKeywordQuery(inputSpec?.exclude_keywords);
+
+  const apiUrl = "https://remotive.com/api/remote-jobs";
+  const res = await fetchJsonLimited({
+    url: apiUrl,
+    allowedOrigins: input.allowedOrigins,
+    deadlineMs: input.deadlineMs,
+    timeoutMs: 25_000,
+    headers: { Accept: "application/json", "User-Agent": "proofwork-worker" },
+  });
+  if (!res.ok || !res.json) return [];
+  const jobs = Array.isArray(res.json?.jobs) ? res.json.jobs : [];
+  const rows = [];
+  for (const j of jobs) {
+    const title = String(j?.title ?? "");
+    const company = String(j?.company_name ?? j?.company ?? "");
+    const url = String(j?.url ?? "");
+    const postedAt = String(j?.publication_date ?? j?.posted_at ?? "");
+    const loc = String(j?.candidate_required_location ?? j?.location ?? "");
+    const txt = `${title} ${company} ${loc} ${String(j?.category ?? "")} ${String(j?.job_type ?? "")}`.trim();
+    if (titles.length && !includesAny(title, titles) && !includesAny(txt, titles)) continue;
+    if (location && location.toLowerCase() !== "remote") {
+      if (!includesAny(loc, [location]) && !includesAny(txt, [location])) continue;
+    }
+    if (include.length && !includesAny(txt, include)) continue;
+    if (exclude.length && includesAny(txt, exclude)) continue;
+    if (url) {
+      try {
+        if (ORIGIN_ENFORCEMENT === "strict") assertUrlAllowed(url, input.allowedOrigins, "remotive_job_url");
+      } catch {
+        continue;
+      }
+    }
+    rows.push({
+      title: title || "unknown",
+      company: company || "unknown",
+      location: loc || location || "remote",
+      url: url || "https://remotive.com",
+      posted_at: postedAt || new Date().toISOString(),
+      source: "remotive",
+      category: j?.category ?? undefined,
+      job_type: j?.job_type ?? undefined,
+    });
+    if (rows.length >= 25) break;
+  }
+  return rows;
+}
+
+function sanitizeGithubQueryTokens(idea) {
+  const s = String(idea ?? "").trim();
+  if (!s) return [];
+  return s
+    .replace(/[^\w\s-]/g, " ")
+    .split(/\s+/g)
+    .map((t) => t.trim())
+    .filter(Boolean)
+    .slice(0, 10);
+}
+
+async function getGithubReposFromApi(input) {
+  const inputSpec = input.inputSpec ?? {};
+  const idea = typeof inputSpec?.idea === "string" ? inputSpec.idea.trim() : "";
+  if (!idea) return [];
+  const tokens = sanitizeGithubQueryTokens(idea);
+  if (!tokens.length) return [];
+
+  const languages = Array.isArray(inputSpec?.languages)
+    ? inputSpec.languages.map((l) => String(l)).filter(Boolean).slice(0, 3)
+    : [];
+  const licenseAllow = Array.isArray(inputSpec?.license_allow)
+    ? inputSpec.license_allow.map((l) => String(l)).filter(Boolean).slice(0, 1)
+    : [];
+  const minStars = Number.isFinite(Number(inputSpec?.min_stars)) ? Math.max(0, Math.floor(Number(inputSpec.min_stars))) : 0;
+
+  const qParts = [];
+  qParts.push(tokens.join(" "));
+  qParts.push("fork:false");
+  if (minStars > 0) qParts.push(`stars:>=${minStars}`);
+  for (const l of languages) qParts.push(`language:${l}`);
+  if (licenseAllow[0]) qParts.push(`license:${licenseAllow[0]}`);
+  const q = qParts.join(" ").trim();
+  const url = new URL("https://api.github.com/search/repositories");
+  url.searchParams.set("q", q);
+  url.searchParams.set("sort", "stars");
+  url.searchParams.set("order", "desc");
+  url.searchParams.set("per_page", "10");
+
+  const res = await fetchJsonLimited({
+    url: url.toString(),
+    allowedOrigins: input.allowedOrigins,
+    deadlineMs: input.deadlineMs,
+    timeoutMs: 25_000,
+    headers: {
+      Accept: "application/vnd.github+json",
+      "User-Agent": "proofwork-worker",
+      "X-GitHub-Api-Version": "2022-11-28",
+    },
+  });
+  if (!res.ok) return [];
+  if (res.status === 403 || res.status === 429) return [];
+  const items = Array.isArray(res.json?.items) ? res.json.items : [];
+  const repos = [];
+  for (const it of items) {
+    const full = String(it?.full_name ?? it?.name ?? "").trim();
+    const htmlUrl = String(it?.html_url ?? "").trim();
+    const stars = Number(it?.stargazers_count ?? 0);
+    const license = it?.license?.spdx_id ? String(it.license.spdx_id) : it?.license?.key ? String(it.license.key) : null;
+    repos.push({
+      name: full || "unknown",
+      url: htmlUrl || "https://github.com",
+      license,
+      stars: Number.isFinite(stars) ? stars : 0,
+      description: it?.description ?? undefined,
+    });
+    if (repos.length >= 10) break;
+  }
+  return repos;
 }
 
 function parseJsonFromStdout(stdout) {
@@ -1429,7 +1657,7 @@ async function fetchWithManualRedirects(input) {
     const t = setTimeout(() => ac.abort(), input.timeoutMs ?? 30_000);
     t.unref?.();
     try {
-      resp = await fetch(url, { method: "GET", redirect: "manual", signal: ac.signal });
+      resp = await fetch(url, { method: "GET", redirect: "manual", headers: input.headers, signal: ac.signal });
     } finally {
       clearTimeout(t);
     }
@@ -1444,6 +1672,36 @@ async function fetchWithManualRedirects(input) {
     url = next;
   }
   return { url, resp };
+}
+
+async function fetchJsonLimited(input) {
+  const { url: finalUrl, resp } = await fetchWithManualRedirects({
+    url: input.url,
+    allowedOrigins: input.allowedOrigins,
+    deadlineMs: input.deadlineMs,
+    timeoutMs: input.timeoutMs ?? 30_000,
+    headers: input.headers,
+  });
+  if (!resp) throw new Error("http_missing_response");
+  const { bytes, truncated } = await readWebStreamLimited({ stream: resp.body, maxBytes: input.maxBytes ?? HTTP_MAX_BYTES });
+  const text = bytes.length ? Buffer.from(bytes).toString("utf8") : "";
+  let json = null;
+  if (text) {
+    try {
+      json = JSON.parse(text);
+    } catch {
+      json = null;
+    }
+  }
+  return {
+    finalUrl,
+    status: resp.status,
+    ok: resp.ok,
+    truncated,
+    contentType: resp.headers.get("content-type") ?? "",
+    json,
+    text,
+  };
 }
 
 async function runHttpModule(input) {
@@ -1583,6 +1841,8 @@ async function runStructuredJsonOutputsModule(input) {
   const inputSpec = td?.input_spec ?? {};
   const outputSpec = td?.output_spec ?? {};
   const extracted = input.extracted ?? {};
+  const allowedOrigins = input.allowedOrigins ?? compileAllowedOrigins(input.job);
+  const deadlineMs = Number.isFinite(Number(input.deadlineMs)) ? Number(input.deadlineMs) : Infinity;
 
   const required = Array.isArray(outputSpec?.required_artifacts) ? outputSpec.required_artifacts : [];
   const requiredOtherPrefixes = new Set(
@@ -1637,7 +1897,15 @@ async function runStructuredJsonOutputsModule(input) {
   if (requiredOtherPrefixes.has("rows") || outputSpec?.rows === true || type.includes("jobs")) {
     const titles = Array.isArray(inputSpec?.titles) ? inputSpec.titles.map((t) => String(t)).slice(0, 5) : [];
     const location = typeof inputSpec?.location === "string" ? inputSpec.location : "";
-    const extractedRows = Array.isArray(extracted.rows) ? extracted.rows : null;
+    let extractedRows = Array.isArray(extracted.rows) ? extracted.rows : null;
+    if ((!extractedRows || !extractedRows.length) && type.includes("jobs")) {
+      try {
+        extractedRows = await getRemotiveJobsRowsFromApi({ inputSpec, allowedOrigins, deadlineMs });
+      } catch (err) {
+        debugLog("remotive rows fetch failed", String(err?.message ?? err));
+        extractedRows = null;
+      }
+    }
     await emit("rows", {
       schema: "rows.v1",
       generated_at: new Date().toISOString(),
@@ -1649,7 +1917,15 @@ async function runStructuredJsonOutputsModule(input) {
 
   if (requiredOtherPrefixes.has("repos") || outputSpec?.repos === true || type.includes("github")) {
     const idea = typeof inputSpec?.idea === "string" ? inputSpec.idea : "";
-    const extractedRepos = Array.isArray(extracted.repos) ? extracted.repos : null;
+    let extractedRepos = Array.isArray(extracted.repos) ? extracted.repos : null;
+    if ((!extractedRepos || !extractedRepos.length) && type.includes("github")) {
+      try {
+        extractedRepos = await getGithubReposFromApi({ inputSpec, allowedOrigins, deadlineMs });
+      } catch (err) {
+        debugLog("github repos fetch failed", String(err?.message ?? err));
+        extractedRepos = null;
+      }
+    }
     await emit("repos", {
       schema: "repos.v1",
       generated_at: new Date().toISOString(),
@@ -1662,7 +1938,7 @@ async function runStructuredJsonOutputsModule(input) {
     const idea = typeof inputSpec?.idea === "string" ? inputSpec.idea : "";
     const llmRefs = type.includes("arxiv") ? await maybeGetArxivReferencesFromLlm(idea) : [];
     const extractedRefs = Array.isArray(extracted.references) ? extracted.references : null;
-    const apiRefs = llmRefs.length === 0 && idea ? await getArxivReferencesFromApi(idea) : [];
+    const apiRefs = llmRefs.length === 0 && idea ? await getArxivReferencesFromApi(idea, { allowedOrigins, deadlineMs }) : [];
     await emit("references", {
       schema: "references.v1",
       generated_at: new Date().toISOString(),
@@ -1953,6 +2229,7 @@ function preflightJobOrThrow(job, allowedOrigins) {
   // ffmpeg job inputs are also descriptor-controlled; preflight them so we don't claim and then refuse.
   const wantsFfmpeg = tags.includes("ffmpeg") || requiredArtifacts.some((r) => r && typeof r === "object" && String(r.kind ?? "") === "video");
   if (wantsFfmpeg) {
+    if (ffmpegHealthy === false) throw new Error("ffmpeg_unavailable");
     const vodUrl = td?.input_spec?.vod_url;
     if (typeof vodUrl !== "string" || !vodUrl.trim()) throw new Error("missing_vod_url");
     if (ORIGIN_ENFORCEMENT === "strict") assertUrlAllowed(vodUrl, allowedOrigins, "vod_url");
@@ -2035,6 +2312,7 @@ async function loop() {
     : undefined;
 
   await maybeUpdateBrowserHealth(baseSupported);
+  await maybeUpdateFfmpegHealth(baseSupported);
   await writeStatus({
     startedAt: Date.now(),
     pid: process.pid,
@@ -2053,6 +2331,7 @@ async function loop() {
     }
 
     await maybeUpdateBrowserHealth(baseSupported);
+    await maybeUpdateFfmpegHealth(baseSupported);
     const supported = effectiveCapabilityTagsState ?? computeEffectiveCapabilityTags(baseSupported);
     const exclude = excludeJobIdsCsv(refuseCache);
     await writeStatus({ paused: false, lastPollAt: Date.now(), excludeJobIdsCount: exclude ? exclude.split(",").length : 0 });
@@ -2177,6 +2456,7 @@ async function loop() {
 
       const wantsFfmpeg = normalizedTags.includes("ffmpeg") || requiredArtifacts.some((r) => r && typeof r === "object" && String(r.kind ?? "") === "video");
       if (wantsFfmpeg) {
+        if (ffmpegHealthy === false) throw new Error("ffmpeg_unavailable");
         const clipArt = await runFfmpegClipModule({ token, job: claimedJob, allowedOrigins: jobAllowedOrigins, deadlineMs });
         if (clipArt) artifacts.push(clipArt);
 
@@ -2184,7 +2464,15 @@ async function loop() {
         if (timelineArt) artifacts.push(timelineArt);
       }
 
-      artifacts.push(...(await runStructuredJsonOutputsModule({ token, job: claimedJob, extracted })));
+      artifacts.push(
+        ...(await runStructuredJsonOutputsModule({
+          token,
+          job: claimedJob,
+          extracted,
+          allowedOrigins: jobAllowedOrigins,
+          deadlineMs,
+        })),
+      );
 
       if (normalizedTags.includes("llm_summarize")) {
         artifacts.push(await runLlmSummarizeModule({ token, job: claimedJob, artifactsSoFar: artifacts.slice() }));

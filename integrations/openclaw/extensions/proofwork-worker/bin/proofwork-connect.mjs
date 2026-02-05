@@ -13,6 +13,7 @@ function parseArgs(argv) {
     pluginSpec: "@proofwork/proofwork-worker",
     openclawBin: "openclaw",
     browserProfile: "proofwork-worker",
+    preset: "app-suite",
     canaryPercent: undefined,
     healthCheck: true,
     doctor: false,
@@ -40,6 +41,15 @@ function parseArgs(argv) {
     if (a === "--browserProfile" || a === "--browser-profile") {
       out.browserProfile = String(argv[i + 1] ?? out.browserProfile);
       i += 1;
+      continue;
+    }
+    if (a === "--preset") {
+      out.preset = String(argv[i + 1] ?? out.preset);
+      i += 1;
+      continue;
+    }
+    if (a === "--single") {
+      out.preset = "single";
       continue;
     }
     if (a === "--canaryPercent" || a === "--canary-percent") {
@@ -80,6 +90,7 @@ function parseArgs(argv) {
   out.pluginSpec = String(out.pluginSpec ?? "").trim();
   out.openclawBin = String(out.openclawBin ?? "").trim() || "openclaw";
   out.browserProfile = String(out.browserProfile ?? "").trim() || "proofwork-worker";
+  out.preset = String(out.preset ?? "").trim() || "app-suite";
   return out;
 }
 
@@ -159,12 +170,20 @@ async function waitForWorkerStatusFile(input) {
   const pluginRoot = path.join(input.stateDir, "plugins", "proofwork-worker");
 
   const expectedHash = input.workspaceDir ? sha256Hex(path.resolve(input.workspaceDir)).slice(0, 12) : sha256Hex("global").slice(0, 12);
-  const expected = path.join(pluginRoot, expectedHash, "status.json");
+  const expectedDir = path.join(pluginRoot, expectedHash);
 
   const candidateStatusFiles = async () => {
     const out = [];
     try {
-      if (fs.existsSync(expected)) out.push(expected);
+      if (fs.existsSync(expectedDir)) {
+        const entries = fs.readdirSync(expectedDir, { withFileTypes: true });
+        for (const e of entries) {
+          if (!e.isFile()) continue;
+          if (!e.name.startsWith("status")) continue;
+          if (!e.name.endsWith(".json")) continue;
+          out.push(path.join(expectedDir, e.name));
+        }
+      }
     } catch {
       // ignore
     }
@@ -172,9 +191,15 @@ async function waitForWorkerStatusFile(input) {
       const dirs = fs.existsSync(pluginRoot) ? fs.readdirSync(pluginRoot, { withFileTypes: true }) : [];
       for (const d of dirs) {
         if (!d.isDirectory()) continue;
-        const p = path.join(pluginRoot, d.name, "status.json");
+        const dir = path.join(pluginRoot, d.name);
         try {
-          if (fs.existsSync(p)) out.push(p);
+          const entries = fs.readdirSync(dir, { withFileTypes: true });
+          for (const e of entries) {
+            if (!e.isFile()) continue;
+            if (!e.name.startsWith("status")) continue;
+            if (!e.name.endsWith(".json")) continue;
+            out.push(path.join(dir, e.name));
+          }
         } catch {
           // ignore
         }
@@ -348,8 +373,44 @@ async function runConnect(input, deps = {}) {
     apiBaseUrl,
     openclawBin,
     browserProfile: input.browserProfile,
+    workerDisplayName: os.hostname(),
     ...(Number.isFinite(input.canaryPercent) ? { canaryPercent: input.canaryPercent } : {}),
   };
+  const preset = String(input.preset ?? "app-suite").trim().toLowerCase();
+  if (preset !== "single") {
+    cfg.workers = [
+      {
+        name: "jobs",
+        enabled: true,
+        allowTaskTypes: ["jobs_scrape"],
+        supportedCapabilityTags: ["browser", "screenshot", "http", "llm_summarize"],
+      },
+      {
+        name: "research",
+        enabled: true,
+        allowTaskTypes: ["arxiv_research_plan"],
+        supportedCapabilityTags: ["http", "llm_summarize"],
+      },
+      {
+        name: "github",
+        enabled: true,
+        allowTaskTypes: ["github_scan"],
+        supportedCapabilityTags: ["http", "llm_summarize"],
+      },
+      {
+        name: "marketplace",
+        enabled: true,
+        allowTaskTypes: ["marketplace_drops"],
+        supportedCapabilityTags: ["browser", "screenshot"],
+      },
+      {
+        name: "clips",
+        enabled: true,
+        allowTaskTypes: ["clips_highlights"],
+        supportedCapabilityTags: ["ffmpeg", "screenshot", "llm_summarize"],
+      },
+    ];
+  }
   await run(["config", "set", "--json", "plugins.enabled", "true"]);
   await run(["config", "set", "--json", "plugins.entries.proofwork-worker.enabled", "true"]);
   await run(["config", "set", "--json", "plugins.entries.proofwork-worker.config", JSON.stringify(cfg)]);
@@ -448,10 +509,15 @@ async function main() {
         "Or (explicit bin):",
         "  npx --yes -p @proofwork/proofwork-worker proofwork-connect --apiBaseUrl https://api.proofwork.xyz",
         "",
+        "Defaults:",
+        "  --preset app-suite  (configures multiple specialized workers: jobs, research, github, marketplace, clips)",
+        "",
         "Options:",
         "  --plugin <path|.tgz|npm-spec>       Plugin to install (default: @proofwork/proofwork-worker)",
         "  --openclaw <bin>                   OpenClaw CLI path (default: openclaw)",
         "  --browserProfile <name>            Dedicated worker browser profile (default: proofwork-worker)",
+        "  --preset <app-suite|single>        Configure a multi-worker preset (default: app-suite)",
+        "  --single                           Alias for --preset single",
         "  --canaryPercent <0..100>           Optional canary sampling percent",
         "  --no-health-check                  Skip post-setup health checks (gateway + worker status file)",
         "  --doctor                           Print OpenClaw doctor output (non-interactive)",

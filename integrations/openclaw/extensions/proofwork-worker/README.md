@@ -34,8 +34,21 @@ In OpenClaw TUI/chat:
 - `/proofwork payouts pending|paid|failed|refunded`
 - `/proofwork earnings`
 
+If you configured multiple workers (`config.workers[]`), you can target payout-related commands to a specific
+worker:
+
+- `/proofwork payout status --worker jobs`
+- `/proofwork payouts pending --worker research`
+
 ## One-command connect (optional)
 
 ```bash
 npx --yes @proofwork/proofwork-worker --apiBaseUrl https://api.proofwork.example
+```
+
+By default, `proofwork-connect` configures multiple specialized worker loops (jobs, research, github,
+marketplace, clips). To configure a single worker loop instead:
+
+```bash
+npx --yes @proofwork/proofwork-worker --apiBaseUrl https://api.proofwork.example --single
 ```

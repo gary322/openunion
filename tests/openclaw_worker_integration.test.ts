@@ -298,7 +298,34 @@ process.exit(0);
     // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
     await once(arxivServer, 'listening');
     const arxivAddr: any = arxivServer.address();
+    const arxivOrigin = `http://127.0.0.1:${arxivAddr.port}`;
     const arxivApiBaseUrl = `http://127.0.0.1:${arxivAddr.port}/api/query`;
+
+    // Strict origin enforcement applies to worker-side HTTP fetches. Allow the stub arXiv origin
+    // for this test job so the worker can fetch references without external network access.
+    const b = await pool.query('SELECT allowed_origins FROM bounties WHERE id=$1', [job.bountyId]);
+    const curAllowedRaw = b.rows?.[0]?.allowed_origins;
+    const curAllowed: string[] = Array.isArray(curAllowedRaw)
+      ? curAllowedRaw.map((o: any) => String(o))
+      : typeof curAllowedRaw === 'string'
+        ? (JSON.parse(curAllowedRaw) as any[]).map((o: any) => String(o))
+        : [];
+    const nextAllowed = Array.from(new Set([...curAllowed, arxivOrigin, 'https://arxiv.org']));
+    await pool.query('UPDATE bounties SET allowed_origins=$1 WHERE id=$2', [JSON.stringify(nextAllowed), job.bountyId]);
+    const orgRes = await pool.query('SELECT org_id FROM bounties WHERE id=$1', [job.bountyId]);
+    const bountyOrgId = String(orgRes.rows?.[0]?.org_id ?? 'org_demo');
+    await pool.query(
+      `INSERT INTO origins (id, org_id, origin, status, method, token, verified_at, created_at)
+       VALUES ($1,$2,$3,'verified','http_file','tok', now(), now())
+       ON CONFLICT (id) DO NOTHING`,
+      [`orig_stub_arxiv_${arxivAddr.port}`, bountyOrgId, arxivOrigin],
+    );
+    await pool.query(
+      `INSERT INTO origins (id, org_id, origin, status, method, token, verified_at, created_at)
+       VALUES ($1,$2,$3,'verified','http_file','tok', now(), now())
+       ON CONFLICT (id) DO NOTHING`,
+      [`orig_stub_arxiv_org_${arxivAddr.port}`, bountyOrgId, 'https://arxiv.org'],
+    );
 
     const descriptor = {
       schema_version: 'v1',

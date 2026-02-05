@@ -45,7 +45,7 @@ describe('proofwork-connect (npx bin)', () => {
     await mkdir(workspaceDir, { recursive: true });
 
     const hash = __internal.sha256Hex(path.resolve(workspaceDir)).slice(0, 12);
-    const statusFile = path.join(stateDir, 'plugins', 'proofwork-worker', hash, 'status.json');
+    const statusFile = path.join(stateDir, 'plugins', 'proofwork-worker', hash, 'status.workerA.json');
     await mkdir(path.dirname(statusFile), { recursive: true });
     await writeFile(statusFile, JSON.stringify({ workerId: 'wk_test_123', lastPollAt: Date.now() }, null, 2) + '\n');
 
@@ -95,4 +95,3 @@ describe('proofwork-connect (npx bin)', () => {
     expect(calls.map((c) => [c.cmd, ...c.args].join(' '))).toContain('openclaw health --json');
   });
 });
-

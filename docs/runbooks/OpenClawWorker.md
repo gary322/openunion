@@ -23,10 +23,13 @@ npx --yes @proofwork/proofwork-worker --apiBaseUrl https://api.proofwork.example
 This runs the package’s `proofwork-connect` command, which will:
 - install the plugin from npm
 - set the required config
+- by default, configure multiple specialized worker loops (jobs, research, github, marketplace, clips)
 - ensure the OpenClaw Gateway service is installed + running (auto-installs if needed)
 - restart the OpenClaw Gateway and wait for the Proofwork worker status file (health check)
 
 Optional flags:
+- `--preset app-suite|single` (default: `app-suite`)
+- `--single` (alias for `--preset single`)
 - `--no-health-check` (skip the post-setup checks)
 - `--doctor` (print `openclaw doctor --non-interactive` output)
 
@@ -134,13 +137,19 @@ The plugin registers a command:
 - `/proofwork payouts [pending|paid|failed|refunded] [page] [limit]`
 - `/proofwork earnings`
 
+If you configured multiple workers (`config.workers[]`), you can target a specific worker for payout-related
+commands:
+
+- `/proofwork payout status --worker jobs`
+- `/proofwork payouts pending --worker research`
+
 ### State + token persistence
 
 The plugin persists state under `$OPENCLAW_STATE_DIR/plugins/proofwork-worker/<workspaceHash>/`, including:
-- `worker-token.json` (persisted `token` + `workerId`)
+- `worker-token.json` (single-worker mode) or `worker-token.<name>.json` (multi-worker)
 - `pause.flag`
 - `lock.json` (single-instance)
-- `status.json` (last poll/job/error timestamps)
+- `status.json` (single-worker mode) or `status.<name>.json` (multi-worker)
 
 ### Payout address (optional, but required to actually get paid)
 

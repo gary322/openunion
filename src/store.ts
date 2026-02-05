@@ -73,6 +73,7 @@ function appFromRow(row: Selectable<AppsTable>): App {
     public: Boolean(row.public),
     status: (row.status as any) === 'disabled' ? 'disabled' : 'active',
     defaultDescriptor: ((row.default_descriptor ?? {}) as any) || {},
+    publicAllowedOrigins: ((row.public_allowed_origins_json ?? []) as any) || [],
     uiSchema: ((row.ui_schema ?? {}) as any) || {},
     createdAt: (row.created_at as any as Date).getTime(),
     updatedAt: (row.updated_at as any as Date).getTime(),
@@ -289,6 +290,7 @@ export async function seedBuiltInApps() {
       task_type: 'clips_highlights',
       name: 'Clips',
       description: 'VOD clipping, highlights, timestamping.',
+      public_allowed_origins: [],
       default_descriptor: {
         schema_version: 'v1',
         type: 'clips_highlights',
@@ -396,6 +398,7 @@ export async function seedBuiltInApps() {
       task_type: 'marketplace_drops',
       name: 'Marketplace',
       description: 'Price checks, drops, screenshots.',
+      public_allowed_origins: [],
       default_descriptor: {
         schema_version: 'v1',
         type: 'marketplace_drops',
@@ -489,6 +492,7 @@ export async function seedBuiltInApps() {
       task_type: 'jobs_scrape',
       name: 'Jobs',
       description: 'Job scraping for a personal hunt.',
+      public_allowed_origins: ['https://remotive.com'],
       default_descriptor: {
         schema_version: 'v1',
         type: 'jobs_scrape',
@@ -563,6 +567,7 @@ export async function seedBuiltInApps() {
       task_type: 'travel_deals',
       name: 'Travel',
       description: 'Flights/hotels deal hunting.',
+      public_allowed_origins: [],
       default_descriptor: {
         schema_version: 'v1',
         type: 'travel_deals',
@@ -614,6 +619,7 @@ export async function seedBuiltInApps() {
       task_type: 'arxiv_research_plan',
       name: 'Research',
       description: 'ArXiv idea to research-grade plan.',
+      public_allowed_origins: ['https://export.arxiv.org', 'https://arxiv.org'],
       default_descriptor: {
         schema_version: 'v1',
         type: 'arxiv_research_plan',
@@ -665,6 +671,7 @@ export async function seedBuiltInApps() {
       task_type: 'github_scan',
       name: 'GitHub Scan',
       description: 'Scan GitHub for similar repos/components.',
+      public_allowed_origins: ['https://api.github.com', 'https://github.com', 'https://raw.githubusercontent.com'],
       default_descriptor: {
         schema_version: 'v1',
         type: 'github_scan',
@@ -718,6 +725,8 @@ export async function seedBuiltInApps() {
         public: true,
         status: 'active',
         default_descriptor: a.default_descriptor ?? {},
+        // JSONB column: ensure arrays are passed as JSON, not Postgres text[].
+        public_allowed_origins_json: JSON.stringify((a as any).public_allowed_origins ?? []),
         ui_schema: (a as any).ui_schema ?? {},
         created_at: now,
         updated_at: now,
@@ -732,6 +741,7 @@ export async function seedBuiltInApps() {
           public: true,
           status: 'active',
           default_descriptor: a.default_descriptor ?? {},
+          public_allowed_origins_json: JSON.stringify((a as any).public_allowed_origins ?? []),
           ui_schema: (a as any).ui_schema ?? {},
           updated_at: now,
         })
@@ -923,6 +933,29 @@ export async function findClaimableJob(
   const candidates = await q.execute();
 
   let best: { score: number; job: Job; bounty: Bounty } | undefined;
+  const systemAppPublicOriginsCache = new Map<string, Set<string> | null>();
+
+  async function getSystemAppPublicOriginSet(taskType: string): Promise<Set<string> | null> {
+    const t = String(taskType ?? '').trim();
+    if (!t) return null;
+    if (systemAppPublicOriginsCache.has(t)) return systemAppPublicOriginsCache.get(t) ?? null;
+    const app = await getAppByTaskType(t);
+    if (!app || app.ownerOrgId !== 'org_system' || !Array.isArray(app.publicAllowedOrigins) || !app.publicAllowedOrigins.length) {
+      systemAppPublicOriginsCache.set(t, null);
+      return null;
+    }
+    const normalized = new Set<string>();
+    for (const o of app.publicAllowedOrigins) {
+      try {
+        normalized.add(normalizeOrigin(String(o)));
+      } catch {
+        // ignore invalid
+      }
+    }
+    const out = normalized.size ? normalized : null;
+    systemAppPublicOriginsCache.set(t, out);
+    return out;
+  }
 
   for (const row of candidates as any[]) {
     if (excludeSet && excludeSet.has(String(row.job_id))) continue;
@@ -960,13 +993,19 @@ export async function findClaimableJob(
       taskDescriptor: (row.bounty_task_descriptor ?? undefined) as any,
     };
 
-    // Re-check bounty origins remain verified (revokes should take effect).
-    const originChecks = await Promise.all(bounty.allowedOrigins.map((o) => originAllowed(bounty.orgId, o)));
+    const descriptor = (job.taskDescriptor as any) ?? (bounty.taskDescriptor as any);
+    const descriptorType = typeof descriptor?.type === 'string' ? String(descriptor.type) : '';
+    const systemPublicOrigins = await getSystemAppPublicOriginSet(descriptorType);
+
+    // Re-check bounty origins remain verified (revokes should take effect), except for system app public origins.
+    const originsToVerify = systemPublicOrigins
+      ? bounty.allowedOrigins.filter((o) => !systemPublicOrigins.has(String(o)))
+      : bounty.allowedOrigins;
+    const originChecks = await Promise.all(originsToVerify.map((o) => originAllowed(bounty.orgId, o)));
     if (!originChecks.every(Boolean)) continue;
 
     // Optional filters
     if (opts.minPayoutCents && (bounty.payoutCents ?? 0) < opts.minPayoutCents) continue;
-    const descriptor = (job.taskDescriptor as any) ?? (bounty.taskDescriptor as any);
     const jobTagsRaw = Array.isArray(descriptor?.capability_tags) ? descriptor.capability_tags : [];
     // For legacy bounties/jobs with no descriptor, assume browser capability is required.
     const jobTags: string[] = jobTagsRaw.length ? jobTagsRaw.filter((t: any) => typeof t === 'string') : ['browser'];
@@ -1915,6 +1954,7 @@ export async function createOrgApp(
       public: input.public ?? true,
       status: 'active',
       default_descriptor: input.defaultDescriptor ?? {},
+      public_allowed_origins_json: JSON.stringify([]),
       ui_schema: input.uiSchema ?? {},
       created_at: now,
       updated_at: now,

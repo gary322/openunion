@@ -95,6 +95,7 @@ import {
   checkOrigin,
   revokeOrigin,
   originAllowed,
+  normalizeOrigin,
   registerOrg,
 } from './buyer.js';
 import {
@@ -1766,11 +1767,18 @@ export function buildServer(opts: { taskDescriptorBrowserFlowValidationGate?: bo
 
   app.post('/api/bounties', { preHandler: (app as any).authenticateBuyer }, async (request: any, reply) => {
     const body = request.body as any;
-    if (!body.title || !body.description || !Array.isArray(body.allowedOrigins) || body.allowedOrigins.length === 0) {
-      return reply.code(400).send({ error: { code: 'invalid', message: 'title, description, allowedOrigins required' } });
+    if (!body.title || !body.description) {
+      return reply.code(400).send({ error: { code: 'invalid', message: 'title, description required' } });
     }
+
+    const allowedOriginsInput = body.allowedOrigins ?? body.allowed_origins;
+    if (allowedOriginsInput !== undefined && !Array.isArray(allowedOriginsInput)) {
+      return reply.code(400).send({ error: { code: 'invalid', message: 'allowedOrigins must be an array' } });
+    }
+    const buyerAllowedOriginsRaw = Array.isArray(allowedOriginsInput) ? allowedOriginsInput : [];
     const rawDescriptor = body.taskDescriptor ?? body.task_descriptor;
     let taskDescriptor: any | undefined;
+    let appRecForType: any | undefined;
     if (rawDescriptor !== undefined) {
       if (!isTaskDescriptorEnabled()) {
         return reply.code(409).send({ error: { code: 'feature_disabled', message: 'task_descriptor is disabled' } });
@@ -1800,27 +1808,60 @@ export function buildServer(opts: { taskDescriptorBrowserFlowValidationGate?: bo
     // Enforce app/task_type ownership so other orgs cannot spoof another platform's task type.
     if (taskDescriptor?.type) {
       const type = String(taskDescriptor.type);
-      const appRec = await getAppByTaskType(type);
-      if (!appRec) {
+      appRecForType = await getAppByTaskType(type);
+      if (!appRecForType) {
         return reply.code(400).send({ error: { code: 'app_not_registered', message: 'taskDescriptor.type is not registered; create an app first' } });
       }
-      if (appRec.status === 'disabled') {
+      if (appRecForType.status === 'disabled') {
         return reply.code(409).send({ error: { code: 'app_disabled', message: 'app is disabled' } });
       }
-      const ownerOrgId = appRec.ownerOrgId;
+      const ownerOrgId = appRecForType.ownerOrgId;
       if (ownerOrgId !== request.orgId && ownerOrgId !== 'org_system') {
         return reply.code(403).send({ error: { code: 'forbidden', message: 'task type belongs to another org' } });
       }
     }
 
-    // verify allowed origins belong to org
-    const checks = await Promise.all(body.allowedOrigins.map((o: string) => originAllowed(request.orgId, o)));
-    const allVerified = checks.every(Boolean);
-    if (!allVerified) return reply.code(400).send({ error: { code: 'origin_not_verified', message: 'allowedOrigins must be verified' } });
+    const publicOriginsRaw =
+      appRecForType?.ownerOrgId === 'org_system' && Array.isArray(appRecForType?.publicAllowedOrigins)
+        ? appRecForType.publicAllowedOrigins
+        : [];
+    const publicOriginsNormalized: string[] = [];
+    for (const o of publicOriginsRaw) {
+      try {
+        publicOriginsNormalized.push(normalizeOrigin(String(o)));
+      } catch {
+        // ignore invalid app data (treated as absent)
+      }
+    }
+    const publicOriginSet = new Set(publicOriginsNormalized);
+
+    const buyerOriginsNormalized: string[] = [];
+    for (const o of buyerAllowedOriginsRaw) {
+      try {
+        buyerOriginsNormalized.push(normalizeOrigin(String(o)));
+      } catch (err: any) {
+        return reply.code(400).send({ error: { code: 'invalid', message: `invalid_allowed_origin:${String(o)}` } });
+      }
+    }
+
+    const toVerify = buyerOriginsNormalized.filter((o) => !publicOriginSet.has(o));
+    if (toVerify.length) {
+      const checks = await Promise.all(toVerify.map((o: string) => originAllowed(request.orgId, o)));
+      const allVerified = checks.every(Boolean);
+      if (!allVerified) return reply.code(400).send({ error: { code: 'origin_not_verified', message: 'allowedOrigins must be verified' } });
+    }
+
+    const effectiveAllowedOriginsSet = new Set<string>();
+    for (const o of buyerOriginsNormalized) effectiveAllowedOriginsSet.add(o);
+    for (const o of publicOriginsNormalized) effectiveAllowedOriginsSet.add(o);
+    const effectiveAllowedOrigins = Array.from(effectiveAllowedOriginsSet);
+    if (!effectiveAllowedOrigins.length) {
+      return reply.code(400).send({ error: { code: 'invalid', message: 'allowedOrigins required (or use a system app with public origins)' } });
+    }
 
     // Defense-in-depth: block global disallowed domains even if an origin was previously verified.
     try {
-      await Promise.all(body.allowedOrigins.map((o: string) => assertUrlNotBlocked(o)));
+      await Promise.all(effectiveAllowedOrigins.map((o: string) => assertUrlNotBlocked(o)));
     } catch (err: any) {
       const msg = String(err?.message ?? err);
       if (msg.startsWith('blocked_domain:')) return reply.code(403).send({ error: { code: 'blocked_domain', message: msg } });
@@ -1838,7 +1879,7 @@ export function buildServer(opts: { taskDescriptorBrowserFlowValidationGate?: bo
 
     let bounty: any;
     try {
-      bounty = await createBounty({ ...body, payoutCents, taskDescriptor, orgId: request.orgId });
+      bounty = await createBounty({ ...body, allowedOrigins: effectiveAllowedOrigins, payoutCents, taskDescriptor, orgId: request.orgId });
     } catch (err: any) {
       const msg = String(err?.message ?? err);
       if (msg.startsWith('blocked_domain:')) {
@@ -1862,9 +1903,29 @@ export function buildServer(opts: { taskDescriptorBrowserFlowValidationGate?: bo
     if (!bounty) return reply.code(404).send({ error: { code: 'not_found', message: 'bounty not found' } });
     if (bounty.orgId !== request.orgId) return reply.code(403).send({ error: { code: 'forbidden', message: 'wrong org' } });
     if (bounty.status !== 'draft' && bounty.status !== 'paused') return reply.code(409).send({ error: { code: 'bad_state', message: 'must be draft or paused' } });
-    const checks = await Promise.all(bounty.allowedOrigins.map((o) => originAllowed(bounty.orgId, o)));
-    const allVerified = checks.every(Boolean);
-    if (!allVerified) return reply.code(400).send({ error: { code: 'origin_not_verified', message: 'allowedOrigins must be verified' } });
+
+    const td: any = (bounty as any).taskDescriptor ?? {};
+    const type = typeof td?.type === 'string' ? String(td.type) : '';
+    let publicOriginSet = new Set<string>();
+    if (type) {
+      const appRec = await getAppByTaskType(type);
+      if (appRec?.ownerOrgId === 'org_system' && Array.isArray(appRec.publicAllowedOrigins)) {
+        for (const o of appRec.publicAllowedOrigins) {
+          try {
+            publicOriginSet.add(normalizeOrigin(String(o)));
+          } catch {
+            // ignore
+          }
+        }
+      }
+    }
+
+    const originsToVerify = (bounty.allowedOrigins ?? []).filter((o) => !publicOriginSet.has(String(o)));
+    if (originsToVerify.length) {
+      const checks = await Promise.all(originsToVerify.map((o) => originAllowed(bounty.orgId, o)));
+      const allVerified = checks.every(Boolean);
+      if (!allVerified) return reply.code(400).send({ error: { code: 'origin_not_verified', message: 'allowedOrigins must be verified' } });
+    }
 
     try {
       await Promise.all(bounty.allowedOrigins.map((o) => assertUrlNotBlocked(o)));
