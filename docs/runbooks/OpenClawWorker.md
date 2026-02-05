@@ -23,7 +23,12 @@ npx --yes @proofwork/proofwork-worker --apiBaseUrl https://api.proofwork.example
 This runs the package’s `proofwork-connect` command, which will:
 - install the plugin from npm
 - set the required config
-- restart the OpenClaw Gateway
+- ensure the OpenClaw Gateway service is installed + running (auto-installs if needed)
+- restart the OpenClaw Gateway and wait for the Proofwork worker status file (health check)
+
+Optional flags:
+- `--no-health-check` (skip the post-setup checks)
+- `--doctor` (print `openclaw doctor --non-interactive` output)
 
 If you prefer the explicit bin form:
 

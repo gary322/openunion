@@ -22,6 +22,13 @@ npx --yes @proofwork/proofwork-worker --apiBaseUrl https://api.proofwork.example
 
 This will install the plugin, configure it, and restart the Gateway.
 
+On fresh installs, it will also install + start the Gateway service automatically, then wait until
+the Proofwork worker reports a status file (so you don’t end up “connected” with no worker).
+
+Optional flags:
+- `--no-health-check`
+- `--doctor`
+
 If you prefer the explicit bin form:
 
 ```bash
