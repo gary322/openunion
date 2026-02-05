@@ -65,6 +65,68 @@ function stripeSignatureHeader(input: { webhookSecret: string; rawBody: string; 
   return `t=${input.timestampSec},v1=${sig}`;
 }
 
+async function ensureBuyerAuth(input: {
+  baseUrl: string;
+  email: string;
+  password: string;
+}): Promise<{ buyerToken: string; orgId?: string; email: string; password: string }> {
+  // Try existing login first.
+  const apiKeyResp = await fetchJson({
+    baseUrl: input.baseUrl,
+    path: '/api/org/api-keys',
+    method: 'POST',
+    body: { email: input.email, password: input.password, name: `smoke-stripe-${tsSuffix()}` },
+  });
+  if (apiKeyResp.ok) {
+    const buyerToken = String(apiKeyResp.json?.token ?? '');
+    if (!buyerToken) throw new Error('api_key_missing_token');
+    return { buyerToken, email: input.email, password: input.password };
+  }
+
+  // Fall back to self-serve registration.
+  let email = input.email;
+  let password = input.password;
+  if (email === 'buyer@example.com' && !process.env.SMOKE_BUYER_EMAIL) {
+    email = `smoke+${tsSuffix()}@example.com`;
+    password = `pw_${tsSuffix()}_demo`;
+  }
+
+  const reg = await fetchJson({
+    baseUrl: input.baseUrl,
+    path: '/api/org/register',
+    method: 'POST',
+    body: {
+      orgName: process.env.SMOKE_ORG_NAME ?? `Smoke Stripe Org ${tsSuffix()}`,
+      email,
+      password,
+      apiKeyName: process.env.SMOKE_API_KEY_NAME ?? 'default',
+    },
+  });
+
+  if (!reg.ok) {
+    // If the email already exists, retry api-key creation (assumes caller provided the correct password).
+    const code = String(reg.json?.error?.message ?? '');
+    if (reg.status === 409 && code.includes('email_already_registered')) {
+      const retry = await fetchJson({
+        baseUrl: input.baseUrl,
+        path: '/api/org/api-keys',
+        method: 'POST',
+        body: { email, password, name: `smoke-stripe-${tsSuffix()}` },
+      });
+      if (!retry.ok) throw new Error(`api_key_create_failed_after_conflict:${retry.status}`);
+      const buyerToken = String(retry.json?.token ?? '');
+      if (!buyerToken) throw new Error('api_key_missing_token');
+      return { buyerToken, email, password };
+    }
+    throw new Error(`org_register_failed:${reg.status}:${reg.json?.error?.message ?? ''}`);
+  }
+
+  const buyerToken = String(reg.json?.token ?? '');
+  const orgId = String(reg.json?.orgId ?? '');
+  if (!buyerToken) throw new Error('org_register_missing_token');
+  return { buyerToken, orgId: orgId || undefined, email, password };
+}
+
 async function main() {
   const baseUrl = normalizeBaseUrl(argValue('--base-url') ?? process.env.BASE_URL ?? 'http://localhost:3000');
 
@@ -82,23 +144,16 @@ async function main() {
   const health = await fetchJson({ baseUrl, path: '/health' });
   if (!health.ok) throw new Error(`health_failed:${health.status}`);
 
-  // Buyer token
-  const apiKey = await fetchJson({
-    baseUrl,
-    path: '/api/org/api-keys',
-    method: 'POST',
-    body: { email, password, name: `smoke-stripe-${tsSuffix()}` },
-  });
-  if (!apiKey.ok) throw new Error(`api_key_create_failed:${apiKey.status}:${apiKey.text}`);
-  const buyerToken = String(apiKey.json?.token ?? '');
-  if (!buyerToken) throw new Error('api_key_missing_token');
+  // Buyer token (existing or self-serve register)
+  const auth = await ensureBuyerAuth({ baseUrl, email, password });
+  const buyerToken = auth.buyerToken;
   const authHeader = { authorization: `Bearer ${buyerToken}` };
 
   // Balance before
   const acct0 = await fetchJson({ baseUrl, path: '/api/billing/account', headers: authHeader });
   if (!acct0.ok) throw new Error(`billing_account_failed:${acct0.status}`);
   const before = Number(acct0.json?.account?.balance_cents ?? 0);
-  const orgId = String(acct0.json?.account?.org_id ?? acct0.json?.account?.orgId ?? '');
+  const orgId = String(auth.orgId ?? acct0.json?.account?.org_id ?? acct0.json?.account?.orgId ?? '');
   const accountId = String(acct0.json?.account?.id ?? '');
   if (!orgId || !accountId) throw new Error('billing_account_missing_org_or_id');
 
@@ -239,4 +294,3 @@ main().catch((err) => {
   console.error('[smoke_stripe] FAILED', err);
   process.exitCode = 1;
 });
-
