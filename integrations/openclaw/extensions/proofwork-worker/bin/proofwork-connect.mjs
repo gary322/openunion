@@ -12,6 +12,7 @@ function parseArgs(argv) {
     apiBaseUrl: "",
     pluginSpec: "@proofwork/proofwork-worker",
     openclawBin: "openclaw",
+    openclawProfile: "",
     browserProfile: "proofwork-worker",
     preset: "app-suite",
     canaryPercent: undefined,
@@ -35,6 +36,11 @@ function parseArgs(argv) {
     }
     if (a === "--openclaw" || a === "--openclawBin" || a === "--openclaw-bin") {
       out.openclawBin = String(argv[i + 1] ?? out.openclawBin);
+      i += 1;
+      continue;
+    }
+    if (a === "--openclawProfile" || a === "--openclaw-profile") {
+      out.openclawProfile = String(argv[i + 1] ?? out.openclawProfile);
       i += 1;
       continue;
     }
@@ -89,6 +95,7 @@ function parseArgs(argv) {
   out.apiBaseUrl = String(out.apiBaseUrl ?? "").trim().replace(/\/$/, "");
   out.pluginSpec = String(out.pluginSpec ?? "").trim();
   out.openclawBin = String(out.openclawBin ?? "").trim() || "openclaw";
+  out.openclawProfile = String(out.openclawProfile ?? "").trim();
   out.browserProfile = String(out.browserProfile ?? "").trim() || "proofwork-worker";
   out.preset = String(out.preset ?? "").trim() || "app-suite";
   return out;
@@ -98,10 +105,12 @@ function safeJsonParse(raw) {
   try {
     return JSON.parse(String(raw ?? "")) ?? null;
   } catch {
-    // Try to recover if some tools printed extra lines.
+    // Try to recover if some tools printed extra lines (e.g. config warnings).
     const s = String(raw ?? "");
-    const start = s.indexOf("{");
-    const end = s.lastIndexOf("}");
+    const start = s.search(/[\[{]/);
+    const endObj = s.lastIndexOf("}");
+    const endArr = s.lastIndexOf("]");
+    const end = Math.max(endObj, endArr);
     if (start >= 0 && end > start) {
       try {
         return JSON.parse(s.slice(start, end + 1)) ?? null;
@@ -128,6 +137,11 @@ function compareVersion(a, b) {
   if (a.year !== b.year) return a.year - b.year;
   if (a.minor !== b.minor) return a.minor - b.minor;
   return a.patch - b.patch;
+}
+
+function looksLikeNpmSpec(spec) {
+  const s = String(spec ?? "").trim();
+  return !!s && !s.startsWith("/") && !s.startsWith(".") && !s.endsWith(".tgz") && !s.endsWith(".tar.gz");
 }
 
 async function runCommand(cmd, args, opts = {}) {
@@ -164,9 +178,29 @@ function resolveStateDirFromGatewayStatus(statusJson) {
   return path.join(os.homedir(), ".openclaw");
 }
 
+function extractGatewayPort(statusJson) {
+  const candidates = [
+    statusJson?.gateway?.port,
+    statusJson?.rpc?.port,
+    statusJson?.port?.port,
+    statusJson?.service?.command?.environment?.OPENCLAW_GATEWAY_PORT,
+    statusJson?.service?.command?.environment?.CLAWDBOT_GATEWAY_PORT,
+  ];
+  for (const c of candidates) {
+    const n = Number(c);
+    if (Number.isFinite(n) && n > 0) return Math.floor(n);
+    if (typeof c === "string" && c.trim()) {
+      const m = Number.parseInt(c.trim(), 10);
+      if (Number.isFinite(m) && m > 0) return m;
+    }
+  }
+  return null;
+}
+
 async function waitForWorkerStatusFile(input) {
   const start = Date.now();
   const timeoutMs = Number(input.timeoutMs ?? 25_000);
+  const maxAgeMs = Number(input.maxAgeMs ?? 30_000);
   const pluginRoot = path.join(input.stateDir, "plugins", "proofwork-worker");
 
   const expectedHash = input.workspaceDir ? sha256Hex(path.resolve(input.workspaceDir)).slice(0, 12) : sha256Hex("global").slice(0, 12);
@@ -219,6 +253,10 @@ async function waitForWorkerStatusFile(input) {
         const json = safeJsonParse(raw);
         const workerId = typeof json?.workerId === "string" ? json.workerId : "";
         if (!workerId) continue;
+        if (json?.paused === true) continue;
+        const lastPollAt = typeof json?.lastPollAt === "number" ? json.lastPollAt : null;
+        if (!lastPollAt) continue;
+        if (Date.now() - lastPollAt > maxAgeMs) continue;
         return { statusFile: p, status: json };
       } catch {
         // ignore
@@ -227,6 +265,24 @@ async function waitForWorkerStatusFile(input) {
     await new Promise((r) => setTimeout(r, 250));
   }
 
+  return null;
+}
+
+function loadPathsContainProofworkWorker(loadPaths) {
+  if (!Array.isArray(loadPaths)) return null;
+  for (const p of loadPaths) {
+    const dir = typeof p === "string" ? p.trim() : "";
+    if (!dir) continue;
+    try {
+      const manifestPath = path.join(dir, "openclaw.plugin.json");
+      if (!fs.existsSync(manifestPath)) continue;
+      const raw = fs.readFileSync(manifestPath, "utf8");
+      const j = safeJsonParse(raw);
+      if (j?.id === "proofwork-worker") return dir;
+    } catch {
+      // ignore
+    }
+  }
   return null;
 }
 
@@ -294,6 +350,20 @@ async function ensureGatewayRunning(input, deps = {}) {
     }
   }
 
+  // Ensure CLI config matches the running gateway port. On many installs the gateway service
+  // runs on a non-default port, but fresh configs default to 18789. The `openclaw health` command
+  // does not accept --url, so we must set gateway.port to the service port for health checks to work.
+  try {
+    const s3 = await runRaw(["gateway", "status", "--json"], { timeoutMs: 20_000 });
+    const j3 = safeJsonParse(s3.stdout || s3.stderr) ?? null;
+    const port = extractGatewayPort(j3);
+    if (port) {
+      await run(["config", "set", "--json", "gateway.port", String(port)], { timeoutMs: 15_000 });
+    }
+  } catch {
+    // ignore (best-effort)
+  }
+
   // Confirm the gateway is reachable.
   try {
     await run(["health", "--json"], { timeoutMs: 15_000 });
@@ -338,16 +408,18 @@ async function runConnect(input, deps = {}) {
   if (!apiBaseUrl) throw new Error("--apiBaseUrl is required");
 
   const openclawBin = input.openclawBin;
+  const openclawProfile = String(input.openclawProfile ?? "").trim();
   const dryRun = Boolean(input.dryRun);
 
   const runRaw = async (ocArgs, opts = {}) => {
-    const printable = [openclawBin, ...ocArgs].join(" ");
+    const fullArgs = openclawProfile ? ["--profile", openclawProfile, ...ocArgs] : ocArgs;
+    const printable = [openclawBin, ...fullArgs].join(" ");
     if (dryRun) {
       log(`[dry-run] ${printable}`);
       return { code: 0, stdout: "", stderr: "" };
     }
     log(`[run] ${printable}`);
-    const res = await runCommandImpl(openclawBin, ocArgs, { timeoutMs: opts.timeoutMs ?? 60_000 });
+    const res = await runCommandImpl(openclawBin, fullArgs, { timeoutMs: opts.timeoutMs ?? 60_000 });
     if (res.code !== 0) {
       const msg = (res.stderr || res.stdout || "").trim().slice(0, 2000);
       throw new Error(`command_failed:${printable}${msg ? `\n${msg}` : ""}`);
@@ -367,7 +439,22 @@ async function runConnect(input, deps = {}) {
     throw new Error(`openclaw_too_old: need >= ${min.year}.${min.minor}.${min.patch} (found ${parsed.year}.${parsed.minor}.${parsed.patch})`);
   }
 
-  await run(["plugins", "install", input.pluginSpec], { timeoutMs: 5 * 60_000 });
+  // Avoid duplicate plugin IDs in dev setups where the monorepo plugin is already loaded by path.
+  let skipInstall = false;
+  try {
+    const raw = await runRaw(["config", "get", "--json", "plugins.load.paths"], { timeoutMs: 10_000 });
+    const loadPaths = safeJsonParse(raw.stdout || raw.stderr);
+    const proofworkPath = loadPathsContainProofworkWorker(loadPaths);
+    if (proofworkPath && input.pluginSpec === "@proofwork/proofwork-worker" && looksLikeNpmSpec(input.pluginSpec)) {
+      skipInstall = true;
+      log(`[connect] proofwork-worker already loaded via plugins.load.paths (${proofworkPath}); skipping install to avoid duplicate plugin ids.`);
+    }
+  } catch {
+    // ignore
+  }
+  if (!skipInstall) {
+    await run(["plugins", "install", input.pluginSpec], { timeoutMs: 5 * 60_000 });
+  }
 
   const cfg = {
     apiBaseUrl,
@@ -454,6 +541,7 @@ async function runConnect(input, deps = {}) {
       stateDir,
       workspaceDir,
       timeoutMs: input.waitForWorkerMs,
+      maxAgeMs: 30_000,
     });
     if (!status) {
       throw new Error(
@@ -480,7 +568,7 @@ async function runConnect(input, deps = {}) {
   log("");
   log("Connected Proofwork worker to OpenClaw.");
   log("Next:");
-  log("- openclaw tui");
+  log(`- openclaw${openclawProfile ? ` --profile ${openclawProfile}` : ""} tui`);
   log("- /proofwork status");
   log("- /proofwork payout message 0xYourAddress");
 }
@@ -515,6 +603,7 @@ async function main() {
         "Options:",
         "  --plugin <path|.tgz|npm-spec>       Plugin to install (default: @proofwork/proofwork-worker)",
         "  --openclaw <bin>                   OpenClaw CLI path (default: openclaw)",
+        "  --openclawProfile <name>           Use an isolated OpenClaw profile (~/.openclaw-<name>)",
         "  --browserProfile <name>            Dedicated worker browser profile (default: proofwork-worker)",
         "  --preset <app-suite|single>        Configure a multi-worker preset (default: app-suite)",
         "  --single                           Alias for --preset single",

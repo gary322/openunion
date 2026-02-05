@@ -46,6 +46,13 @@ worker:
 npx --yes @proofwork/proofwork-worker --apiBaseUrl https://api.proofwork.example
 ```
 
+To keep the Proofwork worker isolated from your normal OpenClaw setup (recommended), use a dedicated OpenClaw
+profile:
+
+```bash
+npx --yes @proofwork/proofwork-worker --apiBaseUrl https://api.proofwork.example --openclawProfile proofwork
+```
+
 By default, `proofwork-connect` configures multiple specialized worker loops (jobs, research, github,
 marketplace, clips). To configure a single worker loop instead:
 

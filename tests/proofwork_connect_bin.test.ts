@@ -8,6 +8,7 @@ import { __internal } from '../integrations/openclaw/extensions/proofwork-worker
 describe('proofwork-connect (npx bin)', () => {
   it('installs + starts the gateway service when restart reports not-loaded', async () => {
     const calls: Array<{ cmd: string; args: string[] }> = [];
+    let gatewayStatusCalls = 0;
     const runCommand = async (cmd: string, args: string[]) => {
       calls.push({ cmd, args });
       if (args[0] === '--version') return { code: 0, stdout: 'openclaw 2026.2.2-3\n', stderr: '' };
@@ -15,7 +16,13 @@ describe('proofwork-connect (npx bin)', () => {
         return { code: 0, stdout: JSON.stringify({ action: 'restart', ok: true, result: 'not-loaded', service: { loaded: false } }), stderr: '' };
       }
       if (args[0] === 'health') return { code: 0, stdout: JSON.stringify({ ok: true }), stderr: '' };
-      if (args[0] === 'gateway' && args[1] === 'status') return { code: 0, stdout: JSON.stringify({ service: { loaded: false }, rpc: { ok: false } }), stderr: '' };
+      if (args[0] === 'gateway' && args[1] === 'status') {
+        gatewayStatusCalls += 1;
+        if (gatewayStatusCalls >= 2) {
+          return { code: 0, stdout: JSON.stringify({ service: { loaded: true }, rpc: { ok: true, port: 55202 } }), stderr: '' };
+        }
+        return { code: 0, stdout: JSON.stringify({ service: { loaded: false }, rpc: { ok: false } }), stderr: '' };
+      }
       return { code: 0, stdout: '', stderr: '' };
     };
 
@@ -37,6 +44,52 @@ describe('proofwork-connect (npx bin)', () => {
     const rendered = calls.map((c) => [c.cmd, ...c.args].join(' '));
     expect(rendered).toContain('openclaw gateway install --json');
     expect(rendered).toContain('openclaw gateway start --json');
+    expect(rendered).toContain('openclaw config set --json gateway.port 55202');
+  });
+
+  it('skips plugin install when the plugin is already loaded by path (dev setup)', async () => {
+    const pluginDir = await mkdtemp(path.join(tmpdir(), 'proofwork-plugin-'));
+    await writeFile(
+      path.join(pluginDir, 'openclaw.plugin.json'),
+      JSON.stringify({ id: 'proofwork-worker', name: 'Proofwork Worker', description: 'test', configSchema: {} }, null, 2) + '\n'
+    );
+
+    const calls: Array<{ cmd: string; args: string[] }> = [];
+    const runCommand = async (cmd: string, args: string[]) => {
+      calls.push({ cmd, args });
+      if (args[0] === '--version') return { code: 0, stdout: 'openclaw 2026.2.2-3\n', stderr: '' };
+      if (args[0] === 'config' && args[1] === 'get' && args[3] === 'plugins.load.paths') {
+        return { code: 0, stdout: JSON.stringify([pluginDir]), stderr: '' };
+      }
+      if (args[0] === 'gateway' && args[1] === 'restart') {
+        return { code: 0, stdout: JSON.stringify({ action: 'restart', ok: true, result: 'restarted', service: { loaded: true } }), stderr: '' };
+      }
+      if (args[0] === 'health') return { code: 0, stdout: JSON.stringify({ ok: true }), stderr: '' };
+      if (args[0] === 'gateway' && args[1] === 'status') return { code: 0, stdout: JSON.stringify({ service: { loaded: true }, rpc: { ok: true, port: 18789 } }), stderr: '' };
+      return { code: 0, stdout: '', stderr: '' };
+    };
+
+    try {
+      await __internal.runConnect(
+        {
+          apiBaseUrl: 'https://api.proofwork.example',
+          pluginSpec: '@proofwork/proofwork-worker',
+          openclawBin: 'openclaw',
+          browserProfile: 'proofwork-worker',
+          canaryPercent: undefined,
+          healthCheck: false,
+          doctor: false,
+          waitForWorkerMs: 1000,
+          dryRun: false,
+        },
+        { runCommand, log: () => {} }
+      );
+    } finally {
+      await rm(pluginDir, { recursive: true, force: true });
+    }
+
+    const rendered = calls.map((c) => [c.cmd, ...c.args].join(' '));
+    expect(rendered).not.toContain('openclaw plugins install @proofwork/proofwork-worker');
   });
 
   it('health-checks by waiting for the worker status file', async () => {
