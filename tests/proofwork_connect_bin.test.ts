@@ -44,6 +44,7 @@ describe('proofwork-connect (npx bin)', () => {
     expect(rendered).toContain('openclaw config set --json gateway.mode "local"');
     expect(rendered).toContain('openclaw config set --json gateway.auth.mode "token"');
     expect(rendered.some((s) => s.startsWith('openclaw config set --json gateway.auth.token '))).toBe(true);
+    expect(rendered.some((s) => s.startsWith('openclaw config set --json gateway.remote.token '))).toBe(true);
   });
 
   it('installs + starts the gateway service when restart reports not-loaded', async () => {

@@ -242,9 +242,29 @@ async function ensureGatewayConfigured(input, deps = {}) {
     } catch {
       // ignore
     }
-    if (typeof token !== "string" || !token.trim()) {
+    const existingToken = typeof token === "string" && token.trim() ? token.trim() : "";
+    if (!existingToken) {
       log("[connect] configuring gateway.auth.token (fresh profile) …");
-      await run(["config", "set", "--json", "gateway.auth.token", JSON.stringify(randomGatewayToken())], { timeoutMs: 15_000 });
+      const newToken = randomGatewayToken();
+      await run(["config", "set", "--json", "gateway.auth.token", JSON.stringify(newToken)], { timeoutMs: 15_000 });
+      // OpenClaw CLI connects using gateway.remote.token; keep it in sync with gateway.auth.token.
+      await run(["config", "set", "--json", "gateway.remote.token", JSON.stringify(newToken)], { timeoutMs: 15_000 });
+      return;
+    }
+
+    // Ensure the CLI-side remote token matches the gateway auth token. This is required for
+    // `openclaw health` and other CLI calls to connect after we bootstrap gateway.auth.token.
+    let remoteToken = null;
+    try {
+      const raw = await runRaw(["config", "get", "--json", "gateway.remote.token"], { timeoutMs: 10_000 });
+      remoteToken = safeJsonParse(raw.stdout || raw.stderr);
+    } catch {
+      // ignore
+    }
+    const remoteTokenStr = typeof remoteToken === "string" ? remoteToken.trim() : "";
+    if (!remoteTokenStr || remoteTokenStr !== existingToken) {
+      log("[connect] syncing gateway.remote.token to gateway.auth.token …");
+      await run(["config", "set", "--json", "gateway.remote.token", JSON.stringify(existingToken)], { timeoutMs: 15_000 });
     }
   }
 }
