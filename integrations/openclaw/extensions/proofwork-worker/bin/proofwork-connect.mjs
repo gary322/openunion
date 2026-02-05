@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -197,6 +197,58 @@ function extractGatewayPort(statusJson) {
   return null;
 }
 
+function randomGatewayToken() {
+  // OpenClaw gateway auth token: generated and stored in the OpenClaw config for the selected profile.
+  // Must not be printed to stdout/stderr.
+  return randomBytes(32).toString("hex");
+}
+
+async function ensureGatewayConfigured(input, deps = {}) {
+  const run = deps.run;
+  const runRaw = deps.runRaw;
+  const log = deps.log ?? (() => {});
+
+  // gateway.mode must be set on a fresh OpenClaw profile (OpenClaw refuses to start the daemon otherwise).
+  let gatewayMode = null;
+  try {
+    const raw = await runRaw(["config", "get", "--json", "gateway.mode"], { timeoutMs: 10_000 });
+    gatewayMode = safeJsonParse(raw.stdout || raw.stderr);
+  } catch {
+    // ignore
+  }
+  if (typeof gatewayMode !== "string" || !gatewayMode.trim()) {
+    log("[connect] configuring gateway.mode=local (fresh profile) …");
+    await run(["config", "set", "--json", "gateway.mode", JSON.stringify("local")], { timeoutMs: 15_000 });
+  }
+
+  // Ensure gateway.auth.mode and gateway.auth.token exist. OpenClaw defaults to token auth on many installs.
+  let authMode = null;
+  try {
+    const raw = await runRaw(["config", "get", "--json", "gateway.auth.mode"], { timeoutMs: 10_000 });
+    authMode = safeJsonParse(raw.stdout || raw.stderr);
+  } catch {
+    // ignore
+  }
+  if (typeof authMode !== "string" || !authMode.trim()) {
+    await run(["config", "set", "--json", "gateway.auth.mode", JSON.stringify("token")], { timeoutMs: 15_000 });
+    authMode = "token";
+  }
+
+  if (String(authMode).trim() === "token") {
+    let token = null;
+    try {
+      const raw = await runRaw(["config", "get", "--json", "gateway.auth.token"], { timeoutMs: 10_000 });
+      token = safeJsonParse(raw.stdout || raw.stderr);
+    } catch {
+      // ignore
+    }
+    if (typeof token !== "string" || !token.trim()) {
+      log("[connect] configuring gateway.auth.token (fresh profile) …");
+      await run(["config", "set", "--json", "gateway.auth.token", JSON.stringify(randomGatewayToken())], { timeoutMs: 15_000 });
+    }
+  }
+}
+
 async function waitForWorkerStatusFile(input) {
   const start = Date.now();
   const timeoutMs = Number(input.timeoutMs ?? 25_000);
@@ -327,6 +379,15 @@ async function ensureGatewayRunning(input, deps = {}) {
     }
   }
 
+  // Fresh profiles often require gateway config bootstrapping before the daemon can start.
+  // (OpenClaw refuses to start until gateway.mode and gateway.auth.token are set.)
+  try {
+    await ensureGatewayConfigured(input, { run, runRaw, log });
+  } catch (err) {
+    // If we can't configure the gateway, we can still try to restart/start; but log a hint.
+    log(`[connect] gateway config bootstrap failed (continuing): ${String(err?.message ?? err)}`);
+  }
+
   const restart = await runRaw(["gateway", "restart", "--json"], { timeoutMs: 2 * 60_000 });
   const restartJson = safeJsonParse(restart.stdout || restart.stderr) ?? null;
   if (restartJson?.result === "not-loaded" || restartJson?.service?.loaded === false) {
@@ -365,14 +426,34 @@ async function ensureGatewayRunning(input, deps = {}) {
   }
 
   // Confirm the gateway is reachable.
+  const waitForHealth = async () => {
+    const deadline = Date.now() + 25_000;
+    let lastErr = null;
+    while (Date.now() < deadline) {
+      try {
+        await run(["health", "--json"], { timeoutMs: 15_000 });
+        return;
+      } catch (err) {
+        lastErr = err;
+        await new Promise((r) => setTimeout(r, 500));
+      }
+    }
+    throw lastErr ?? new Error("health_failed");
+  };
+
   try {
-    await run(["health", "--json"], { timeoutMs: 15_000 });
+    await waitForHealth();
   } catch (err) {
-    // As a recovery, attempt a start (in case the daemon is loaded but stopped).
-    log("[connect] gateway health check failed; attempting start…");
+    // As a recovery, attempt to bootstrap config and then start (in case the daemon is blocked).
+    log("[connect] gateway health check failed; attempting config bootstrap + start…");
+    try {
+      await ensureGatewayConfigured(input, { run, runRaw, log });
+    } catch {
+      // ignore (best-effort)
+    }
     try {
       await run(["gateway", "start", "--json"], { timeoutMs: 2 * 60_000 });
-      await run(["health", "--json"], { timeoutMs: 15_000 });
+      await waitForHealth();
     } catch (err2) {
       throw new Error(
         [
@@ -413,7 +494,16 @@ async function runConnect(input, deps = {}) {
 
   const runRaw = async (ocArgs, opts = {}) => {
     const fullArgs = openclawProfile ? ["--profile", openclawProfile, ...ocArgs] : ocArgs;
-    const printable = [openclawBin, ...fullArgs].join(" ");
+    const printableArgs = [...fullArgs];
+    // Redact secrets from logs (connect should never print auth tokens).
+    const cmdIdx = printableArgs[0] === "--profile" ? 2 : 0;
+    if (printableArgs[cmdIdx] === "config" && printableArgs[cmdIdx + 1] === "set") {
+      const key = String(printableArgs[cmdIdx + 3] ?? "");
+      if (key && /token|secret|password/i.test(key)) {
+        if (printableArgs.length >= cmdIdx + 5) printableArgs[cmdIdx + 4] = JSON.stringify("[redacted]");
+      }
+    }
+    const printable = [openclawBin, ...printableArgs].join(" ");
     if (dryRun) {
       log(`[dry-run] ${printable}`);
       return { code: 0, stdout: "", stderr: "" };

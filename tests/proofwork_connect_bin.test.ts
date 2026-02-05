@@ -6,6 +6,46 @@ import { tmpdir } from 'node:os';
 import { __internal } from '../integrations/openclaw/extensions/proofwork-worker/bin/proofwork-connect.mjs';
 
 describe('proofwork-connect (npx bin)', () => {
+  it('bootstraps a fresh OpenClaw profile (gateway.mode + gateway.auth.token)', async () => {
+    const calls: Array<{ cmd: string; args: string[] }> = [];
+    const runCommand = async (cmd: string, args: string[]) => {
+      calls.push({ cmd, args });
+      if (args[0] === '--version') return { code: 0, stdout: 'openclaw 2026.2.2-3\n', stderr: '' };
+
+      // Simulate a fresh profile: gateway config keys are unset (config get fails).
+      if (args[0] === 'config' && args[1] === 'get') return { code: 1, stdout: '', stderr: 'missing\n' };
+
+      if (args[0] === 'gateway' && args[1] === 'restart') {
+        return { code: 0, stdout: JSON.stringify({ action: 'restart', ok: true, result: 'restarted', service: { loaded: true } }), stderr: '' };
+      }
+      if (args[0] === 'gateway' && args[1] === 'status') {
+        return { code: 0, stdout: JSON.stringify({ service: { loaded: true }, rpc: { ok: true, port: 18789 } }), stderr: '' };
+      }
+      if (args[0] === 'health') return { code: 0, stdout: JSON.stringify({ ok: true }), stderr: '' };
+      return { code: 0, stdout: '', stderr: '' };
+    };
+
+    await __internal.runConnect(
+      {
+        apiBaseUrl: 'https://api.proofwork.example',
+        pluginSpec: '@proofwork/proofwork-worker',
+        openclawBin: 'openclaw',
+        browserProfile: 'proofwork-worker',
+        canaryPercent: undefined,
+        healthCheck: false,
+        doctor: false,
+        waitForWorkerMs: 1000,
+        dryRun: false,
+      },
+      { runCommand, log: () => {} }
+    );
+
+    const rendered = calls.map((c) => [c.cmd, ...c.args].join(' '));
+    expect(rendered).toContain('openclaw config set --json gateway.mode "local"');
+    expect(rendered).toContain('openclaw config set --json gateway.auth.mode "token"');
+    expect(rendered.some((s) => s.startsWith('openclaw config set --json gateway.auth.token '))).toBe(true);
+  });
+
   it('installs + starts the gateway service when restart reports not-loaded', async () => {
     const calls: Array<{ cmd: string; args: string[] }> = [];
     let gatewayStatusCalls = 0;
