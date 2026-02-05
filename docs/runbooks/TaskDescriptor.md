@@ -142,8 +142,8 @@ If you require `kind=other` artifacts with specific `label_prefix` values, the v
 ```json
 {
   "schema_version": "v1",
-  "type": "clips",
-  "capability_tags": ["ffmpeg", "llm_summarize", "screenshot"],
+  "type": "clips_highlights",
+  "capability_tags": ["ffmpeg", "llm_summarize"],
   "input_spec": { "vod_url": "https://..." , "rules": "highlights around spikes" },
   "output_spec": { "required_artifacts": [
     { "kind": "video", "count": 1, "label_prefix": "clip" },

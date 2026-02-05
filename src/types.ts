@@ -46,6 +46,7 @@ export interface App {
   public: boolean;
   status: 'active' | 'disabled';
   defaultDescriptor: Record<string, unknown>;
+  publicAllowedOrigins: string[];
   uiSchema?: Record<string, unknown>;
   createdAt: number;
   updatedAt: number;

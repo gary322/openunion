@@ -2,10 +2,23 @@
 
 This package is an OpenClaw plugin that automatically runs a Proofwork worker loop when the OpenClaw Gateway starts.
 
+## Requirements
+
+- Node 18+
+- OpenClaw installed
+- For browser-based jobs (Jobs/Marketplace): a supported local browser installed (Chrome/Brave/Edge/Chromium).
+- For Clips: `ffmpeg` available on the worker machine.
+
 ## Install
 
 ```bash
-openclaw plugins install /ABS/PATH/TO/openunion/integrations/openclaw/extensions/proofwork-worker
+openclaw plugins install @proofwork/proofwork-worker
+```
+
+For local development by path:
+
+```bash
+openclaw plugins install -l /ABS/PATH/TO/opentesting/integrations/openclaw/extensions/proofwork-worker
 ```
 
 ## Configure
@@ -15,7 +28,7 @@ Only `apiBaseUrl` is required:
 ```bash
 openclaw config set --json plugins.entries.proofwork-worker.enabled true
 openclaw config set --json plugins.entries.proofwork-worker.config '{"apiBaseUrl":"https://api.proofwork.example"}'
-  openclaw gateway restart
+openclaw gateway restart
 ```
 
 ## Runtime
@@ -28,9 +41,28 @@ In OpenClaw TUI/chat:
 - `/proofwork payouts pending|paid|failed|refunded`
 - `/proofwork earnings`
 
+If you configured multiple workers (`config.workers[]`), you can target payout-related commands to a specific
+worker:
+
+- `/proofwork payout status --worker jobs`
+- `/proofwork payouts pending --worker research`
+
 ## One-command connect (optional)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/gary322/openunion/main/scripts/openclaw_proofwork_connect.mjs -o /tmp/proofwork_connect.mjs
-node /tmp/proofwork_connect.mjs --apiBaseUrl https://api.proofwork.example
+npx --yes @proofwork/proofwork-worker --apiBaseUrl https://api.proofwork.example
+```
+
+To keep the Proofwork worker isolated from your normal OpenClaw setup (recommended), use a dedicated OpenClaw
+profile:
+
+```bash
+npx --yes @proofwork/proofwork-worker --apiBaseUrl https://api.proofwork.example --openclawProfile proofwork
+```
+
+By default, `proofwork-connect` configures multiple specialized worker loops (jobs, research, github,
+marketplace, clips). To configure a single worker loop instead:
+
+```bash
+npx --yes @proofwork/proofwork-worker --apiBaseUrl https://api.proofwork.example --single
 ```

@@ -26,6 +26,9 @@ const API_BASE_URL = (process.env.PROOFWORK_API_BASE_URL ?? "http://localhost:30
 );
 const ONCE = String(process.env.ONCE ?? "").toLowerCase() === "true";
 const WAIT_FOR_DONE = String(process.env.WAIT_FOR_DONE ?? "").toLowerCase() === "true";
+const WORKER_DISPLAY_NAME =
+  String(process.env.PROOFWORK_WORKER_DISPLAY_NAME ?? process.env.WORKER_DISPLAY_NAME ?? "").trim() ||
+  "openclaw-universal";
 
 const OPENCLAW_BIN = String(process.env.OPENCLAW_BIN ?? "openclaw").trim() || "openclaw";
 const OPENCLAW_AGENT_ID_RAW = String(process.env.OPENCLAW_AGENT_ID ?? "").trim() || null;
@@ -64,6 +67,12 @@ const POLL_INTERVAL_MS = parseIntClamped(process.env.PROOFWORK_POLL_INTERVAL_MS 
 const ERROR_BACKOFF_MS = parseIntClamped(process.env.PROOFWORK_ERROR_BACKOFF_MS ?? 2000, 2000, 250, 60_000);
 const BROWSER_HEALTH_INTERVAL_MS = parseIntClamped(
   process.env.PROOFWORK_BROWSER_HEALTH_INTERVAL_MS ?? 60_000,
+  60_000,
+  5_000,
+  10 * 60_000,
+);
+const FFMPEG_HEALTH_INTERVAL_MS = parseIntClamped(
+  process.env.PROOFWORK_FFMPEG_HEALTH_INTERVAL_MS ?? 60_000,
   60_000,
   5_000,
   10 * 60_000,
@@ -113,6 +122,24 @@ const ARXIV_MAX_RESULTS = (() => {
   const n = Number(process.env.ARXIV_MAX_RESULTS ?? 5);
   if (!Number.isFinite(n)) return 5;
   return Math.max(1, Math.min(10, Math.floor(n)));
+})();
+
+const REMOTIVE_API_URL = (() => {
+  const explicit = String(process.env.REMOTIVE_API_URL ?? "").trim();
+  if (explicit) return explicit;
+  const base = String(process.env.REMOTIVE_API_BASE_URL ?? "").trim();
+  if (!base) return "https://remotive.com/api/remote-jobs";
+  try {
+    return new URL("/api/remote-jobs", base).toString();
+  } catch {
+    return "https://remotive.com/api/remote-jobs";
+  }
+})();
+
+const GITHUB_API_BASE_URL = (() => {
+  const base = String(process.env.GITHUB_API_BASE_URL ?? "").trim();
+  if (base) return base.replace(/\/$/, "");
+  return "https://api.github.com";
 })();
 
 function sleep(ms) {
@@ -392,7 +419,7 @@ async function ensureWorkerToken() {
 
   const reg = await apiFetch("/api/workers/register", {
     method: "POST",
-    body: { displayName: "openclaw-universal", capabilities: { openclaw: true } },
+    body: { displayName: WORKER_DISPLAY_NAME, capabilities: { openclaw: true } },
   });
   if (!reg.resp.ok) throw new Error(`worker_register_failed:${reg.resp.status}`);
   const token = String(reg.json?.token ?? "");
@@ -685,6 +712,9 @@ let lastBrowserHealthAt = 0;
 let browserHealthy = null;
 let lastBrowserHealthError = null;
 let effectiveCapabilityTagsState = null;
+let ffmpegHealthy = null;
+let lastFfmpegHealthAt = 0;
+let lastFfmpegHealthError = null;
 
 async function probeOpenClawBrowserHealth() {
   if (!OPENCLAW_BROWSER_PROFILE) {
@@ -742,8 +772,12 @@ async function probeOpenClawBrowserHealth() {
 }
 
 function computeEffectiveCapabilityTags(baseSupported) {
-  const base = Array.isArray(baseSupported) ? baseSupported.slice() : [];
+  let base = Array.isArray(baseSupported) ? baseSupported.slice() : [];
   if (!base.length) return [];
+
+  const needsFfmpeg = base.includes("ffmpeg");
+  if (needsFfmpeg && ffmpegHealthy === false) base = base.filter((t) => t !== "ffmpeg");
+
   const needsBrowser = base.includes("browser") || base.includes("screenshot");
   if (!needsBrowser) return base;
   // Strict safety: require a dedicated browser profile when claiming browser-tag jobs.
@@ -779,6 +813,45 @@ async function maybeUpdateBrowserHealth(baseSupported) {
     browserReady: browserHealthy,
     lastBrowserHealthAt: now,
     lastBrowserError: lastBrowserHealthError,
+    effectiveCapabilityTags: effectiveCapabilityTagsState,
+  });
+}
+
+async function probeFfmpegHealth() {
+  // Detect presence and basic operability of ffmpeg. This is required for `capability_tags: ["ffmpeg"]` jobs.
+  const res = await runBinary("ffmpeg", ["-version"], { timeoutMs: 5000 });
+  if (res.code === 0) return { ok: true };
+  const msg = String(res.stderr || res.stdout || "").trim().slice(0, 200);
+  return { ok: false, reason: msg ? `ffmpeg_failed:${msg}` : `ffmpeg_failed:${res.code}` };
+}
+
+async function maybeUpdateFfmpegHealth(baseSupported) {
+  const base = Array.isArray(baseSupported) ? baseSupported : [];
+  const needsFfmpeg = base.includes("ffmpeg");
+  if (!needsFfmpeg) {
+    ffmpegHealthy = null;
+    lastFfmpegHealthError = null;
+    effectiveCapabilityTagsState = computeEffectiveCapabilityTags(base);
+    await writeStatus({ effectiveCapabilityTags: effectiveCapabilityTagsState, ffmpegReady: null, lastFfmpegHealthAt: null, lastFfmpegError: null });
+    return;
+  }
+
+  const now = Date.now();
+  if (ffmpegHealthy !== null && now - lastFfmpegHealthAt < FFMPEG_HEALTH_INTERVAL_MS) {
+    effectiveCapabilityTagsState = computeEffectiveCapabilityTags(base);
+    return;
+  }
+
+  lastFfmpegHealthAt = now;
+  const res = await probeFfmpegHealth();
+  ffmpegHealthy = Boolean(res.ok);
+  lastFfmpegHealthError = res.ok ? null : String(res.reason ?? "ffmpeg_unhealthy");
+  effectiveCapabilityTagsState = computeEffectiveCapabilityTags(base);
+
+  await writeStatus({
+    ffmpegReady: ffmpegHealthy,
+    lastFfmpegHealthAt: now,
+    lastFfmpegError: lastFfmpegHealthError,
     effectiveCapabilityTags: effectiveCapabilityTagsState,
   });
 }
@@ -893,31 +966,204 @@ function parseArxivAtomFeed(xml) {
   return out;
 }
 
-async function getArxivReferencesFromApi(query) {
+async function getArxivReferencesFromApi(query, opts = {}) {
   const q = String(query ?? "").trim();
   if (!q) return [];
 
+  function pickArxivApiBaseUrl(allowedOrigins) {
+    const preferred = ARXIV_API_BASE_URL;
+    if (ORIGIN_ENFORCEMENT !== "strict") return preferred;
+    if (!allowedOrigins) return preferred;
+    try {
+      const origin = urlOriginStrict(preferred);
+      if (allowedOrigins.has(origin)) return preferred;
+    } catch {
+      // ignore
+    }
+    // Fallback: use a same-origin API endpoint if the preferred mirror origin isn't allowed.
+    // This keeps "strict origins" jobs working even if only https://arxiv.org is allowlisted.
+    if (allowedOrigins.has("https://arxiv.org")) return "https://arxiv.org/api/query";
+    if (allowedOrigins.has("http://arxiv.org")) return "http://arxiv.org/api/query";
+    if (allowedOrigins.has("https://export.arxiv.org")) return "https://export.arxiv.org/api/query";
+    if (allowedOrigins.has("http://export.arxiv.org")) return "http://export.arxiv.org/api/query";
+    return preferred;
+  }
+
   try {
-    const url = new URL(ARXIV_API_BASE_URL);
+    const url = new URL(pickArxivApiBaseUrl(opts.allowedOrigins ?? null));
     url.searchParams.set("search_query", `all:${q}`);
     url.searchParams.set("start", "0");
     url.searchParams.set("max_results", String(ARXIV_MAX_RESULTS));
 
-    const ac = new AbortController();
-    const t = setTimeout(() => ac.abort(), 30_000);
-    t.unref?.();
-    try {
-      const resp = await fetch(url.toString(), { method: "GET", headers: { Accept: "application/atom+xml" }, signal: ac.signal });
-      if (!resp.ok) return [];
-      const xml = await resp.text();
-      const parsed = parseArxivAtomFeed(xml).slice(0, ARXIV_MAX_RESULTS);
-      return parsed.map((p) => ({ id: `arxiv:${p.id}`, title: p.title, url: `https://arxiv.org/abs/${p.id}` }));
-    } finally {
-      clearTimeout(t);
+    const allowedOrigins = opts.allowedOrigins ?? null;
+    const deadlineMs = Number.isFinite(Number(opts.deadlineMs)) ? Number(opts.deadlineMs) : Infinity;
+    const { resp } = await fetchWithManualRedirects({
+      url: url.toString(),
+      allowedOrigins,
+      deadlineMs,
+      timeoutMs: 30_000,
+      headers: { Accept: "application/atom+xml", "User-Agent": "proofwork-worker" },
+    });
+    if (!resp || !resp.ok) return [];
+    const { bytes } = await readWebStreamLimited({ stream: resp.body, maxBytes: HTTP_MAX_BYTES });
+    const xml = bytes.length ? Buffer.from(bytes).toString("utf8") : "";
+    const parsed = parseArxivAtomFeed(xml).slice(0, ARXIV_MAX_RESULTS);
+    const refs = parsed.map((p) => ({ id: `arxiv:${p.id}`, title: p.title, url: `https://arxiv.org/abs/${p.id}` }));
+
+    if (ORIGIN_ENFORCEMENT === "strict" && allowedOrigins) {
+      for (const r of refs) {
+        assertUrlAllowed(r.url, allowedOrigins, "arxiv_reference_url");
+      }
     }
+
+    return refs;
   } catch {
     return [];
   }
+}
+
+function splitKeywordQuery(s) {
+  const raw = String(s ?? "").trim();
+  if (!raw) return [];
+  return raw
+    .split(/[,|]/g)
+    .map((x) => x.trim())
+    .filter(Boolean)
+    .slice(0, 20);
+}
+
+function includesAny(haystack, needles) {
+  const h = String(haystack ?? "").toLowerCase();
+  if (!h) return false;
+  const ns = Array.isArray(needles) ? needles : [];
+  return ns.some((n) => {
+    const t = String(n ?? "").trim().toLowerCase();
+    return t ? h.includes(t) : false;
+  });
+}
+
+async function getRemotiveJobsRowsFromApi(input) {
+  const inputSpec = input.inputSpec ?? {};
+  const titles = Array.isArray(inputSpec?.titles) ? inputSpec.titles.map((t) => String(t)).filter(Boolean).slice(0, 10) : [];
+  const location = typeof inputSpec?.location === "string" ? inputSpec.location.trim() : "";
+  const include = splitKeywordQuery(inputSpec?.include_keywords);
+  const exclude = splitKeywordQuery(inputSpec?.exclude_keywords);
+
+  const apiUrl = REMOTIVE_API_URL;
+  const res = await fetchJsonLimited({
+    url: apiUrl,
+    allowedOrigins: input.allowedOrigins,
+    deadlineMs: input.deadlineMs,
+    timeoutMs: 25_000,
+    headers: { Accept: "application/json", "User-Agent": "proofwork-worker" },
+  });
+  if (!res.ok || !res.json) return [];
+  const jobs = Array.isArray(res.json?.jobs) ? res.json.jobs : [];
+  const rows = [];
+  for (const j of jobs) {
+    const title = String(j?.title ?? "");
+    const company = String(j?.company_name ?? j?.company ?? "");
+    const url = String(j?.url ?? "");
+    const postedAt = String(j?.publication_date ?? j?.posted_at ?? "");
+    const loc = String(j?.candidate_required_location ?? j?.location ?? "");
+    const txt = `${title} ${company} ${loc} ${String(j?.category ?? "")} ${String(j?.job_type ?? "")}`.trim();
+    if (titles.length && !includesAny(title, titles) && !includesAny(txt, titles)) continue;
+    if (location && location.toLowerCase() !== "remote") {
+      if (!includesAny(loc, [location]) && !includesAny(txt, [location])) continue;
+    }
+    if (include.length && !includesAny(txt, include)) continue;
+    if (exclude.length && includesAny(txt, exclude)) continue;
+    if (url) {
+      try {
+        if (ORIGIN_ENFORCEMENT === "strict") assertUrlAllowed(url, input.allowedOrigins, "remotive_job_url");
+      } catch {
+        continue;
+      }
+    }
+    rows.push({
+      title: title || "unknown",
+      company: company || "unknown",
+      location: loc || location || "remote",
+      url: url || "https://remotive.com",
+      posted_at: postedAt || new Date().toISOString(),
+      source: "remotive",
+      category: j?.category ?? undefined,
+      job_type: j?.job_type ?? undefined,
+    });
+    if (rows.length >= 25) break;
+  }
+  return rows;
+}
+
+function sanitizeGithubQueryTokens(idea) {
+  const s = String(idea ?? "").trim();
+  if (!s) return [];
+  return s
+    .replace(/[^\w\s-]/g, " ")
+    .split(/\s+/g)
+    .map((t) => t.trim())
+    .filter(Boolean)
+    .slice(0, 10);
+}
+
+async function getGithubReposFromApi(input) {
+  const inputSpec = input.inputSpec ?? {};
+  const idea = typeof inputSpec?.idea === "string" ? inputSpec.idea.trim() : "";
+  if (!idea) return [];
+  const tokens = sanitizeGithubQueryTokens(idea);
+  if (!tokens.length) return [];
+
+  const languages = Array.isArray(inputSpec?.languages)
+    ? inputSpec.languages.map((l) => String(l)).filter(Boolean).slice(0, 3)
+    : [];
+  const licenseAllow = Array.isArray(inputSpec?.license_allow)
+    ? inputSpec.license_allow.map((l) => String(l)).filter(Boolean).slice(0, 1)
+    : [];
+  const minStars = Number.isFinite(Number(inputSpec?.min_stars)) ? Math.max(0, Math.floor(Number(inputSpec.min_stars))) : 0;
+
+  const qParts = [];
+  qParts.push(tokens.join(" "));
+  qParts.push("fork:false");
+  if (minStars > 0) qParts.push(`stars:>=${minStars}`);
+  for (const l of languages) qParts.push(`language:${l}`);
+  if (licenseAllow[0]) qParts.push(`license:${licenseAllow[0]}`);
+  const q = qParts.join(" ").trim();
+  const url = new URL("/search/repositories", GITHUB_API_BASE_URL);
+  url.searchParams.set("q", q);
+  url.searchParams.set("sort", "stars");
+  url.searchParams.set("order", "desc");
+  url.searchParams.set("per_page", "10");
+
+  const res = await fetchJsonLimited({
+    url: url.toString(),
+    allowedOrigins: input.allowedOrigins,
+    deadlineMs: input.deadlineMs,
+    timeoutMs: 25_000,
+    headers: {
+      Accept: "application/vnd.github+json",
+      "User-Agent": "proofwork-worker",
+      "X-GitHub-Api-Version": "2022-11-28",
+    },
+  });
+  if (!res.ok) return [];
+  if (res.status === 403 || res.status === 429) return [];
+  const items = Array.isArray(res.json?.items) ? res.json.items : [];
+  const repos = [];
+  for (const it of items) {
+    const full = String(it?.full_name ?? it?.name ?? "").trim();
+    const htmlUrl = String(it?.html_url ?? "").trim();
+    const stars = Number(it?.stargazers_count ?? 0);
+    const license = it?.license?.spdx_id ? String(it.license.spdx_id) : it?.license?.key ? String(it.license.key) : null;
+    repos.push({
+      name: full || "unknown",
+      url: htmlUrl || "https://github.com",
+      license,
+      stars: Number.isFinite(stars) ? stars : 0,
+      description: it?.description ?? undefined,
+    });
+    if (repos.length >= 10) break;
+  }
+  return repos;
 }
 
 function parseJsonFromStdout(stdout) {
@@ -1281,6 +1527,241 @@ async function runOpenClawBrowserFlowModule(input) {
   return { artifacts, extracted };
 }
 
+function parseSitesList(raw) {
+  if (Array.isArray(raw)) {
+    return raw
+      .map((s) => String(s ?? "").trim())
+      .filter(Boolean)
+      .slice(0, 25);
+  }
+  if (typeof raw === "string") {
+    return raw
+      .split(/\r?\n/)
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .slice(0, 25);
+  }
+  return [];
+}
+
+function normalizeCssSelector(raw) {
+  const s = String(raw ?? "").trim();
+  if (!s) return "";
+  if (s.length > 400) throw new Error("selector_too_long");
+  return s;
+}
+
+function getMarketplaceSelectorConfig(job) {
+  const sp = job?.taskDescriptor?.site_profile ?? null;
+  if (!sp || typeof sp !== "object") return null;
+  const selectorsRaw = sp?.selectors && typeof sp.selectors === "object" ? sp.selectors : {};
+
+  const items = normalizeCssSelector(selectorsRaw?.items ?? selectorsRaw?.item ?? sp.items_selector ?? sp.itemsSelector ?? "");
+  const title = normalizeCssSelector(selectorsRaw?.title ?? sp.title_selector ?? sp.titleSelector ?? "");
+  const price = normalizeCssSelector(selectorsRaw?.price ?? sp.price_selector ?? sp.priceSelector ?? "");
+  const availability = normalizeCssSelector(
+    selectorsRaw?.availability ?? selectorsRaw?.stock ?? sp.stock_selector ?? sp.stockSelector ?? "",
+  );
+  const url = normalizeCssSelector(selectorsRaw?.url ?? sp.url_selector ?? sp.urlSelector ?? "");
+
+  if (!items && !title && !price && !availability && !url) return null;
+  return { items, title, price, availability, url };
+}
+
+function currencyFromText(raw) {
+  const s = String(raw ?? "");
+  if (s.includes("$")) return "USD";
+  if (s.includes("€")) return "EUR";
+  if (s.includes("£")) return "GBP";
+  return null;
+}
+
+function parsePriceNumber(raw) {
+  const s = String(raw ?? "").replace(/,/g, " ");
+  const m = s.match(/(\d+(?:\.\d{1,2})?)/);
+  if (!m?.[1]) return null;
+  const n = Number(m[1]);
+  return Number.isFinite(n) ? n : null;
+}
+
+function makeMarketplaceExtractFn(selectors) {
+  const itemsSel = selectors?.items ? JSON.stringify(selectors.items) : "null";
+  const titleSel = selectors?.title ? JSON.stringify(selectors.title) : "null";
+  const priceSel = selectors?.price ? JSON.stringify(selectors.price) : "null";
+  const availSel = selectors?.availability ? JSON.stringify(selectors.availability) : "null";
+  const urlSel = selectors?.url ? JSON.stringify(selectors.url) : "null";
+  // Keep this string stable so tests can detect the extractor call in mock openclaw.
+  const marker = "proofwork_marketplace_extract_v1";
+  return `() => {
+    const __pw = ${JSON.stringify(marker)};
+    void __pw;
+    const norm = (s) => String(s ?? "").replace(/\\s+/g, " ").trim();
+    const itemsSelector = ${itemsSel};
+    const titleSelector = ${titleSel};
+    const priceSelector = ${priceSel};
+    const availabilitySelector = ${availSel};
+    const urlSelector = ${urlSel};
+
+    const pickText = (root, sel) => {
+      try {
+        const el = sel ? root.querySelector(sel) : root;
+        return el ? norm(el.textContent) : "";
+      } catch {
+        return "";
+      }
+    };
+
+    const pickUrl = (root, sel) => {
+      try {
+        const el = sel
+          ? root.querySelector(sel)
+          : root.querySelector("a[href]") || (root.matches && root.matches("a[href]") ? root : null);
+        if (!el) return "";
+        const href = el.href || el.getAttribute("href") || "";
+        if (!href) return "";
+        try {
+          return new URL(href, location.href).toString();
+        } catch {
+          return String(href);
+        }
+      } catch {
+        return "";
+      }
+    };
+
+    let nodes = [];
+    try {
+      if (itemsSelector) nodes = Array.from(document.querySelectorAll(itemsSelector));
+    } catch {
+      nodes = [];
+    }
+    if (!nodes.length) nodes = [document.body];
+    nodes = nodes.slice(0, 20);
+
+    const out = [];
+    for (const n of nodes) {
+      const title = titleSelector ? pickText(n, titleSelector) : pickText(n, null) || pickText(n, "a[href]") || "";
+      const price_text = priceSelector ? pickText(n, priceSelector) : "";
+      const availability_text = availabilitySelector ? pickText(n, availabilitySelector) : "";
+      const url = pickUrl(n, urlSelector);
+      out.push({ title, price_text, availability_text, url });
+    }
+    return out;
+  }`;
+}
+
+function sanitizeMarketplaceItems(rawItems, pageUrl, allowedOrigins) {
+  const items = Array.isArray(rawItems) ? rawItems : [];
+  const out = [];
+  for (const it of items) {
+    if (!it || typeof it !== "object") continue;
+    const title = String(it.title ?? "").trim().slice(0, 400);
+    const priceText = String(it.price_text ?? it.priceText ?? "").trim().slice(0, 200);
+    const availabilityText = String(it.availability_text ?? it.availabilityText ?? "").trim().slice(0, 200);
+    const urlRaw = String(it.url ?? "").trim();
+    let url = pageUrl;
+    if (urlRaw) {
+      try {
+        url = new URL(urlRaw, pageUrl).toString();
+      } catch {
+        url = pageUrl;
+      }
+    }
+    try {
+      if (ORIGIN_ENFORCEMENT === "strict") assertUrlAllowed(url, allowedOrigins, "marketplace_item_url");
+      if (NO_LOGIN && looksLikeLoginText(url)) continue;
+    } catch {
+      continue;
+    }
+    const currency = currencyFromText(priceText) ?? undefined;
+    const price = parsePriceNumber(priceText) ?? undefined;
+    out.push({
+      title: title || "item",
+      price,
+      currency,
+      url,
+      availability_text: availabilityText || undefined,
+      observed_at: new Date().toISOString(),
+    });
+    if (out.length >= 20) break;
+  }
+  return out;
+}
+
+async function runOpenClawMarketplacePageModule(input) {
+  const td = input.job?.taskDescriptor ?? {};
+  const inputSpec = td?.input_spec ?? {};
+  const selectorCfg = getMarketplaceSelectorConfig(input.job);
+  const sites = parseSitesList(inputSpec?.sites);
+  const descriptorUrl = typeof inputSpec?.url === "string" ? inputSpec.url : null;
+  const startUrl = descriptorUrl || sites[0] || String(input.job?.journey?.startUrl ?? "");
+  if (!startUrl) throw new Error("missing_start_url");
+
+  await ensureOpenClawBrowserReady();
+
+  const allowedOrigins = input.allowedOrigins ?? compileAllowedOrigins(input.job);
+  const deadlineMs = Number.isFinite(Number(input.deadlineMs)) ? Number(input.deadlineMs) : Infinity;
+
+  if (Date.now() > deadlineMs) throw new Error("job_time_budget_exceeded");
+  if (ORIGIN_ENFORCEMENT === "strict") assertUrlAllowed(startUrl, allowedOrigins, "start_url");
+  if (NO_LOGIN && looksLikeLoginText(startUrl)) throw new Error(`no_login_blocked_url:${startUrl}`);
+
+  const opened = await runOpenClaw(["browser", "open", startUrl, "--json"], { timeoutMs: 30_000 });
+  const openJson = parseJsonFromStdout(opened.stdout);
+  const targetId = String(openJson?.targetId ?? "").trim();
+  if (!targetId) throw new Error("openclaw_browser_open_missing_target_id");
+
+  try {
+    await enforcePagePolicy({ targetId, allowedOrigins, what: "after_open" });
+
+    let extractedItems = [];
+    if (selectorCfg) {
+      try {
+        const fn = makeMarketplaceExtractFn(selectorCfg);
+        const r = await runOpenClaw(["browser", "evaluate", "--fn", fn, "--target-id", targetId, "--json"], {
+          timeoutMs: normalizeTimeoutMs({}, 25_000),
+        });
+        const j = parseJsonFromStdout(r.stdout);
+        extractedItems = sanitizeMarketplaceItems(j?.result, startUrl, allowedOrigins);
+      } catch (err) {
+        debugLog("marketplace selector extract failed", String(err?.message ?? err));
+        extractedItems = [];
+      }
+    }
+
+    const maxPriceRaw =
+      inputSpec?.max_price_usd ?? inputSpec?.maxPriceUsd ?? inputSpec?.max_price ?? inputSpec?.maxPrice ?? null;
+    const maxPrice = Number(maxPriceRaw);
+    if (Number.isFinite(maxPrice) && maxPrice > 0) {
+      extractedItems = extractedItems.filter((it) => !Number.isFinite(Number(it?.price)) || Number(it.price) <= maxPrice);
+    }
+
+    const shot = await runOpenClaw(
+      ["browser", "screenshot", targetId, "--full-page", "--type", "png", "--json"],
+      { timeoutMs: 45_000 },
+    );
+    const shotJson = parseJsonFromStdout(shot.stdout);
+    const outPath = String(shotJson?.path ?? "").trim();
+    if (!outPath) throw new Error("openclaw_browser_screenshot_missing_path");
+    const bytes = await readFile(outPath);
+    const detected = detectPngOrJpeg(bytes);
+    if (!detected) throw new Error("screenshot_unknown_format");
+    const screenshotArtifact = await uploadArtifact({
+      token: input.token,
+      jobId: input.job.jobId,
+      filename: `screenshot.${detected.ext}`,
+      contentType: detected.contentType,
+      bytes,
+      kind: "screenshot",
+      label: "openclaw_screenshot",
+    });
+
+    return { screenshotArtifact, extractedItems };
+  } finally {
+    await runOpenClaw(["browser", "close", targetId]).catch(() => undefined);
+  }
+}
+
 async function runOpenClawScreenshotModule(input) {
   const descriptorUrl = input.job?.taskDescriptor?.input_spec?.url;
   const startUrl =
@@ -1429,7 +1910,7 @@ async function fetchWithManualRedirects(input) {
     const t = setTimeout(() => ac.abort(), input.timeoutMs ?? 30_000);
     t.unref?.();
     try {
-      resp = await fetch(url, { method: "GET", redirect: "manual", signal: ac.signal });
+      resp = await fetch(url, { method: "GET", redirect: "manual", headers: input.headers, signal: ac.signal });
     } finally {
       clearTimeout(t);
     }
@@ -1444,6 +1925,36 @@ async function fetchWithManualRedirects(input) {
     url = next;
   }
   return { url, resp };
+}
+
+async function fetchJsonLimited(input) {
+  const { url: finalUrl, resp } = await fetchWithManualRedirects({
+    url: input.url,
+    allowedOrigins: input.allowedOrigins,
+    deadlineMs: input.deadlineMs,
+    timeoutMs: input.timeoutMs ?? 30_000,
+    headers: input.headers,
+  });
+  if (!resp) throw new Error("http_missing_response");
+  const { bytes, truncated } = await readWebStreamLimited({ stream: resp.body, maxBytes: input.maxBytes ?? HTTP_MAX_BYTES });
+  const text = bytes.length ? Buffer.from(bytes).toString("utf8") : "";
+  let json = null;
+  if (text) {
+    try {
+      json = JSON.parse(text);
+    } catch {
+      json = null;
+    }
+  }
+  return {
+    finalUrl,
+    status: resp.status,
+    ok: resp.ok,
+    truncated,
+    contentType: resp.headers.get("content-type") ?? "",
+    json,
+    text,
+  };
 }
 
 async function runHttpModule(input) {
@@ -1583,6 +2094,8 @@ async function runStructuredJsonOutputsModule(input) {
   const inputSpec = td?.input_spec ?? {};
   const outputSpec = td?.output_spec ?? {};
   const extracted = input.extracted ?? {};
+  const allowedOrigins = input.allowedOrigins ?? compileAllowedOrigins(input.job);
+  const deadlineMs = Number.isFinite(Number(input.deadlineMs)) ? Number(input.deadlineMs) : Infinity;
 
   const required = Array.isArray(outputSpec?.required_artifacts) ? outputSpec.required_artifacts : [];
   const requiredOtherPrefixes = new Set(
@@ -1637,7 +2150,15 @@ async function runStructuredJsonOutputsModule(input) {
   if (requiredOtherPrefixes.has("rows") || outputSpec?.rows === true || type.includes("jobs")) {
     const titles = Array.isArray(inputSpec?.titles) ? inputSpec.titles.map((t) => String(t)).slice(0, 5) : [];
     const location = typeof inputSpec?.location === "string" ? inputSpec.location : "";
-    const extractedRows = Array.isArray(extracted.rows) ? extracted.rows : null;
+    let extractedRows = Array.isArray(extracted.rows) ? extracted.rows : null;
+    if ((!extractedRows || !extractedRows.length) && type.includes("jobs")) {
+      try {
+        extractedRows = await getRemotiveJobsRowsFromApi({ inputSpec, allowedOrigins, deadlineMs });
+      } catch (err) {
+        debugLog("remotive rows fetch failed", String(err?.message ?? err));
+        extractedRows = null;
+      }
+    }
     await emit("rows", {
       schema: "rows.v1",
       generated_at: new Date().toISOString(),
@@ -1649,7 +2170,15 @@ async function runStructuredJsonOutputsModule(input) {
 
   if (requiredOtherPrefixes.has("repos") || outputSpec?.repos === true || type.includes("github")) {
     const idea = typeof inputSpec?.idea === "string" ? inputSpec.idea : "";
-    const extractedRepos = Array.isArray(extracted.repos) ? extracted.repos : null;
+    let extractedRepos = Array.isArray(extracted.repos) ? extracted.repos : null;
+    if ((!extractedRepos || !extractedRepos.length) && type.includes("github")) {
+      try {
+        extractedRepos = await getGithubReposFromApi({ inputSpec, allowedOrigins, deadlineMs });
+      } catch (err) {
+        debugLog("github repos fetch failed", String(err?.message ?? err));
+        extractedRepos = null;
+      }
+    }
     await emit("repos", {
       schema: "repos.v1",
       generated_at: new Date().toISOString(),
@@ -1662,7 +2191,7 @@ async function runStructuredJsonOutputsModule(input) {
     const idea = typeof inputSpec?.idea === "string" ? inputSpec.idea : "";
     const llmRefs = type.includes("arxiv") ? await maybeGetArxivReferencesFromLlm(idea) : [];
     const extractedRefs = Array.isArray(extracted.references) ? extracted.references : null;
-    const apiRefs = llmRefs.length === 0 && idea ? await getArxivReferencesFromApi(idea) : [];
+    const apiRefs = llmRefs.length === 0 && idea ? await getArxivReferencesFromApi(idea, { allowedOrigins, deadlineMs }) : [];
     await emit("references", {
       schema: "references.v1",
       generated_at: new Date().toISOString(),
@@ -1953,6 +2482,7 @@ function preflightJobOrThrow(job, allowedOrigins) {
   // ffmpeg job inputs are also descriptor-controlled; preflight them so we don't claim and then refuse.
   const wantsFfmpeg = tags.includes("ffmpeg") || requiredArtifacts.some((r) => r && typeof r === "object" && String(r.kind ?? "") === "video");
   if (wantsFfmpeg) {
+    if (ffmpegHealthy === false) throw new Error("ffmpeg_unavailable");
     const vodUrl = td?.input_spec?.vod_url;
     if (typeof vodUrl !== "string" || !vodUrl.trim()) throw new Error("missing_vod_url");
     if (ORIGIN_ENFORCEMENT === "strict") assertUrlAllowed(vodUrl, allowedOrigins, "vod_url");
@@ -2035,6 +2565,7 @@ async function loop() {
     : undefined;
 
   await maybeUpdateBrowserHealth(baseSupported);
+  await maybeUpdateFfmpegHealth(baseSupported);
   await writeStatus({
     startedAt: Date.now(),
     pid: process.pid,
@@ -2053,6 +2584,7 @@ async function loop() {
     }
 
     await maybeUpdateBrowserHealth(baseSupported);
+    await maybeUpdateFfmpegHealth(baseSupported);
     const supported = effectiveCapabilityTagsState ?? computeEffectiveCapabilityTags(baseSupported);
     const exclude = excludeJobIdsCsv(refuseCache);
     await writeStatus({ paused: false, lastPollAt: Date.now(), excludeJobIdsCount: exclude ? exclude.split(",").length : 0 });
@@ -2125,6 +2657,8 @@ async function loop() {
     const claimedJob = claim.json?.data?.job ?? job;
     const leaseNonce = String(claim.json?.data?.leaseNonce ?? "");
     const td = claimedJob?.taskDescriptor ?? {};
+    const tdType = typeof td?.type === "string" ? td.type : "";
+    const isMarketplace = tdType.toLowerCase().includes("marketplace");
     const normalizedTags = parseCapabilityTags(claimedJob);
     const browserFlow = getBrowserFlowSpec(claimedJob);
     const requiredArtifacts = Array.isArray(td?.output_spec?.required_artifacts)
@@ -2162,7 +2696,13 @@ async function loop() {
         extracted = res.extracted ?? {};
       } else {
         if (wantsScreenshot) {
-          artifacts.push(await runOpenClawScreenshotModule({ token, job: claimedJob, allowedOrigins: jobAllowedOrigins, deadlineMs }));
+          if (isMarketplace) {
+            const mp = await runOpenClawMarketplacePageModule({ token, job: claimedJob, allowedOrigins: jobAllowedOrigins, deadlineMs });
+            artifacts.push(mp.screenshotArtifact);
+            if (mp.extractedItems?.length) extracted = { ...(extracted ?? {}), items: mp.extractedItems };
+          } else {
+            artifacts.push(await runOpenClawScreenshotModule({ token, job: claimedJob, allowedOrigins: jobAllowedOrigins, deadlineMs }));
+          }
         }
         if (wantsSnapshot) {
           const snap = await runOpenClawSnapshotModule({ token, job: claimedJob, allowedOrigins: jobAllowedOrigins, deadlineMs });
@@ -2177,6 +2717,7 @@ async function loop() {
 
       const wantsFfmpeg = normalizedTags.includes("ffmpeg") || requiredArtifacts.some((r) => r && typeof r === "object" && String(r.kind ?? "") === "video");
       if (wantsFfmpeg) {
+        if (ffmpegHealthy === false) throw new Error("ffmpeg_unavailable");
         const clipArt = await runFfmpegClipModule({ token, job: claimedJob, allowedOrigins: jobAllowedOrigins, deadlineMs });
         if (clipArt) artifacts.push(clipArt);
 
@@ -2184,7 +2725,15 @@ async function loop() {
         if (timelineArt) artifacts.push(timelineArt);
       }
 
-      artifacts.push(...(await runStructuredJsonOutputsModule({ token, job: claimedJob, extracted })));
+      artifacts.push(
+        ...(await runStructuredJsonOutputsModule({
+          token,
+          job: claimedJob,
+          extracted,
+          allowedOrigins: jobAllowedOrigins,
+          deadlineMs,
+        })),
+      );
 
       if (normalizedTags.includes("llm_summarize")) {
         artifacts.push(await runLlmSummarizeModule({ token, job: claimedJob, artifactsSoFar: artifacts.slice() }));

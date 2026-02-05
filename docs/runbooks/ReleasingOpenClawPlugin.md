@@ -12,6 +12,9 @@ openclaw plugins install @proofwork/proofwork-worker
 - You have publish access to the npm package name (default: `@proofwork/proofwork-worker`).
 - GitHub repo secret `NPM_TOKEN` is set (automation), or you are logged in locally (`npm login`) (manual).
 
+Notes on npm credentials:
+- If the npm org enforces 2FA for publishes, your token must either be a classic **Automation** token or a granular token with **bypass 2FA for publishing** enabled, otherwise `npm publish` will fail with `E403`.
+
 ## Before you publish
 1) Bump versions (keep them in sync):
    - `integrations/openclaw/extensions/proofwork-worker/package.json`
@@ -54,4 +57,3 @@ And for a full end-to-end local run (requires Docker):
 ```bash
 bash scripts/smoke_openclaw_plugin.sh
 ```
-

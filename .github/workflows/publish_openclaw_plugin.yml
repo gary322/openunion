@@ -17,12 +17,33 @@ on:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: proofwork
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d proofwork"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
     permissions:
       contents: read
     env:
       # Note: GitHub does not allow referencing `secrets.*` in step-level `if:` expressions.
       # Copy the secret into an env var and gate publishing on `env.NPM_TOKEN`.
       NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/proofwork
+      STORAGE_BACKEND: local
+      STORAGE_LOCAL_DIR: ./var/uploads
+      STRIPE_WEBHOOK_SECRET: whsec_test_secret
+      BUYER_TOKEN_PEPPER: dev_pepper_change_me
+      WORKER_TOKEN_PEPPER: dev_pepper_change_me
+      SESSION_SECRET: dev_session_secret_change_me
     steps:
       - uses: actions/checkout@v4
 
@@ -34,6 +55,30 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Wait for Postgres
+        run: |
+          set -euo pipefail
+          node --input-type=module - <<'NODE'
+          import pg from 'pg';
+          const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
+          const deadline = Date.now() + 30_000;
+          while (true) {
+            try {
+              await pool.query('select 1');
+              break;
+            } catch (err) {
+              if (Date.now() > deadline) throw err;
+              await new Promise((r) => setTimeout(r, 500));
+            }
+          }
+          await pool.end();
+          console.log('postgres ok');
+          NODE
+
+      # Some unit/integration tests spawn Playwright (Universal Worker browser_flow).
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
 
       - name: Unit/integration tests
         run: npm test

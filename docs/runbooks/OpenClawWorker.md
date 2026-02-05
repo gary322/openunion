@@ -12,23 +12,51 @@ Worker loop behavior:
 
 ### Fastest path (no repo clone): one-command connect
 
-If you have Node (required by OpenClaw anyway), you can connect in one command.
-
 Requirements:
 - Node 18+
-- `git` in your PATH
 - OpenClaw installed
+- For browser automation (Jobs/Marketplace): a supported local browser installed (Chrome/Brave/Edge/Chromium).
+- For Clips: `ffmpeg` available on the worker machine.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/gary322/openunion/main/scripts/openclaw_proofwork_connect.mjs -o /tmp/proofwork_connect.mjs
-node /tmp/proofwork_connect.mjs --apiBaseUrl https://api.proofwork.example
+npx --yes @proofwork/proofwork-worker --apiBaseUrl https://api.proofwork.example
 ```
 
-This script will:
-- shallow-clone the repo
-- install the plugin by path
+This runs the package’s `proofwork-connect` command, which will:
+- install the plugin from npm
 - set the required config
-- restart the OpenClaw Gateway
+- by default, configure multiple specialized worker loops (jobs, research, github, marketplace, clips)
+- ensure the OpenClaw Gateway service is installed + running (auto-installs if needed)
+- restart the OpenClaw Gateway and wait for the Proofwork worker status file (health check)
+
+Optional flags:
+- `--preset app-suite|single` (default: `app-suite`)
+- `--single` (alias for `--preset single`)
+- `--no-health-check` (skip the post-setup checks)
+- `--doctor` (print `openclaw doctor --non-interactive` output)
+
+If you prefer the explicit bin form:
+
+```bash
+npx --yes -p @proofwork/proofwork-worker proofwork-connect --apiBaseUrl https://api.proofwork.example
+```
+
+### Install from npm (manual)
+
+Install the plugin:
+
+```bash
+openclaw plugins install @proofwork/proofwork-worker
+```
+
+Configure (only `apiBaseUrl` is required) and restart:
+
+```bash
+openclaw config set --json plugins.enabled true
+openclaw config set --json plugins.entries.proofwork-worker.enabled true
+openclaw config set --json plugins.entries.proofwork-worker.config '{"apiBaseUrl":"https://api.proofwork.example"}'
+openclaw gateway restart
+```
 
 ### Plugin location (for development)
 
@@ -111,13 +139,19 @@ The plugin registers a command:
 - `/proofwork payouts [pending|paid|failed|refunded] [page] [limit]`
 - `/proofwork earnings`
 
+If you configured multiple workers (`config.workers[]`), you can target a specific worker for payout-related
+commands:
+
+- `/proofwork payout status --worker jobs`
+- `/proofwork payouts pending --worker research`
+
 ### State + token persistence
 
 The plugin persists state under `$OPENCLAW_STATE_DIR/plugins/proofwork-worker/<workspaceHash>/`, including:
-- `worker-token.json` (persisted `token` + `workerId`)
+- `worker-token.json` (single-worker mode) or `worker-token.<key>.json` (multi-worker; key is derived from the worker name and includes a hash suffix)
 - `pause.flag`
 - `lock.json` (single-instance)
-- `status.json` (last poll/job/error timestamps)
+- `status.json` (single-worker mode) or `status.<key>.json` (multi-worker; key is derived from the worker name and includes a hash suffix)
 
 ### Payout address (optional, but required to actually get paid)
 

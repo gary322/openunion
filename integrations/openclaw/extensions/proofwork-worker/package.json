@@ -1,6 +1,6 @@
 {
   "name": "@proofwork/proofwork-worker",
-  "version": "0.1.0",
+  "version": "0.1.8",
   "description": "OpenClaw plugin that runs a Proofwork worker loop in the background.",
   "private": false,
   "type": "module",
@@ -11,7 +11,8 @@
     "extensions": ["./index.ts"]
   },
   "bin": {
-    "proofwork-connect": "./bin/proofwork-connect.mjs"
+    "proofwork-connect": "./bin/proofwork-connect.mjs",
+    "proofwork-worker": "./bin/proofwork-connect.mjs"
   },
   "publishConfig": {
     "access": "public"

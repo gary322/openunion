@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { mkdtemp, writeFile, chmod, readFile } from 'node:fs/promises';
+import { mkdtemp, writeFile, chmod, readFile, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -58,6 +58,104 @@ function makeLogger(): { logger: Logger; lines: string[] } {
 }
 
 describe('OpenClaw Proofwork Worker plugin (service + commands)', () => {
+  it('can spawn multiple worker loops concurrently (workers[])', async () => {
+    const stateDir = await mkdtemp(join(tmpdir(), 'openclaw-state-'));
+    const workspaceDir = await mkdtemp(join(tmpdir(), 'openclaw-ws-'));
+    const stubDir = await mkdtemp(join(tmpdir(), 'openclaw-stub-'));
+    const workerAPath = await makeStubWorker({ dir: stubDir, kind: 'stay_alive' });
+    const workerBPath = await makeStubWorker({ dir: stubDir, kind: 'stay_alive' });
+
+    const { logger } = makeLogger();
+    let service: any = null;
+
+    plugin.register(
+      {
+        id: 'proofwork-worker',
+        pluginConfig: {
+          apiBaseUrl: 'http://127.0.0.1:1',
+          workers: [
+            { name: 'A', enabled: true, workerScriptPath: workerAPath },
+            { name: 'B', enabled: true, workerScriptPath: workerBPath },
+          ],
+        },
+        logger,
+        registerService: (s: any) => {
+          service = s;
+        },
+        registerCommand: () => {},
+      } as any,
+    );
+
+    const ctx = { config: {}, stateDir, workspaceDir, logger };
+    const paths = __internal.computeStateRoot({ stateDir, workspaceDir });
+    const root = paths.root;
+
+    await service.start(ctx);
+    await sleep(200);
+
+    const files = await readdir(root);
+    const statusFiles = files.filter((f) => f.startsWith('status') && f.endsWith('.json'));
+    expect(statusFiles.length).toBe(2);
+    for (const f of statusFiles) {
+      const raw = await readFile(join(root, f), 'utf8');
+      const status = JSON.parse(raw);
+      expect(Number(status.runCount ?? 0)).toBe(1);
+    }
+
+    await service.stop(ctx);
+  });
+
+  it('restarts a crashed worker loop without affecting other workers', async () => {
+    const stateDir = await mkdtemp(join(tmpdir(), 'openclaw-state-'));
+    const workspaceDir = await mkdtemp(join(tmpdir(), 'openclaw-ws-'));
+    const stubDir = await mkdtemp(join(tmpdir(), 'openclaw-stub-'));
+    const workerAPath = await makeStubWorker({ dir: stubDir, kind: 'stay_alive' });
+    const workerBPath = await makeStubWorker({ dir: stubDir, kind: 'exit_1' });
+
+    const { logger } = makeLogger();
+    let service: any = null;
+
+    plugin.register(
+      {
+        id: 'proofwork-worker',
+        pluginConfig: {
+          apiBaseUrl: 'http://127.0.0.1:1',
+          workers: [
+            { name: 'A', enabled: true, workerScriptPath: workerAPath },
+            { name: 'B', enabled: true, workerScriptPath: workerBPath },
+          ],
+        },
+        logger,
+        registerService: (s: any) => {
+          service = s;
+        },
+        registerCommand: () => {},
+      } as any,
+    );
+
+    const ctx = { config: {}, stateDir, workspaceDir, logger };
+    const paths = __internal.computeStateRoot({ stateDir, workspaceDir });
+    const root = paths.root;
+
+    await service.start(ctx);
+    // Worker B exits immediately; it should restart after ~2s backoff.
+    await sleep(3300);
+
+    const files = await readdir(root);
+    const statusFiles = files.filter((f) => f.startsWith('status') && f.endsWith('.json'));
+    expect(statusFiles.length).toBe(2);
+    const runCounts = [];
+    for (const f of statusFiles) {
+      const raw = await readFile(join(root, f), 'utf8');
+      const status = JSON.parse(raw);
+      runCounts.push(Number(status.runCount ?? 0));
+    }
+    expect(runCounts.some((n) => n >= 2)).toBe(true);
+    expect(runCounts.some((n) => n === 1)).toBe(true);
+
+    await service.stop(ctx);
+  });
+
   it('starts a worker, enforces single-instance lock, and stops cleanly', async () => {
     const stateDir = await mkdtemp(join(tmpdir(), 'openclaw-state-'));
     const workspaceDir = await mkdtemp(join(tmpdir(), 'openclaw-ws-'));
