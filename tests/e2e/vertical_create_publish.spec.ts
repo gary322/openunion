@@ -64,6 +64,14 @@ test('create + publish via a vertical app page (github)', async ({ page }) => {
     // If we're already connected via the buyer portal session, no token is required.
     // Otherwise, connect via token for deterministic E2E.
     if (await page.locator('#connectRow').isVisible()) {
+      // Token-based connect is dev-only UI. `addInitScript` should have set `pw_dev_mode`,
+      // but occasionally CI ends up with the dev tab present-but-hidden. If that happens,
+      // force-enable dev mode and reload this page before proceeding.
+      if (!(await page.locator('#tabToken').isVisible().catch(() => false))) {
+        await page.evaluate(() => localStorage.setItem('pw_dev_mode', '1'));
+        await page.reload();
+        await expect(page.locator('#hdrTitle')).toContainText('GitHub Scan');
+      }
       await page.click('#tabToken');
       await page.fill('#buyerToken', buyerToken);
       const originsLoadPromise = page.waitForResponse((r) => r.url().endsWith('/api/origins') && r.request().method() === 'GET');
