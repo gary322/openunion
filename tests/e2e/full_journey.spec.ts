@@ -335,6 +335,9 @@ test('buyer → bounty → worker → upload → verify (gateway) → payout (lo
     await page.goto('/buyer/index.html');
     await page.fill('#buyerToken', buyerToken);
 
+    // Guided onboarding can auto-collapse folds; pin the Money fold open for deterministic E2E.
+    await openDetails(page, '#foldMoney');
+
     await page.click('#btnGetEarnings');
     await expect(page.locator('#earningsStatus')).toContainText('ok');
     const earningsTxt = (await page.locator('#earningsOut').textContent()) || '{}';
