@@ -19,6 +19,7 @@
 
 import { chromium, type Frame, type Page } from 'playwright';
 import type { Locator } from 'playwright';
+import { writeFile } from 'node:fs/promises';
 
 function argValue(name: string): string | undefined {
   const idx = process.argv.indexOf(name);
@@ -214,60 +215,123 @@ async function completeStripeCheckout(input: { checkoutUrl: string; email: strin
     const page = await context.newPage();
     page.setDefaultTimeout(60_000);
 
-    await page.goto(input.checkoutUrl, { waitUntil: 'domcontentloaded' });
+    try {
+      await page.goto(input.checkoutUrl, { waitUntil: 'domcontentloaded' });
 
-    // Some Checkout flows ask for email (we create Stripe customers without email by default).
-    await fillIfVisible(page, 'input[name="email"]', input.email);
-    await fillIfVisible(page, 'input[type="email"]', input.email);
+      // Some Checkout flows ask for email (we create Stripe customers without email by default).
+      await fillIfVisible(page, 'input[name="email"]', input.email);
+      await fillIfVisible(page, 'input[type="email"]', input.email);
+      await fillIfVisible(page, 'input[autocomplete="email"]', input.email);
+      await fillIfVisible(page, 'input[id*="email" i]', input.email);
+      await fillIfVisible(page, 'input[aria-label*="email" i]', input.email);
+      await page.getByLabel(/email/i).first().fill(input.email).catch(() => undefined);
 
-    // Some Checkout flows show Link by default (email + phone) and require selecting "Card".
-    await fillIfVisible(page, 'input[name="phoneNumber"]', '(201) 555-0123');
+      // Some Checkout flows show Link by default (email + phone) and require selecting "Card".
+      await fillIfVisible(page, 'input[name="phoneNumber"]', '(201) 555-0123');
+      await fillIfVisible(page, 'input[autocomplete="tel"]', '(201) 555-0123');
+      await fillIfVisible(page, 'input[type="tel"]', '(201) 555-0123');
+      await fillIfVisible(page, 'input[id*="phone" i]', '(201) 555-0123');
+      await fillIfVisible(page, 'input[aria-label*="phone" i]', '(201) 555-0123');
+      await page.getByLabel(/phone/i).first().fill('(201) 555-0123').catch(() => undefined);
 
-    const cardRadio = page.locator('#payment-method-accordion-item-title-card');
-    if ((await cardRadio.count().catch(() => 0)) > 0) {
-      const first = cardRadio.first();
-      // Prefer `check` for radio inputs; fall back to click if Stripe changes markup.
-      if (!(await first.isChecked().catch(() => false))) {
-        await first.check({ force: true, timeout: 10_000 }).catch(() => undefined);
+      // Card fields are typically hosted in Stripe iframes (Elements/Checkout). Use a selector set to be resilient
+      // to Checkout UI changes.
+      const cardSelectors = [
+        'input[name="cardnumber"]',
+        'input[autocomplete="cc-number"]',
+        'input[data-elements-stable-field-name="cardNumber"]',
+        'input[aria-label*="card number" i]',
+        'input[placeholder*="1234" i]',
+      ];
+
+      // If the hosted inputs aren't present yet, we may need to explicitly select the "Card" payment method.
+      // In some Checkout configurations, the default is Link/Wallets and card inputs render only after selecting
+      // Card.
+      if (!(await hostedInputExists(page, cardSelectors))) {
+        // Try to scroll payment section into view (some layouts lazy-render details).
+        await page
+          .getByText(/payment method/i)
+          .first()
+          .scrollIntoViewIfNeeded()
+          .catch(() => undefined);
+
+        const attempts: Locator[] = [
+          // Most reliable: explicit radio with accessible name "Card".
+          page.getByRole('radio', { name: /^Card$/i }),
+          page.getByRole('radio', { name: /card/i }),
+          // Stripe Checkout accordion markup uses a clickable header wrapper.
+          page.locator('[data-testid="card-accordion-item"]'),
+          page.locator('[data-testid="card-accordion-item"] .AccordionItemHeader'),
+          page.locator('[data-testid="card-accordion-item"] .AccordionItemHeader--clickable'),
+          page.locator('#payment-method-label-card'),
+          // Fallbacks: older Checkout markup / payment-method accordion.
+          page.locator('#payment-method-accordion-item-title-card'),
+          page.locator('#payment-method-accordion-item-title-card').locator('xpath=..'),
+          page.getByRole('tab', { name: /card/i }),
+          page.locator('label:has-text("Card")'),
+          page.locator('label:has-text("Card") input[type="radio"]'),
+          page.locator('input[type="radio"]').filter({ hasText: /card/i }),
+          page.locator('div:has-text("Card")').filter({ has: page.locator('input[type="radio"]') }),
+          // Last resort: click text (can be noisy; keep it last).
+          page.getByText(/^Card$/i),
+        ];
+
+        for (const loc of attempts) {
+          const clicked =
+            (await clickFirstVisible(loc, 2_500)) ||
+            (await clickFirstVisible(loc, 2_500)); // small retry for transient renders
+          if (!clicked) continue;
+          await page.waitForTimeout(750);
+          if (await hostedInputExists(page, cardSelectors)) break;
+        }
+
+        // Final fallback: click by DOM association with "Card" label text.
+        if (!(await hostedInputExists(page, cardSelectors))) {
+          const didClick = await page
+            .evaluate(() => {
+              const candidates = Array.from(document.querySelectorAll('input[type="radio"]')) as HTMLInputElement[];
+              for (const input of candidates) {
+                const container = input.closest('label') ?? input.parentElement;
+                const txt = (container?.textContent ?? '').replace(/\s+/g, ' ').trim();
+                if (/\bcard\b/i.test(txt)) {
+                  input.click();
+                  return true;
+                }
+              }
+              // Click the nearest clickable ancestor of the visible "Card" text.
+              const el = Array.from(document.querySelectorAll<HTMLElement>('*')).find((n) => {
+                const t = (n.textContent ?? '').replace(/\s+/g, ' ').trim();
+                return t === 'Card' && n.offsetParent !== null;
+              });
+              if (el) {
+                const clickable = el.closest('label,button,a,div') as HTMLElement | null;
+                (clickable ?? el).click();
+                return true;
+              }
+              return false;
+            })
+            .catch(() => false);
+          if (didClick) await page.waitForTimeout(750);
+        }
       }
-      if (!(await first.isChecked().catch(() => false))) {
-        await first.click({ force: true, timeout: 10_000 }).catch(() => undefined);
+
+      // Some Checkout configurations show a "Continue/Next" step before card details are rendered.
+      if (!(await hostedInputExists(page, cardSelectors))) {
+        const continueBtn = page.getByRole('button', { name: /continue|next/i });
+        if ((await continueBtn.count().catch(() => 0)) > 0) {
+          await continueBtn.first().click().catch(() => undefined);
+          await page.waitForTimeout(1500);
+        }
       }
-      if (!(await first.isChecked().catch(() => false))) {
-        // Without selecting "Card", the hosted card inputs never render.
-        throw new Error('stripe_checkout_card_payment_method_not_selected');
+
+      if (!(await hostedInputExists(page, cardSelectors))) {
+        throw new Error('stripe_checkout_card_inputs_not_rendered');
       }
-    }
 
-    // Choose "Card" explicitly if multiple payment methods are shown (best-effort).
-    const cardTab = page.getByRole('tab', { name: /card/i });
-    if ((await cardTab.count().catch(() => 0)) > 0) {
-      await cardTab.first().click().catch(() => undefined);
-    }
-
-    // Card fields are typically hosted in Stripe iframes (Elements/Checkout). Use a selector set to be resilient
-    // to Checkout UI changes.
-    const cardSelectors = [
-      'input[name="cardnumber"]',
-      'input[autocomplete="cc-number"]',
-      'input[data-elements-stable-field-name="cardNumber"]',
-      'input[aria-label*="card number" i]',
-      'input[placeholder*="1234" i]',
-    ];
-
-    // Some Checkout configurations show a "Continue/Next" step before card details are rendered.
-    if (!(await hostedInputExists(page, cardSelectors))) {
-      const continueBtn = page.getByRole('button', { name: /continue|next/i });
-      if ((await continueBtn.count().catch(() => 0)) > 0) {
-        await continueBtn.first().click().catch(() => undefined);
-        await page.waitForTimeout(1500);
-      }
-    }
-
-    await fillHostedInput(
-      page,
-      cardSelectors,
-      '4242 4242 4242 4242',
+      await fillHostedInput(
+        page,
+        cardSelectors,
+        '4242 4242 4242 4242',
       60_000
     );
 
@@ -313,11 +377,29 @@ async function completeStripeCheckout(input: { checkoutUrl: string; email: strin
       (await clickFirstVisible(page.getByRole('button', { name: /purchase|complete/i }), 30_000));
     if (!clicked) throw new Error('stripe_checkout_submit_button_not_found');
 
-    // Success is typically a redirect to success_url or a success screen.
-    await Promise.race([
-      page.waitForURL((u) => !u.hostname.includes('checkout.stripe.com'), { timeout: 90_000 }),
-      page.getByText(/payment successful|thank you/i).first().waitFor({ timeout: 90_000 }),
-    ]).catch(() => undefined);
+      // Success is typically a redirect to success_url or a success screen.
+      await Promise.race([
+        page.waitForURL((u) => !u.hostname.includes('checkout.stripe.com'), { timeout: 90_000 }),
+        page.getByText(/payment successful|thank you/i).first().waitFor({ timeout: 90_000 }),
+      ]).catch(() => undefined);
+    } catch (err) {
+      const p = `tmp/stripe_checkout_fail_${tsSuffix()}.png`;
+      const h = p.replace(/\.png$/, '.html');
+      const f = p.replace(/\.png$/, '.frames.txt');
+      await page.screenshot({ path: p, fullPage: true }).catch(() => undefined);
+      const content = await page.content().catch(() => '');
+      if (content) await writeFile(h, content, { encoding: 'utf8' }).catch(() => undefined);
+      const frames = page
+        .frames()
+        .map((fr) => `${fr.name() || '(no-name)'} ${fr.url()}`)
+        .join('\n');
+      await writeFile(f, frames, { encoding: 'utf8' }).catch(() => undefined);
+      console.log(`[smoke_stripe_real] checkout_debug_url=${page.url()}`);
+      console.log(`[smoke_stripe_real] checkout_debug_screenshot=${p}`);
+      console.log(`[smoke_stripe_real] checkout_debug_html=${h}`);
+      console.log(`[smoke_stripe_real] checkout_debug_frames=${f}`);
+      throw err;
+    }
   } finally {
     await browser.close();
   }
@@ -389,6 +471,7 @@ async function main() {
   console.log(`[smoke_stripe_real] topup_cents=${topupCents} before=${before}`);
   console.log(`[smoke_stripe_real] stripe_session_id=${stripeSessionId}`);
   console.log(`[smoke_stripe_real] checkout_url=${checkoutUrl}`);
+  console.log('[smoke_stripe_real] note: copy the FULL Stripe Checkout URL (including any `#...` fragment) or Stripe may show "page not found".');
 
   const automateRaw = String(process.env.SMOKE_AUTOMATE_CHECKOUT ?? 'false').trim().toLowerCase();
   const automate = automateRaw === '1' || automateRaw === 'true' || automateRaw === 'yes';
