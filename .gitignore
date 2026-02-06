@@ -40,3 +40,6 @@ infra/terraform/tfplan_*
 # Playwright
 test-results/
 playwright-report/
+
+# Local specs (Smart-Ralph)
+specs/
