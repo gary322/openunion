@@ -44,7 +44,7 @@ variable "enable_router_instance" {
 variable "enable_cloudfront" {
   type        = bool
   default     = false
-  description = "When enable_router_instance=true, optionally create a CloudFront distribution to provide HTTPS and a stable public endpoint."
+  description = "Optionally create a CloudFront distribution to provide HTTPS without a custom domain (default *.cloudfront.net). Works in both ALB mode (CloudFront -> ALB) and router mode (CloudFront -> router instance)."
 }
 
 variable "cloudfront_price_class" {

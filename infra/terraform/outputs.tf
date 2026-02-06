@@ -1,6 +1,6 @@
 output "public_url" {
   value       = local.public_base_url
-  description = "Public base URL for the API (ALB DNS, CloudFront (router mode), router DNS, or explicit public_base_url)."
+  description = "Public base URL for the API (CloudFront (if enabled), ALB DNS, router instance, or explicit public_base_url)."
 }
 
 output "alb_dns_name" {
@@ -9,8 +9,10 @@ output "alb_dns_name" {
 }
 
 output "cloudfront_domain" {
-  value       = local.cloudfront_enabled ? aws_cloudfront_distribution.router[0].domain_name : null
-  description = "CloudFront distribution domain when enable_cloudfront=true and enable_router_instance=true."
+  value = local.cloudfront_enabled ? (
+    local.cloudfront_alb_enabled ? aws_cloudfront_distribution.alb[0].domain_name : aws_cloudfront_distribution.router[0].domain_name
+  ) : null
+  description = "CloudFront distribution domain when enable_cloudfront=true (ALB or router mode)."
 }
 
 output "router_public_ip" {

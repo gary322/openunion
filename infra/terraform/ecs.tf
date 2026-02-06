@@ -85,13 +85,16 @@ locals {
   verifier_url      = "http://verifier-gateway.${aws_service_discovery_private_dns_namespace.internal.name}:4010/run"
   # PUBLIC_BASE_URL is used by the API to generate absolute artifact URLs.
   # Prefer explicit var.public_base_url. Otherwise:
-  # - when enable_alb=true: use the ALB DNS name
+  # - when enable_alb=true and enable_cloudfront=true: use the CloudFront default domain (HTTPS)
+  # - when enable_alb=true: use the ALB DNS name (HTTPS only if ACM is configured)
   # - when enable_router_instance=true: use the router EC2 public DNS
   public_base_url = var.public_base_url != "" ? var.public_base_url : (
     var.enable_alb ? (
-      var.acm_certificate_arn != "" ? "https://${aws_lb.api[0].dns_name}" : "http://${aws_lb.api[0].dns_name}"
+      local.cloudfront_alb_enabled ? "https://${aws_cloudfront_distribution.alb[0].domain_name}" : (
+        var.acm_certificate_arn != "" ? "https://${aws_lb.api[0].dns_name}" : "http://${aws_lb.api[0].dns_name}"
+      )
       ) : (
-      local.cloudfront_enabled ? "https://${aws_cloudfront_distribution.router[0].domain_name}" : (
+      local.cloudfront_router_enabled ? "https://${aws_cloudfront_distribution.router[0].domain_name}" : (
         var.enable_router_instance ? (
           var.router_use_eip ? "http://${aws_eip.router[0].public_ip}" : "http://${aws_instance.router[0].public_ip}"
         ) : ""

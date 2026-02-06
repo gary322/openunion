@@ -32,6 +32,10 @@ Run the migration task **once** per deploy before rolling services:
 - Command executed: `node dist/db/migrate.js`
 
 ## Notes
+- HTTPS without a custom domain:
+  - Set `enable_cloudfront=true` to create a CloudFront distribution with the default `*.cloudfront.net` TLS cert.
+  - In ALB mode, CloudFront fronts the ALB over HTTP and redirects viewers to HTTPS.
+  - After apply, use `public_url` (or `cloudfront_domain`) as your HTTPS base URL for Stripe webhooks and browser-based E2E tests.
 - Payouts (crypto) require setting:
   - `base_rpc_url`
   - `base_payout_splitter_address`
