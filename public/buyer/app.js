@@ -172,6 +172,35 @@ async function refreshOnboardingStatus() {
   setBadge('navBadgeWork', String(publishedBounties));
   setBadge('navBadgeMoney', String(paidCount));
   setBadge('navBadgeDisputes', openDisputes > 0 ? String(openDisputes) : '0');
+
+  // Workflow-first "next action" (reduce "what do I do?" moments).
+  const nextLabel = $('onboardingNextLabel');
+  const nextBtn = $('btnOnboardingNext');
+  if (nextLabel && nextBtn) {
+    let href = '#integrations';
+    let label = 'Connect your platform';
+    if (!hasToken) {
+      href = '#integrations';
+      label = 'Connect your platform';
+    } else if (verifiedOrigins <= 0) {
+      href = '#integrations';
+      label = 'Verify your domain';
+    } else if (!feeOk) {
+      href = '#settings';
+      label = 'Set your platform fee';
+    } else if (appsCount <= 0) {
+      href = '#apps';
+      label = 'Create your first app';
+    } else if (publishedBounties <= 0) {
+      href = '/apps/';
+      label = 'Publish work via an app';
+    } else {
+      href = '#money';
+      label = 'View earnings';
+    }
+    nextLabel.textContent = label;
+    nextBtn.setAttribute('href', href);
+  }
 }
 
 function originRecordName(originUrl) {
@@ -195,6 +224,270 @@ function originHttpFileUrl(originUrl) {
 function clearNode(node) {
   if (!node) return;
   while (node.firstChild) node.removeChild(node.firstChild);
+}
+
+function toKebab(raw) {
+  const s = String(raw ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
+  return s || '';
+}
+
+function toSnake(raw) {
+  const s = String(raw ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_|_$/g, '');
+  return s || '';
+}
+
+function renderAppPreview(uiSchema) {
+  const root = $('appPreviewBody');
+  if (!root) return;
+  clearNode(root);
+
+  const sections = Array.isArray(uiSchema?.sections) ? uiSchema.sections : [];
+  if (!sections.length) {
+    const empty = document.createElement('div');
+    empty.className = 'pw-muted';
+    empty.textContent = 'No friendly form configured. Pick a template or enable Dev mode to edit JSON.';
+    root.appendChild(empty);
+    return;
+  }
+
+  for (const sec of sections) {
+    const wrap = document.createElement('div');
+    wrap.className = 'pw-card soft';
+
+    const title = document.createElement('div');
+    title.className = 'pw-kicker';
+    title.textContent = String(sec?.title ?? 'Section');
+    wrap.appendChild(title);
+
+    const fields = Array.isArray(sec?.fields) ? sec.fields : [];
+    const list = document.createElement('div');
+    list.className = 'pw-stack-sm';
+    for (const f of fields.slice(0, 12)) {
+      const row = document.createElement('div');
+      row.className = 'pw-row';
+      const left = document.createElement('div');
+      left.className = 'pw-muted';
+      left.textContent = String(f?.label ?? f?.key ?? 'Field');
+      row.appendChild(left);
+      if (f?.required) {
+        const req = document.createElement('span');
+        req.className = 'pw-chip warn';
+        req.textContent = 'required';
+        row.appendChild(req);
+      }
+      list.appendChild(row);
+    }
+    if (fields.length > 12) {
+      const more = document.createElement('div');
+      more.className = 'pw-muted';
+      more.textContent = `+${fields.length - 12} more…`;
+      list.appendChild(more);
+    }
+    wrap.appendChild(list);
+    root.appendChild(wrap);
+  }
+}
+
+function buildAppTemplate(templateId, { taskType }) {
+  const type = String(taskType ?? '').trim();
+  const base = {
+    schema_version: 'v1',
+    type,
+    input_spec: {},
+    output_spec: { required_artifacts: [{ kind: 'log', label: 'report' }] },
+    freshness_sla_sec: 3600,
+  };
+
+  if (templateId === 'github_scan') {
+    return {
+      defaultDescriptor: {
+        ...base,
+        capability_tags: ['http', 'llm_summarize', 'screenshot'],
+        input_spec: { query: '', language: '', min_stars: 100 },
+        output_spec: { required_artifacts: [{ kind: 'screenshot', label: 'repro' }] },
+      },
+      uiSchema: {
+        schema_version: 'v1',
+        category: 'Engineering',
+        bounty_defaults: { payout_cents: 1200, required_proofs: 1 },
+        templates: [
+          { id: 'default', name: 'Default scan', preset: { query: 'payments api', language: 'typescript', min_stars: 100 } },
+        ],
+        sections: [
+          {
+            id: 'search',
+            title: 'Search',
+            description: 'What to scan',
+            fields: [
+              { key: 'query', label: 'Query', type: 'text', required: true, placeholder: 'e.g. "vector db"', target: 'input_spec.query' },
+              { key: 'language', label: 'Language (optional)', type: 'text', placeholder: 'e.g. python', target: 'input_spec.language' },
+              { key: 'min_stars', label: 'Min stars', type: 'number', min: 0, placeholder: '100', target: 'input_spec.min_stars' },
+            ],
+          },
+        ],
+      },
+    };
+  }
+
+  if (templateId === 'research_arxiv') {
+    return {
+      defaultDescriptor: {
+        ...base,
+        capability_tags: ['http', 'llm_summarize'],
+        input_spec: { idea: '', constraints: '', max_results: 30 },
+        output_spec: { required_artifacts: [{ kind: 'log', label: 'research_plan' }] },
+      },
+      uiSchema: {
+        schema_version: 'v1',
+        category: 'Research',
+        bounty_defaults: { payout_cents: 1800, required_proofs: 1 },
+        templates: [{ id: 'plan', name: 'Research plan', preset: { max_results: 30 } }],
+        sections: [
+          {
+            id: 'idea',
+            title: 'Idea',
+            description: 'What you want to explore',
+            fields: [
+              { key: 'idea', label: 'Idea', type: 'textarea', required: true, placeholder: 'Describe your idea in 1-3 paragraphs.', target: 'input_spec.idea' },
+              {
+                key: 'constraints',
+                label: 'Constraints (optional)',
+                type: 'textarea',
+                placeholder: 'Timeline, budget, domain focus, etc.',
+                target: 'input_spec.constraints',
+              },
+              { key: 'max_results', label: 'Max papers', type: 'number', min: 5, max: 200, placeholder: '30', target: 'input_spec.max_results' },
+            ],
+          },
+        ],
+      },
+    };
+  }
+
+  if (templateId === 'marketplace_watch') {
+    return {
+      defaultDescriptor: {
+        ...base,
+        capability_tags: ['browser', 'screenshot'],
+        input_spec: { url: '', keywords: [] },
+        output_spec: { required_artifacts: [{ kind: 'screenshot', label: 'result' }] },
+        freshness_sla_sec: 900,
+      },
+      uiSchema: {
+        schema_version: 'v1',
+        category: 'Commerce',
+        bounty_defaults: { payout_cents: 900, required_proofs: 1 },
+        templates: [{ id: 'watch', name: 'Watch a page', preset: {} }],
+        sections: [
+          {
+            id: 'target',
+            title: 'Target',
+            description: 'What to monitor',
+            fields: [
+              { key: 'url', label: 'URL', type: 'url', required: true, placeholder: 'https://…', target: 'input_spec.url' },
+              { key: 'keywords', label: 'Keywords (one per line)', type: 'textarea', format: 'lines', placeholder: 'sale\nin stock\nprice', target: 'input_spec.keywords' },
+            ],
+          },
+        ],
+      },
+    };
+  }
+
+  // Default: generic HTTP + summarize.
+  return {
+    defaultDescriptor: {
+      ...base,
+      capability_tags: ['http', 'llm_summarize'],
+      input_spec: { url: '', question: '' },
+      output_spec: { required_artifacts: [{ kind: 'log', label: 'summary' }] },
+    },
+    uiSchema: {
+      schema_version: 'v1',
+      category: 'General',
+      bounty_defaults: { payout_cents: 1000, required_proofs: 1 },
+      templates: [{ id: 'default', name: 'Default', preset: {} }],
+      sections: [
+        {
+          id: 'request',
+          title: 'Request',
+          description: 'What to fetch and summarize',
+          fields: [
+            { key: 'url', label: 'URL', type: 'url', required: true, placeholder: 'https://…', target: 'input_spec.url' },
+            { key: 'question', label: 'Question (optional)', type: 'textarea', placeholder: 'What should the worker extract?', target: 'input_spec.question' },
+          ],
+        },
+      ],
+    },
+  };
+}
+
+let appLastAutoSlug = '';
+let appLastAutoTaskType = '';
+let appLastAutoDash = '';
+let generatedAppDefaultDescriptor = null;
+let generatedAppUiSchema = null;
+
+function autoFillAppIds() {
+  const name = $('appName')?.value?.trim?.() || '';
+  if (!name) return;
+  const autoSlug = toKebab(name);
+  const autoTaskType = toSnake(name);
+
+  const slugEl = $('appSlug');
+  const taskEl = $('appTaskType');
+  const dashEl = $('appDashboardUrl');
+
+  if (slugEl) {
+    const cur = slugEl.value.trim();
+    if (!cur || cur === appLastAutoSlug) slugEl.value = autoSlug;
+  }
+  if (taskEl) {
+    const cur = taskEl.value.trim();
+    if (!cur || cur === appLastAutoTaskType) taskEl.value = autoTaskType;
+  }
+  if (dashEl) {
+    const cur = dashEl.value.trim();
+    const next = autoSlug ? `/apps/app/${autoSlug}/` : '';
+    if (!cur || cur === appLastAutoDash) dashEl.value = next;
+    appLastAutoDash = next;
+  }
+
+  appLastAutoSlug = autoSlug;
+  appLastAutoTaskType = autoTaskType;
+}
+
+function applySelectedAppTemplate() {
+  const name = $('appName')?.value?.trim?.() || '';
+  if (!name) {
+    generatedAppDefaultDescriptor = null;
+    generatedAppUiSchema = null;
+    renderAppPreview(null);
+    return;
+  }
+
+  const templateId = String($('appTemplate')?.value ?? 'custom');
+  autoFillAppIds();
+
+  const taskType = $('appTaskType')?.value?.trim?.() || '';
+  const built = buildAppTemplate(templateId, { taskType });
+  generatedAppDefaultDescriptor = built.defaultDescriptor;
+  generatedAppUiSchema = built.uiSchema;
+
+  const dd = $('appDefaultDescriptor');
+  const us = $('appUiSchema');
+  if (dd) dd.value = pretty(generatedAppDefaultDescriptor);
+  if (us) us.value = pretty(generatedAppUiSchema);
+  renderAppPreview(generatedAppUiSchema);
 }
 
 function renderOriginGuide(origin) {
@@ -963,13 +1256,27 @@ async function onCreateOrgApp() {
     } catch {
       return setStatus('appsStatus', 'defaultDescriptor JSON parse error', 'bad');
     }
+  } else if (generatedAppDefaultDescriptor) {
+    defaultDescriptor = generatedAppDefaultDescriptor;
+  }
+
+  let uiSchema = undefined;
+  const rawUi = ($('appUiSchema')?.value ?? '').trim();
+  if (rawUi) {
+    try {
+      uiSchema = JSON.parse(rawUi);
+    } catch {
+      return setStatus('appsStatus', 'uiSchema JSON parse error', 'bad');
+    }
+  } else if (generatedAppUiSchema) {
+    uiSchema = generatedAppUiSchema;
   }
 
   const { res, json } = await api('/api/org/apps', {
     method: 'POST',
     token: token || undefined,
     csrf,
-    body: { slug, taskType, name, dashboardUrl, public: true, defaultDescriptor },
+    body: { slug, taskType, name, dashboardUrl, public: true, defaultDescriptor, uiSchema },
   });
   $('appsOut').textContent = pretty(json);
   if (!res.ok) return setStatus('appsStatus', `create app failed (${res.status})`, 'bad');
@@ -1078,7 +1385,23 @@ $('btnCreateDispute').addEventListener('click', () => onCreateDispute().catch((e
 $('btnListDisputes').addEventListener('click', () => onListDisputes().catch((e) => setStatus('disputeStatus', String(e), 'bad')));
 $('btnCancelDispute').addEventListener('click', () => onCancelDispute().catch((e) => setStatus('disputeStatus', String(e), 'bad')));
 
+// App wizard: auto-generate ids and apply templates.
+const appNameEl = $('appName');
+if (appNameEl) {
+  appNameEl.addEventListener('input', () => {
+    autoFillAppIds();
+    applySelectedAppTemplate();
+  });
+}
+const appTemplateEl = $('appTemplate');
+if (appTemplateEl) appTemplateEl.addEventListener('change', () => applySelectedAppTemplate());
+const appTaskTypeEl = $('appTaskType');
+if (appTaskTypeEl) appTaskTypeEl.addEventListener('input', () => applySelectedAppTemplate());
+
 setBuyerToken(getBuyerToken());
 setCsrfToken(getCsrfToken());
 renderOriginGuide(null);
 refreshOnboardingStatus().catch(() => {});
+
+autoFillAppIds();
+applySelectedAppTemplate();

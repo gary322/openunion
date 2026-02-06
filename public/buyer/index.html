@@ -69,6 +69,19 @@
               Workflow-first by default. Toggle <strong>Dev</strong> (top right) for raw JSON, IDs, and endpoint responses.
             </p>
 
+            <div class="pw-row" aria-label="Onboarding next action">
+              <div class="pw-field">
+                <div class="pw-badge" id="onboardingNext">
+                  Next: <span class="pw-mono" id="onboardingNextLabel">Connect your platform</span>
+                  <span class="pw-muted">• the console will guide you step-by-step</span>
+                </div>
+              </div>
+              <div class="pw-field">
+                <label>&nbsp;</label>
+                <a class="pw-btn primary" id="btnOnboardingNext" href="#integrations">Continue</a>
+              </div>
+            </div>
+
             <div class="pw-stepper">
               <div class="pw-step" id="stepToken">
                 <div class="pw-step-dot">1</div>
@@ -275,7 +288,11 @@
                 </div>
                 <div class="pw-field">
                   <label>Method</label>
-                  <input class="pw-input" id="originMethod" value="dns_txt" />
+                  <select class="pw-select" id="originMethod">
+                    <option value="dns_txt" selected>dns_txt (DNS TXT record)</option>
+                    <option value="http_file">http_file (serve a file)</option>
+                    <option value="header">header (serve a header)</option>
+                  </select>
                 </div>
               </div>
 
@@ -378,30 +395,67 @@
 
               <div class="pw-row">
                 <div class="pw-field">
-                  <label>Slug</label>
-                  <input class="pw-input" id="appSlug" placeholder="my-app" />
+                  <label>App name</label>
+                  <input class="pw-input" id="appName" placeholder="e.g. Flight deals monitor" />
                 </div>
                 <div class="pw-field">
-                  <label>Task type</label>
-                  <input class="pw-input" id="appTaskType" placeholder="my_task_type" />
+                  <label>Template</label>
+                  <select class="pw-select" id="appTemplate">
+                    <option value="github_scan">GitHub scan (http + summarize + screenshot)</option>
+                    <option value="research_arxiv">Research plan (arXiv, http + summarize)</option>
+                    <option value="marketplace_watch">Marketplace watch (browser + screenshot)</option>
+                    <option value="generic_http">Generic HTTP + summarize</option>
+                    <option value="custom" selected>Custom (start blank)</option>
+                  </select>
                 </div>
               </div>
 
               <div class="pw-row">
                 <div class="pw-field">
-                  <label>Name</label>
-                  <input class="pw-input" id="appName" placeholder="My App" />
-                </div>
-                <div class="pw-field">
                   <label>Dashboard URL (optional)</label>
-                  <input class="pw-input" id="appDashboardUrl" placeholder="https://your.app/dashboard or /apps/app/my-app/" />
+                  <input class="pw-input" id="appDashboardUrl" placeholder="Auto: /apps/app/<slug>/" />
                 </div>
               </div>
 
-              <details class="pw-details">
-                <summary>Default descriptor (advanced)</summary>
+              <details class="pw-details" id="appAdvancedIds">
+                <summary>Advanced: identifiers</summary>
                 <div class="pw-details-body">
-                  <textarea class="pw-textarea" id="appDefaultDescriptor" placeholder="{\"schema_version\":\"v1\", ... }"></textarea>
+                  <div class="pw-row">
+                    <div class="pw-field">
+                      <label>Slug</label>
+                      <input class="pw-input" id="appSlug" placeholder="my-app" />
+                      <div class="pw-muted">Used in URLs. Auto-generated from name.</div>
+                    </div>
+                    <div class="pw-field">
+                      <label>Task type</label>
+                      <input class="pw-input" id="appTaskType" placeholder="my_task_type" />
+                      <div class="pw-muted">Must match <span class="pw-mono">task_descriptor.type</span>. Auto-generated from name.</div>
+                    </div>
+                  </div>
+                </div>
+              </details>
+
+              <div class="pw-card soft" id="appPreview">
+                <div class="pw-card-title">
+                  <h3>Friendly form preview</h3>
+                  <span class="pw-kicker">What job creators will see</span>
+                </div>
+                <div id="appPreviewBody" class="pw-stack-sm">
+                  <div class="pw-muted">Pick a template to see the fields. Toggle Dev to edit raw JSON.</div>
+                </div>
+              </div>
+
+              <details class="pw-details pw-dev" id="appAdvancedDescriptor">
+                <summary>Developer: defaultDescriptor JSON (task_descriptor)</summary>
+                <div class="pw-details-body">
+                  <textarea class="pw-textarea" id="appDefaultDescriptor" placeholder="{\"schema_version\":\"v1\",\"type\":\"...\",...}"></textarea>
+                </div>
+              </details>
+
+              <details class="pw-details pw-dev" id="appAdvancedUiSchema">
+                <summary>Developer: uiSchema JSON (friendly form)</summary>
+                <div class="pw-details-body">
+                  <textarea class="pw-textarea" id="appUiSchema" placeholder="{\"sections\":[...]}"></textarea>
                 </div>
               </details>
 
@@ -432,11 +486,11 @@
               </p>
               <div class="pw-actions">
                 <a class="pw-btn primary" href="/apps/">Publish via app</a>
-                <a class="pw-btn" href="#workAdvanced">Advanced bounty form</a>
+                <a class="pw-btn pw-dev" href="#workAdvanced">Advanced bounty form</a>
               </div>
             </div>
 
-            <details class="pw-details" id="workAdvanced" open>
+            <details class="pw-details pw-dev" id="workAdvanced">
               <summary>Advanced: bounty form</summary>
               <div class="pw-details-body">
                 <div class="pw-card soft">
@@ -519,7 +573,7 @@
               </div>
 
               <div id="earningsStatus" class="pw-status" role="status"></div>
-              <details class="pw-details pw-dev" open>
+              <details class="pw-details pw-dev">
                 <summary>Developer response</summary>
                 <div class="pw-details-body">
                   <pre class="pw-codeblock" id="earningsOut">{}</pre>
@@ -570,7 +624,7 @@
               </div>
 
               <div id="disputeStatus" class="pw-status" role="status"></div>
-              <details class="pw-details pw-dev" open>
+              <details class="pw-details pw-dev">
                 <summary>Developer response</summary>
                 <div class="pw-details-body">
                   <pre class="pw-codeblock" id="disputeOut">{}</pre>

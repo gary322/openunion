@@ -44,7 +44,7 @@ test('buyer can open a dispute and admin can resolve (refund) via UI', async ({ 
 
     // Add + verify origin via http_file.
     await page.fill('#originUrl', origin);
-    await page.fill('#originMethod', 'http_file');
+    await page.selectOption('#originMethod', 'http_file');
     const addOriginRespPromise = page.waitForResponse((r) => r.url().includes('/api/origins') && r.request().method() === 'POST');
     await page.click('#btnAddOrigin');
     const addOriginResp = await addOriginRespPromise;
