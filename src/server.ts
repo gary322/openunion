@@ -1211,13 +1211,26 @@ export function buildServer(opts: { taskDescriptorBrowserFlowValidationGate?: bo
       })
       .execute();
 
-    const session = await stripeCreateCheckoutSession({
-      customerId,
-      amountCents,
-      successUrl,
-      cancelUrl,
-      metadata: { orgId: request.orgId, accountId: acct.id, paymentIntentId: intentId },
-    });
+    // If STRIPE_SECRET_KEY is rotated across Stripe accounts or between test/live, stored customer IDs can become invalid.
+    // Handle that gracefully by recreating the customer and retrying once.
+    const metadata = { orgId: request.orgId, accountId: acct.id, paymentIntentId: intentId };
+    let session: { id: string; url: string };
+    try {
+      session = await stripeCreateCheckoutSession({ customerId, amountCents, successUrl, cancelUrl, metadata });
+    } catch (err: any) {
+      const msg = String(err?.message ?? err);
+      if (msg.includes('No such customer')) {
+        const recreated = await stripeCreateCustomer({ orgId: request.orgId });
+        await db
+          .insertInto('stripe_customers')
+          .values({ id: nanoid(12), org_id: request.orgId, stripe_customer_id: recreated.id, created_at: now })
+          .onConflict((oc) => oc.column('org_id').doUpdateSet({ stripe_customer_id: recreated.id }))
+          .execute();
+        session = await stripeCreateCheckoutSession({ customerId: recreated.id, amountCents, successUrl, cancelUrl, metadata });
+      } else {
+        throw err;
+      }
+    }
 
     await db
       .updateTable('payment_intents')
