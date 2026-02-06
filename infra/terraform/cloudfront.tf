@@ -1,7 +1,11 @@
 locals {
-  # CloudFront is only used when running in router mode (no ALB). It provides HTTPS and a stable
-  # public endpoint without requiring ELB/ALB support in the AWS account.
-  cloudfront_enabled = var.enable_router_instance && var.enable_cloudfront
+  # CloudFront is an optional HTTPS front door that does not require a custom domain (uses the
+  # default *.cloudfront.net certificate). This supports:
+  # - ALB mode: CloudFront -> ALB (origin protocol http-only)
+  # - router mode: CloudFront -> router EC2 (origin protocol http-only)
+  cloudfront_router_enabled = var.enable_router_instance && var.enable_cloudfront
+  cloudfront_alb_enabled    = var.enable_alb && var.enable_cloudfront
+  cloudfront_enabled        = local.cloudfront_router_enabled || local.cloudfront_alb_enabled
 }
 
 resource "aws_cloudfront_cache_policy" "no_cache" {
@@ -52,7 +56,7 @@ resource "aws_cloudfront_origin_request_policy" "all_viewer" {
 }
 
 resource "aws_cloudfront_distribution" "router" {
-  count = local.cloudfront_enabled ? 1 : 0
+  count = local.cloudfront_router_enabled ? 1 : 0
 
   enabled         = true
   is_ipv6_enabled = true
@@ -73,6 +77,50 @@ resource "aws_cloudfront_distribution" "router" {
 
   default_cache_behavior {
     target_origin_id       = "router"
+    viewer_protocol_policy = "redirect-to-https"
+    compress               = true
+
+    allowed_methods = ["GET", "HEAD", "OPTIONS", "PUT", "PATCH", "POST", "DELETE"]
+    cached_methods  = ["GET", "HEAD", "OPTIONS"]
+
+    cache_policy_id          = aws_cloudfront_cache_policy.no_cache[0].id
+    origin_request_policy_id = aws_cloudfront_origin_request_policy.all_viewer[0].id
+  }
+
+  restrictions {
+    geo_restriction {
+      restriction_type = "none"
+    }
+  }
+
+  viewer_certificate {
+    cloudfront_default_certificate = true
+    minimum_protocol_version       = "TLSv1.2_2021"
+  }
+}
+
+resource "aws_cloudfront_distribution" "alb" {
+  count = local.cloudfront_alb_enabled ? 1 : 0
+
+  enabled         = true
+  is_ipv6_enabled = true
+  price_class     = var.cloudfront_price_class
+  comment         = "${local.name} alb distribution"
+
+  origin {
+    origin_id   = "alb"
+    domain_name = aws_lb.api[0].dns_name
+
+    custom_origin_config {
+      http_port              = 80
+      https_port             = 443
+      origin_protocol_policy = "http-only"
+      origin_ssl_protocols   = ["TLSv1.2"]
+    }
+  }
+
+  default_cache_behavior {
+    target_origin_id       = "alb"
     viewer_protocol_policy = "redirect-to-https"
     compress               = true
 

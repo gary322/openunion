@@ -191,11 +191,19 @@ function maxArtifactScanBacklogAgeSec() {
   return Number(process.env.MAX_ARTIFACT_SCAN_BACKLOG_AGE_SEC ?? 0);
 }
 
+function forwardedProtoFromHeaders(headers: Record<string, any>): string {
+  // CloudFront -> ALB uses HTTP to the origin, so ALB's x-forwarded-proto will be "http".
+  // CloudFront provides the viewer protocol via cloudfront-forwarded-proto.
+  const cf = String(headers?.['cloudfront-forwarded-proto'] ?? '').split(',')[0].trim();
+  if (cf) return cf;
+  return String(headers?.['x-forwarded-proto'] ?? '').split(',')[0].trim();
+}
+
 function publicBaseUrlForRequest(request: any): string {
   const env = String(process.env.PUBLIC_BASE_URL ?? '').trim();
   if (env) return env.replace(/\/$/, '');
 
-  const proto = String(request.headers['x-forwarded-proto'] ?? '').split(',')[0].trim() || 'http';
+  const proto = forwardedProtoFromHeaders(request.headers) || 'http';
   const authority = String((request.headers as any)?.[':authority'] ?? '').split(',')[0].trim();
   const host =
     String(request.headers['x-forwarded-host'] ?? '').split(',')[0].trim() ||
@@ -365,7 +373,7 @@ export function buildServer(opts: { taskDescriptorBrowserFlowValidationGate?: bo
 
     // Always allow same-origin browser calls. The per-org allowlist is meant for third-party UIs
     // hosted on different origins; it must not break first-party UI served by this host.
-    const xfProto = String(request.headers['x-forwarded-proto'] ?? '').split(',')[0].trim();
+    const xfProto = forwardedProtoFromHeaders(request.headers);
     const xfHost = String(request.headers['x-forwarded-host'] ?? '').split(',')[0].trim();
     const host = String(request.headers['host'] ?? '').split(',')[0].trim();
     const serverOrigin = (xfHost || host) ? `${xfProto || 'http'}://${xfHost || host}` : '';
@@ -457,7 +465,7 @@ export function buildServer(opts: { taskDescriptorBrowserFlowValidationGate?: bo
     }
 
     if (enforceHttpsForApi()) {
-      const proto = String(request.headers['x-forwarded-proto'] ?? '').split(',')[0].trim();
+      const proto = forwardedProtoFromHeaders(request.headers);
       if (request.url?.startsWith('/api') && !request.url.startsWith('/api/webhooks/') && proto && proto !== 'https') {
         reply.code(400).send({ error: { code: 'https_required', message: 'HTTPS required' } });
         return;
@@ -475,7 +483,7 @@ export function buildServer(opts: { taskDescriptorBrowserFlowValidationGate?: bo
     if (ct.includes('text/html')) {
       reply.header('content-security-policy', "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'");
     }
-    const proto = String((request as any)?.headers?.['x-forwarded-proto'] ?? '').split(',')[0].trim();
+    const proto = forwardedProtoFromHeaders((request as any)?.headers ?? {});
     const debugHeaders = ['true', '1', 'yes'].includes(String(process.env.DEBUG_RESPONSE_HEADERS ?? '').trim().toLowerCase());
     if (debugHeaders) {
       reply.header('x-debug-x-forwarded-proto', proto || '(none)');
@@ -937,7 +945,7 @@ export function buildServer(opts: { taskDescriptorBrowserFlowValidationGate?: bo
     if (!user) return reply.code(401).send({ error: { code: 'unauthorized', message: 'invalid credentials' } });
     const { createSession } = await import('./auth/sessions.js');
     const sess = await createSession({ userId: user.id, orgId: user.orgId, role: user.role });
-    const proto = String((request.headers as any)?.['x-forwarded-proto'] ?? '').split(',')[0].trim();
+    const proto = forwardedProtoFromHeaders(request.headers);
     const secureEnv = String(process.env.SESSION_COOKIE_SECURE ?? '').trim().toLowerCase();
     const secure =
       secureEnv === 'true' || secureEnv === '1'
