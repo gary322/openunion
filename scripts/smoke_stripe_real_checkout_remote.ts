@@ -3,7 +3,8 @@
 // This script verifies the buyer funding path with an actual Stripe Checkout flow:
 // - creates a buyer API key (or self-serve registers a new org)
 // - creates a Stripe Checkout Session via the API
-// - uses Playwright to complete the Checkout (test card)
+// - prints the Checkout URL and waits for completion (manual by default)
+// - optionally attempts to automate the Checkout via Playwright (often blocked by bot mitigation)
 // - polls /api/billing/account until balance increases
 //
 // Usage:
@@ -330,12 +331,18 @@ async function pollBalanceDelta(input: {
   timeoutMs: number;
 }) {
   const deadline = Date.now() + input.timeoutMs;
+  let lastLogAt = 0;
   while (Date.now() < deadline) {
     const acct = await fetchJson({ baseUrl: input.baseUrl, path: '/api/billing/account', headers: input.authHeader });
     if (acct.ok) {
       const after = Number(acct.json?.account?.balance_cents ?? 0);
       const delta = after - input.before;
       if (delta === input.expectedDelta) return { after };
+      const now = Date.now();
+      if (now - lastLogAt > 10_000) {
+        lastLogAt = now;
+        console.log(`[smoke_stripe_real] waiting_for_webhook delta=${delta} expected=${input.expectedDelta}`);
+      }
     }
     await new Promise((r) => setTimeout(r, 1000));
   }
@@ -383,9 +390,25 @@ async function main() {
   console.log(`[smoke_stripe_real] stripe_session_id=${stripeSessionId}`);
   console.log(`[smoke_stripe_real] checkout_url=${checkoutUrl}`);
 
-  await completeStripeCheckout({ checkoutUrl, email: auth.email });
+  const automateRaw = String(process.env.SMOKE_AUTOMATE_CHECKOUT ?? 'false').trim().toLowerCase();
+  const automate = automateRaw === '1' || automateRaw === 'true' || automateRaw === 'yes';
+  if (automate) {
+    try {
+      await completeStripeCheckout({ checkoutUrl, email: auth.email });
+    } catch (err: any) {
+      // Stripe Checkout often presents bot mitigation (e.g. hCaptcha), making browser automation unreliable.
+      // Fall back to manual completion.
+      console.log(`[smoke_stripe_real] automate_checkout_failed=${String(err?.message ?? err)}`);
+    }
+  } else {
+    console.log('[smoke_stripe_real] automate_checkout=false (manual step required)');
+  }
 
-  const polled = await pollBalanceDelta({ baseUrl, authHeader, before, expectedDelta: topupCents, timeoutMs: 90_000 });
+  console.log('[smoke_stripe_real] complete the Stripe Checkout in a real browser, then this smoke will pass.');
+
+  const waitSecRaw = Number(process.env.SMOKE_WAIT_SEC ?? 600);
+  const waitSec = Number.isFinite(waitSecRaw) ? Math.max(30, Math.min(1800, Math.floor(waitSecRaw))) : 600;
+  const polled = await pollBalanceDelta({ baseUrl, authHeader, before, expectedDelta: topupCents, timeoutMs: waitSec * 1000 });
   console.log(`[smoke_stripe_real] after=${polled.after} delta=${polled.after - before}`);
 
   console.log('[smoke_stripe_real] ok');
