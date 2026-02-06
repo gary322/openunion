@@ -30,6 +30,7 @@
     "smoke:payout:remote": "tsx scripts/smoke_payout_base_remote.ts",
     "smoke:stripe:remote": "tsx scripts/smoke_stripe_remote.ts",
     "smoke:remote:ui": "tsx scripts/smoke_ui_remote.ts",
+    "ops:payout:preflight": "tsx scripts/ops/payout_base_preflight.ts",
     "test:watch": "vitest",
     "lint": "echo 'add linter later'"
   },
