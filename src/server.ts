@@ -782,7 +782,23 @@ export function buildServer(opts: { taskDescriptorBrowserFlowValidationGate?: bo
   app.get('/__smoke/arxiv/api/query', async (req: any, reply) => {
     const q = typeof req.query?.search_query === 'string' ? req.query.search_query : '';
     const nowIso = new Date().toISOString();
-    const xml = `<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<feed xmlns=\"http://www.w3.org/2005/Atom\">\n  <title>Proofwork Smoke: arXiv query</title>\n  <id>http://arxiv.org/api/query</id>\n  <updated>${nowIso}</updated>\n  <entry>\n    <id>http://arxiv.org/abs/1234.5678v1</id>\n    <title>Smoke Paper One (${String(q).slice(0, 40).replace(/</g, '').replace(/>/g, '')})</title>\n  </entry>\n  <entry>\n    <id>http://arxiv.org/abs/2345.6789v2</id>\n    <title>Smoke Paper Two</title>\n  </entry>\n</feed>\n`;\n    reply.header('content-type', 'application/atom+xml; charset=utf-8');
+    const safeQ = String(q).slice(0, 40).replace(/</g, '').replace(/>/g, '');
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Proofwork Smoke: arXiv query</title>
+  <id>http://arxiv.org/api/query</id>
+  <updated>${nowIso}</updated>
+  <entry>
+    <id>http://arxiv.org/abs/1234.5678v1</id>
+    <title>Smoke Paper One (${safeQ})</title>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2345.6789v2</id>
+    <title>Smoke Paper Two</title>
+  </entry>
+</feed>
+`;
+    reply.header('content-type', 'application/atom+xml; charset=utf-8');
     return reply.send(xml);
   });
 
