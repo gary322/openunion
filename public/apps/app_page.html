@@ -146,14 +146,23 @@
             </div>
 
             <div id="createAfterConnect" hidden>
-              <div class="pw-row" id="templateRow">
+              <div class="pw-card soft" id="templateCard" hidden>
+                <div class="pw-card-title">
+                  <h3>Starting point</h3>
+                  <span class="pw-kicker">Optional</span>
+                </div>
+                <div class="pw-muted">Pick a template to prefill the form. Switching templates will not overwrite fields you have edited.</div>
+                <div class="pw-template-grid" id="templateGrid" role="list" aria-label="Templates"></div>
+              </div>
+
+              <div class="pw-row pw-dev" id="templateRow">
                 <div class="pw-field">
-                  <label>Template</label>
+                  <label for="template">Developer: template</label>
                   <select class="pw-select" id="template"></select>
                 </div>
                 <div class="pw-field">
                   <label>&nbsp;</label>
-                  <button class="pw-btn" id="btnApplyTemplate" type="button">Apply</button>
+                  <button class="pw-btn" id="btnApplyTemplate" type="button">Apply (overwrite)</button>
                 </div>
               </div>
 
@@ -174,7 +183,7 @@
                   </div>
                   <div class="pw-actions">
                     <button class="pw-btn" id="btnRefreshOrigins" type="button">Refresh origins</button>
-                    <a class="pw-btn" href="/buyer/" rel="noreferrer">Verify origins</a>
+                    <a class="pw-btn" id="linkVerifyOrigins" href="/buyer/onboarding.html" rel="noreferrer">Verify origins</a>
                   </div>
                 </div>
 
@@ -187,6 +196,7 @@
                     <span class="pw-pill faint" id="payoutPill">Defaults</span>
                   </summary>
                   <div class="pw-fold-body">
+                    <div class="pw-presets" id="payoutPresets" aria-label="Payout presets"></div>
                     <div class="pw-row">
                       <div class="pw-field">
                         <label for="payoutCents">Payout (cents)</label>

@@ -663,6 +663,107 @@ details.pw-fold .pw-fold-body {
   color: rgba(11, 15, 25, 0.7);
 }
 
+/* Choice grids: template pickers and presets. */
+.pw-template-grid {
+  margin-top: 10px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+}
+.pw-choice {
+  appearance: none;
+  text-align: left;
+  border: 1px solid rgba(11, 15, 25, 0.14);
+  background: rgba(255, 255, 255, 0.72);
+  border-radius: 16px;
+  padding: 12px 12px 11px;
+  cursor: pointer;
+  box-shadow: var(--shadow-soft);
+  transition: transform 140ms ease, background 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
+}
+.pw-choice:hover {
+  transform: translateY(-1px);
+  border-color: rgba(11, 15, 25, 0.22);
+  box-shadow: var(--shadow);
+}
+.pw-choice[aria-pressed="true"] {
+  border-color: rgba(11, 15, 25, 0.22);
+  background: linear-gradient(135deg, var(--accent-soft), rgba(255, 255, 255, 0.9));
+}
+.pw-choice-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-weight: 850;
+  letter-spacing: 0.1px;
+  color: rgba(11, 15, 25, 0.92);
+}
+.pw-choice-sub {
+  margin-top: 6px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+.pw-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.pw-preset {
+  appearance: none;
+  border: 1px solid rgba(11, 15, 25, 0.14);
+  background: rgba(255, 255, 255, 0.72);
+  color: rgba(11, 15, 25, 0.86);
+  border-radius: 999px;
+  padding: 8px 10px;
+  cursor: pointer;
+  font-weight: 750;
+  letter-spacing: 0.01em;
+  transition: transform 120ms ease, background 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
+}
+.pw-preset:hover {
+  transform: translateY(-1px);
+  border-color: rgba(11, 15, 25, 0.22);
+  box-shadow: var(--shadow-soft);
+}
+.pw-preset[aria-pressed="true"] {
+  border-color: rgba(11, 15, 25, 0.22);
+  background: linear-gradient(135deg, var(--accent-soft), rgba(255, 255, 255, 0.9));
+}
+.pw-preset small {
+  display: block;
+  margin-top: 2px;
+  font-weight: 650;
+  color: rgba(11, 15, 25, 0.62);
+}
+
+.pw-dropzone {
+  border: 1px dashed rgba(11, 15, 25, 0.22);
+  background: rgba(255, 255, 255, 0.62);
+  border-radius: 16px;
+  padding: 12px;
+  box-shadow: var(--shadow-soft);
+  transition: background 140ms ease, border-color 140ms ease, transform 140ms ease;
+}
+.pw-dropzone:hover {
+  transform: translateY(-1px);
+  border-color: rgba(11, 15, 25, 0.28);
+}
+.pw-dropzone.dragover {
+  background: linear-gradient(135deg, var(--accent-soft), rgba(255, 255, 255, 0.88));
+  border-color: rgba(11, 15, 25, 0.3);
+}
+.pw-output-card .pw-card-title h3 {
+  margin: 0;
+  font-size: 14px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(11, 15, 25, 0.72);
+}
+
 /* Tabs: small, high-signal choices (used in "Connect" flows). */
 .pw-tabs {
   display: inline-flex;

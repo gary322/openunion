@@ -145,15 +145,19 @@ export async function initAppPage(cfg) {
   const loginStatus = qs('#loginStatus');
   const templateSelect = qs('#template');
   const btnApplyTemplate = qs('#btnApplyTemplate');
+  const templateCard = qs('#templateCard');
+  const templateGrid = qs('#templateGrid');
   const formRoot = qs('#form');
   const originSelect = qs('#originSelect');
   const originSelectWrap = qs('#originSelectWrap');
   const originSingle = qs('#originSingle');
   const originSingleText = qs('#originSingleText');
   const btnRefreshOrigins = qs('#btnRefreshOrigins');
+  const linkVerifyOrigins = qs('#linkVerifyOrigins');
   const payoutInput = qs('#payoutCents');
   const proofsInput = qs('#requiredProofs');
   const payoutPill = qs('#payoutPill');
+  const payoutPresets = qs('#payoutPresets');
   const payoutBreakdown = qs('#payoutBreakdown');
   const titleInput = qs('#title');
   const btnCreateDraft = qs('#btnCreateDraft');
@@ -175,6 +179,17 @@ export async function initAppPage(cfg) {
   const taskType = String(cfg?.taskType || cfg?.task_type || cfg?.task_type || '');
   const uiSchema = cfg?.uiSchema || {};
   const defaultDescriptor = cfg?.defaultDescriptor || cfg?.default_descriptor || null;
+  const appSlug = String(cfg?.slug || '').trim();
+
+  function appStorageKey(suffix) {
+    const raw = String(appSlug || taskType || appName || 'app')
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '_')
+      .replace(/_+/g, '_')
+      .replace(/^_|_$/g, '');
+    return `pw_app_${suffix}_${raw || 'app'}`;
+  }
 
   // Badges (capabilities + type)
   const caps = Array.isArray(defaultDescriptor?.capability_tags) ? defaultDescriptor.capability_tags : Array.isArray(cfg?.defaultCaps) ? cfg.defaultCaps : [];
@@ -183,6 +198,12 @@ export async function initAppPage(cfg) {
   // Token
   const savedToken = storageGet(LS.buyerToken, '');
   if (tokenInput) tokenInput.value = savedToken;
+
+  // If the user needs to verify an origin, keep the return path tight.
+  if (linkVerifyOrigins) {
+    const next = String(window.location.pathname || '').startsWith('/') ? String(window.location.pathname || '') : '/apps/';
+    linkVerifyOrigins.setAttribute('href', `/buyer/onboarding.html?next=${encodeURIComponent(next)}`);
+  }
 
   // Session connect: app pages can also use the buyer cookie session (no token copy/paste).
   // We keep token mode as the programmatic/advanced option.
@@ -315,19 +336,20 @@ export async function initAppPage(cfg) {
     enableAuto(true);
   });
 
-  // Template dropdown
+  // Templates: power users still have a dropdown in Dev mode, but normal UX is card-based.
   const templates = Array.isArray(uiSchema?.templates) ? uiSchema.templates : [];
-  if (templateRow) templateRow.hidden = templates.length <= 1;
+  if (templateCard) templateCard.hidden = templates.length <= 1;
+  if (templateRow) templateRow.hidden = templates.length <= 0;
   if (templateSelect) {
     templateSelect.replaceChildren(
       el('option', { value: '' }, ['Custom']),
       ...templates.map((t) => el('option', { value: String(t.id) }, [String(t.name || t.id)]))
     );
-    if (templates.length === 1) templateSelect.value = String(templates[0]?.id ?? '');
   }
 
   // Render friendly form
   const fieldEls = new Map();
+  const touchedKeys = new Set();
   let verifiedOriginsCount = 0;
   let platformFeeBps = 0;
   let templateAutoApplied = false;
@@ -464,8 +486,15 @@ export async function initAppPage(cfg) {
 
     if (help) wrap.appendChild(el('div', { class: 'pw-muted', text: help }));
     fieldEls.set(key, { field, input });
-    input.addEventListener('input', () => refreshPreview());
-    input.addEventListener('change', () => refreshPreview());
+    const markTouched = () => {
+      if (key) touchedKeys.add(key);
+    };
+    const onChange = () => {
+      markTouched();
+      refreshPreview();
+    };
+    input.addEventListener('input', onChange);
+    input.addEventListener('change', onChange);
     return wrap;
   }
 
@@ -506,23 +535,84 @@ export async function initAppPage(cfg) {
 
   function recommendedTemplateId() {
     if (!templates.length) return '';
+    // Persist the user's last selection per app; it beats any "recommended" hint.
+    const saved = String(storageGet(appStorageKey('template'), '') || '').trim();
+    if (saved && templates.some((t) => String(t.id) === saved)) return saved;
     const explicit = String(uiSchema?.recommended_template_id || uiSchema?.default_template_id || '').trim();
     if (explicit && templates.some((t) => String(t.id) === explicit)) return explicit;
     const rec = templates.find((t) => Boolean(t?.recommended)) || templates[0];
     return rec ? String(rec.id) : '';
   }
 
-  function applyTemplateById(tid) {
-    return applyTemplateByIdInner(tid, { silent: false });
+  const templateButtons = new Map();
+
+  function setTemplateUiSelected(tid) {
+    const t = String(tid ?? '').trim();
+    if (templateSelect) {
+      // Keep dropdown in sync for Dev mode and for keyboard users.
+      const exists = t && templates.some((x) => String(x.id) === t);
+      templateSelect.value = exists ? t : '';
+    }
+    for (const [id, btn] of templateButtons.entries()) {
+      btn.setAttribute('aria-pressed', id === t ? 'true' : 'false');
+    }
   }
 
-  function applyTemplateByIdInner(tid, { silent }) {
+  function rememberTemplate(tid) {
+    const t = String(tid ?? '').trim();
+    if (!t) return;
+    storageSet(appStorageKey('template'), t);
+  }
+
+  function renderTemplateGrid() {
+    if (!templateCard || !templateGrid) return;
+    templateButtons.clear();
+    if (templates.length <= 1) {
+      templateCard.hidden = true;
+      templateGrid.replaceChildren();
+      return;
+    }
+
+    templateCard.hidden = false;
+    const selected = String(templateSelect?.value || '').trim() || recommendedTemplateId();
+    const nodes = [];
+
+    for (const t of templates) {
+      const tid = String(t?.id ?? '').trim();
+      if (!tid) continue;
+      const name = String(t?.name || t?.id || 'Template');
+      const isRec = Boolean(t?.recommended) || String(uiSchema?.recommended_template_id || '').trim() === tid;
+      const subtitle = String(t?.description || (isRec ? 'Recommended defaults for first publish.' : 'Prefills the form with sensible defaults.'));
+
+      const btn = el('button', { type: 'button', class: 'pw-choice', 'aria-pressed': selected === tid ? 'true' : 'false' }, [
+        el('div', { class: 'pw-choice-title' }, [
+          el('span', { text: name }),
+          isRec ? el('span', { class: 'pw-pill good', text: 'Recommended' }) : el('span', { class: 'pw-pill faint', text: 'Template' }),
+        ]),
+        el('div', { class: 'pw-choice-sub', text: subtitle }),
+      ]);
+
+      btn.addEventListener('click', () => {
+        setTemplateUiSelected(tid);
+        rememberTemplate(tid);
+        applyTemplateByIdInner(tid, { silent: false, overwriteTouched: false });
+      });
+
+      templateButtons.set(tid, btn);
+      nodes.push(btn);
+    }
+
+    templateGrid.replaceChildren(...nodes);
+  }
+
+  function applyTemplateByIdInner(tid, { silent, overwriteTouched }) {
     const t = templates.find((x) => String(x.id) === String(tid));
     if (!t) return;
     const preset = t.preset || {};
     for (const [k, v] of Object.entries(preset)) {
       const entry = fieldEls.get(String(k));
       if (!entry) continue;
+      if (!overwriteTouched && touchedKeys.has(String(k))) continue;
       const { field, input } = entry;
       if (String(field.type) === 'boolean') {
         input.checked = Boolean(v);
@@ -541,36 +631,9 @@ export async function initAppPage(cfg) {
   btnApplyTemplate?.addEventListener('click', () => {
     const tid = String(templateSelect?.value ?? '').trim();
     if (!tid) return toast('Pick a template first', 'bad');
-    applyTemplateById(tid);
+    // Dev-mode: overwrite even edited fields.
+    applyTemplateByIdInner(tid, { silent: false, overwriteTouched: true });
   });
-
-  function softApplyTemplateById(tid, { includeBooleans = false } = {}) {
-    const tId = String(tid ?? '').trim();
-    if (!tId) return 0;
-    const t = templates.find((x) => String(x.id) === tId);
-    if (!t) return 0;
-    const preset = t.preset || {};
-    let changed = 0;
-    for (const [k, v] of Object.entries(preset)) {
-      const entry = fieldEls.get(String(k));
-      if (!entry) continue;
-      const { field, input } = entry;
-      if (String(field.type) === 'boolean') {
-        if (!includeBooleans) continue; // avoid surprise toggles on soft apply
-        const next = Boolean(v);
-        if (input.checked !== next) {
-          input.checked = next;
-          changed++;
-        }
-        continue;
-      }
-      const cur = String(input.value || '').trim();
-      if (cur) continue;
-      input.value = v === null || v === undefined ? '' : Array.isArray(v) ? v.join('\n') : String(v);
-      changed++;
-    }
-    return changed;
-  }
 
   function maybeAutoApplyTemplate() {
     if (templateAutoApplied) return;
@@ -579,35 +642,90 @@ export async function initAppPage(cfg) {
     if (!tid) return;
 
     // Reflect selection in the UI to make the page self-explanatory.
-    if (templateSelect) {
-      const cur = String(templateSelect.value || '').trim();
-      if (!cur || templates.length === 1) templateSelect.value = tid;
-    }
-
-    if (templates.length === 1) {
-      // For a single template, fully apply once on first render (silent).
-      applyTemplateByIdInner(tid, { silent: true });
-    } else {
-      // For multiple templates, soft-apply to empty fields only (silent).
-      const changed = softApplyTemplateById(tid, { includeBooleans: false }) || 0;
-      if (changed) refreshPreview();
-    }
+    setTemplateUiSelected(tid);
+    applyTemplateByIdInner(tid, { silent: true, overwriteTouched: false });
     templateAutoApplied = true;
   }
 
   templateSelect?.addEventListener('change', () => {
-    // Low-effort mode: selecting a template should immediately help. We do a "soft apply" by
-    // filling only empty fields so we don't clobber user input.
     const tid = String(templateSelect?.value ?? '').trim();
     if (!tid) return;
-    const changed = softApplyTemplateById(tid, { includeBooleans: false }) || 0;
-    if (changed) refreshPreview();
+    setTemplateUiSelected(tid);
+    rememberTemplate(tid);
+    applyTemplateByIdInner(tid, { silent: true, overwriteTouched: false });
   });
 
   // Smart defaults: fill payout/proofs from app schema if provided.
   const moneyDefaults = moneyDefaultsFromUiSchema(uiSchema);
   if (payoutInput && moneyDefaults.payoutCents !== null) payoutInput.value = String(moneyDefaults.payoutCents);
   if (proofsInput && moneyDefaults.requiredProofs !== null) proofsInput.value = String(moneyDefaults.requiredProofs);
+
+  // Payout presets: reduce numeric-thinking. These buttons simply set the underlying inputs.
+  const payoutPresetDefs = [];
+  const payoutPresetBtns = new Map();
+
+  function roundCents(n) {
+    const v = Math.max(0, Math.floor(Number(n || 0)));
+    // Round to the nearest 50 cents to keep presets looking intentional.
+    return Math.max(100, Math.round(v / 50) * 50);
+  }
+
+  function computeWorkerNet(payoutCents) {
+    const pc = Math.max(0, Math.floor(Number(payoutCents || 0)));
+    const platformCutCents = Math.round((pc * Number(platformFeeBps || 0)) / 10000);
+    const workerPortionCents = Math.max(0, pc - platformCutCents);
+    const proofworkFeeCents = Math.round(workerPortionCents * 0.01);
+    return Math.max(0, workerPortionCents - proofworkFeeCents);
+  }
+
+  function buildPayoutPresetDefs() {
+    if (payoutPresetDefs.length) return;
+    const base = moneyDefaults.payoutCents !== null ? Number(moneyDefaults.payoutCents) : Number(payoutInput?.value ?? 1000);
+    const standard = roundCents(Number.isFinite(base) && base > 0 ? base : 1200);
+    payoutPresetDefs.push(
+      { id: 'small', label: 'Small', cents: roundCents(standard * 0.6) },
+      { id: 'standard', label: 'Standard', cents: standard },
+      { id: 'premium', label: 'Premium', cents: roundCents(standard * 1.5) }
+    );
+  }
+
+  function updatePayoutPresetsUi() {
+    if (!payoutPresets) return;
+    const cur = roundCents(Number(payoutInput?.value ?? 0));
+    for (const [id, btn] of payoutPresetBtns.entries()) {
+      const def = payoutPresetDefs.find((d) => d.id === id);
+      if (!def) continue;
+      const pressed = roundCents(def.cents) === cur;
+      btn.setAttribute('aria-pressed', pressed ? 'true' : 'false');
+      const net = computeWorkerNet(def.cents);
+      const small = btn.querySelector('small');
+      if (small) small.textContent = `Net ${formatCents(net)}`;
+    }
+  }
+
+  function renderPayoutPresets() {
+    if (!payoutPresets) return;
+    buildPayoutPresetDefs();
+    if (!payoutPresetDefs.length) return;
+
+    payoutPresetBtns.clear();
+    const nodes = [];
+    for (const def of payoutPresetDefs) {
+      const btn = el('button', { type: 'button', class: 'pw-preset', 'aria-pressed': 'false' }, [
+        `${def.label} · ${formatCents(def.cents)}`,
+        el('small', { text: '' }),
+      ]);
+      btn.addEventListener('click', () => {
+        if (payoutInput) payoutInput.value = String(def.cents);
+        refreshPreview();
+        toast(`Payout: ${formatCents(def.cents)}`, 'good');
+      });
+      payoutPresetBtns.set(def.id, btn);
+      nodes.push(btn);
+    }
+    payoutPresets.replaceChildren(...nodes);
+    updatePayoutPresetsUi();
+  }
 
   // Preview
   function buildDescriptorFromForm() {
@@ -707,6 +825,7 @@ export async function initAppPage(cfg) {
       const pf = Number.isFinite(Number(platformFeeBps)) && Number(platformFeeBps) > 0 ? `platform ${platformFeeBps}bps` : 'platform 0bps';
       payoutBreakdown.textContent = `Net to worker ${formatCents(workerNetCents)} (${pf} then Proofwork 1%)`;
     }
+    updatePayoutPresetsUi();
 
     // Action bar: keep the primary CTA visible without scrolling.
     if (actionbarTitle) {
@@ -763,15 +882,33 @@ export async function initAppPage(cfg) {
     verifiedOriginsCount = verified.length;
     // Preserve a user-selected origin if they interact while a refresh is in-flight.
     const preserve = String(originSelect.value || '').trim();
+    const saved = String(storageGet(appStorageKey('origin'), '') || '').trim();
     originSelect.replaceChildren(el('option', { value: '' }, ['— select —']), ...verified.map((o) => el('option', { value: String(o.origin) }, [String(o.origin)])));
-    if (preserve && verified.some((o) => String(o.origin) === preserve)) originSelect.value = preserve;
-    else if (verified.length === 1) originSelect.value = String(verified[0].origin);
+    let chosen = '';
+    if (preserve && verified.some((o) => String(o.origin) === preserve)) chosen = preserve;
+    else if (saved && verified.some((o) => String(o.origin) === saved)) chosen = saved;
+    else if (verified.length === 1) chosen = String(verified[0].origin);
+    if (chosen) {
+      originSelect.value = chosen;
+      storageSet(appStorageKey('origin'), chosen);
+    } else {
+      originSelect.value = '';
+    }
+
+    const single = verified.length === 1 && Boolean(chosen);
+    if (originSelectWrap) originSelectWrap.hidden = single;
+    if (originSingle) originSingle.hidden = !single;
+    if (originSingleText) originSingleText.textContent = single ? chosen : '—';
     toast(`Loaded ${verified.length} verified origin(s)`, verified.length ? 'good' : '');
     refreshPreview();
   }
 
   btnRefreshOrigins?.addEventListener('click', refreshOrigins);
-  originSelect?.addEventListener('change', () => refreshPreview());
+  originSelect?.addEventListener('change', () => {
+    const v = String(originSelect?.value ?? '').trim();
+    if (v) storageSet(appStorageKey('origin'), v);
+    refreshPreview();
+  });
 
   // Create bounty
   async function createBounty(publish) {
@@ -920,6 +1057,8 @@ export async function initAppPage(cfg) {
 
   // Initial render
   renderForm();
+  renderTemplateGrid();
+  renderPayoutPresets();
   maybeAutoApplyTemplate();
   if (titleInput && !String(titleInput.value || '').trim()) titleInput.value = `${appName} bounty`;
   refreshPreview();

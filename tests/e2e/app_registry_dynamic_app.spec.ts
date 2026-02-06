@@ -86,8 +86,12 @@ test('org can register an app and use the dynamic app page to create+publish', a
         return await page.evaluate(() => Array.from((document.getElementById('originSelect') as HTMLSelectElement | null)?.options ?? []).map((o) => o.value));
       })
       .toContain(origin);
-    await page.selectOption('#originSelect', origin);
-    await expect(page.locator('#originSelect')).toHaveValue(origin);
+    if (await page.locator('#originSelect').isVisible()) {
+      await page.selectOption('#originSelect', origin);
+      await expect(page.locator('#originSelect')).toHaveValue(origin);
+    } else {
+      await expect(page.locator('#originSingleText')).toContainText(origin);
+    }
 
     // Create + publish with a unique title.
     const title = `Dynamic app bounty ${Date.now()}`;

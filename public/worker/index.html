@@ -121,7 +121,7 @@
               <span class="pw-kicker">Claimable jobs</span>
             </div>
             <p class="pw-muted">
-              Tip: you can filter by capability tag and minimum payout. If you already have an active job, finish it first.
+              Claim the next compatible job. Filters are optional. If you already have an active job, finish it first.
             </p>
 
             <div class="pw-row">
@@ -136,8 +136,9 @@
             </div>
 
             <div class="pw-actions">
-              <button class="pw-btn primary" id="btnNext">Find next job</button>
-              <button class="pw-btn" id="btnClaim">Claim loaded job</button>
+              <button class="pw-btn primary" id="btnClaimNext">Claim next job</button>
+              <button class="pw-btn pw-dev" id="btnNext">Find next job</button>
+              <button class="pw-btn pw-dev" id="btnClaim">Claim loaded job</button>
             </div>
 
             <details class="pw-details pw-dev">
@@ -167,7 +168,7 @@
               <span class="pw-kicker">Upload what is required</span>
             </div>
             <p class="pw-muted">
-              This checklist is derived from <span class="pw-mono">task_descriptor.output_spec</span> when available.
+              This checklist is derived from the job requirements when available. In Dev mode, you can view the raw job spec.
             </p>
 
             <div id="requiredOutputs"></div>
