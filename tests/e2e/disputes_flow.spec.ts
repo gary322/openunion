@@ -97,10 +97,7 @@ test('buyer can open a dispute and admin can resolve (refund) via UI', async ({ 
     const workerToken = await page.locator('#token').inputValue();
     expect(workerToken).toMatch(/^pw_wk_/);
 
-    await page.click('#btnNext');
-    await expect(page.locator('#jobStatus')).toContainText('state=claimable');
-
-    await page.click('#btnClaim');
+    await page.click('#btnClaimNext');
     await expect(page.locator('#jobStatus')).toContainText('claimed leaseNonce=');
 
     // Upload a minimal PNG (scanner is basic in E2E). Use the guided required-outputs flow.

@@ -53,7 +53,11 @@ test('apps pages: exercise create draft, create+publish, refresh, load jobs on e
         return await page.evaluate(() => Array.from((document.getElementById('originSelect') as HTMLSelectElement | null)?.options ?? []).map((o) => o.value));
       })
       .toContain('https://example.com');
-    await page.selectOption('#originSelect', 'https://example.com');
+    if (await page.locator('#originSelect').isVisible()) {
+      await page.selectOption('#originSelect', 'https://example.com');
+    } else {
+      await expect(page.locator('#originSingleText')).toContainText('https://example.com');
+    }
 
     await openDetails(page, '#payoutFold');
     await page.fill('#payoutCents', '1200');

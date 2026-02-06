@@ -194,40 +194,75 @@ function renderRequiredOutputs() {
   const adv = $('advancedUploads');
   if (adv) adv.open = false;
 
-  const rows = requiredSlots
+  const cards = requiredSlots
     .map((s, idx) => {
       const scan = String(s.scanStatus ?? 'pending');
       const reason = s.scanReason ? ` (${String(s.scanReason).slice(0, 90)})` : '';
       const actionLabel = s.ref ? 'Replace file' : 'Upload file';
-      const actionDisabled = s.scanStatus === 'blocked' ? 'disabled' : '';
+      const pillKind =
+        s.scanStatus === 'blocked'
+          ? 'warn'
+          : s.scanStatus === 'scanned' || s.scanStatus === 'accepted'
+            ? 'good'
+            : 'faint';
+      const title = `${String(s.kind || '')}`.trim() || 'output';
       return `
-        <tr>
-          <td class="pw-mono">${escapeHtml(s.kind)}</td>
-          <td>${escapeHtml(s.label)}</td>
-          <td class="pw-mono">${escapeHtml(scan)}${escapeHtml(reason)}</td>
-          <td>
-            <button class="pw-btn" data-slot="${idx}" ${actionDisabled}>${actionLabel}</button>
-          </td>
-        </tr>
+        <article class="pw-card soft pw-output-card">
+          <div class="pw-card-title">
+            <h3>${escapeHtml(title)}</h3>
+            <span class="pw-pill ${pillKind}">${escapeHtml(scan)}</span>
+          </div>
+          <div class="pw-muted">${escapeHtml(s.label)}${escapeHtml(reason)}</div>
+          <div class="pw-actions">
+            <button class="pw-btn" data-slot="${idx}">${escapeHtml(actionLabel)}</button>
+          </div>
+        </article>
       `;
     })
     .join('');
 
   wrap.innerHTML = `
-    <div class="pw-scroll">
-      <table class="pw-table">
-        <thead>
-          <tr>
-            <th>Kind</th>
-            <th>Label</th>
-            <th>Status</th>
-            <th>Action</th>
-          </tr>
-        </thead>
-        <tbody>${rows}</tbody>
-      </table>
+    <div class="pw-dropzone" id="dropzone" role="button" tabindex="0" aria-label="Drop files to upload">
+      <div class="pw-kicker">Drop files</div>
+      <div class="pw-muted">Attach files to required outputs in order. Or use "Upload file" on a specific output.</div>
     </div>
+    <div class="pw-template-grid" aria-label="Required outputs">${cards}</div>
   `;
+
+  // Dropzone: sequentially fills the next uploadable slot(s).
+  const dz = $('dropzone');
+  if (dz) {
+    const setOver = (on) => dz.classList.toggle('dragover', Boolean(on));
+    dz.addEventListener('dragover', (ev) => {
+      ev.preventDefault();
+      setOver(true);
+    });
+    dz.addEventListener('dragleave', () => setOver(false));
+    dz.addEventListener('drop', (ev) => {
+      ev.preventDefault();
+      setOver(false);
+      const files = Array.from(ev.dataTransfer?.files ?? []);
+      if (!files.length) return;
+      uploadFilesToNextSlots(files).catch((err) => {
+        setStatus('requiredOutputsStatus', String(err?.message ?? err), 'bad');
+      });
+    });
+    dz.addEventListener('click', () => {
+      const idx = nextUploadableSlotIndex(0);
+      if (idx === null || idx === undefined) return;
+      activeSlotIdx = idx;
+      const f = $('slotFile');
+      if (f) {
+        f.value = '';
+        f.click();
+      }
+    });
+    dz.addEventListener('keydown', (ev) => {
+      if (ev.key !== 'Enter' && ev.key !== ' ') return;
+      ev.preventDefault();
+      dz.click();
+    });
+  }
 
   const done = requiredSlots.filter((s) => s.scanStatus === 'scanned' || s.scanStatus === 'accepted').length;
   const blocked = requiredSlots.filter((s) => s.scanStatus === 'blocked').length;
@@ -255,6 +290,32 @@ function updateSubmitEnabled() {
   const btn = $('btnSubmit');
   if (!btn) return;
   btn.disabled = !canSubmitNow();
+}
+
+function nextUploadableSlotIndex(startIdx) {
+  const start = Number.isFinite(Number(startIdx)) ? Math.max(0, Math.floor(Number(startIdx))) : 0;
+  for (let i = start; i < requiredSlots.length; i++) {
+    const s = requiredSlots[i];
+    if (!s) continue;
+    if (s.scanStatus === 'scanned' || s.scanStatus === 'accepted') continue;
+    return i;
+  }
+  return null;
+}
+
+async function uploadFilesToNextSlots(files) {
+  const list = Array.from(files || []);
+  if (!list.length) return;
+  let cursor = 0;
+  for (const file of list) {
+    const idx = nextUploadableSlotIndex(cursor);
+    if (idx === null) break;
+    const slot = requiredSlots[idx];
+    setStatus('requiredOutputsStatus', `Uploading ${file.name} → ${slot.kind}/${slot.label}`, null);
+    await uploadFileForSlot(idx, file);
+    cursor = idx + 1;
+  }
+  renderRequiredOutputs();
 }
 
 async function fetchArtifactStatus(token, artifactId) {
@@ -400,6 +461,14 @@ async function onNext() {
   else if (json?.state === 'idle') setJobSummary('No jobs available right now.');
   else setJobSummary(`State: ${String(json?.state ?? '')}`);
   buildRequiredOutputsFromJob();
+}
+
+async function onClaimNext() {
+  setStatus('jobStatus', '', null);
+  setJobSummary('Finding the next job…');
+  await onNext();
+  if (lastNext?.state !== 'claimable') return;
+  await onClaim();
 }
 
 async function onClaim() {
@@ -725,6 +794,7 @@ $('btnCopyWorkerToken').addEventListener('click', async () => {
   }
   await copyToClipboard(token);
 });
+$('btnClaimNext')?.addEventListener('click', () => onClaimNext().catch((e) => setStatus('jobStatus', String(e), 'bad')));
 $('btnNext').addEventListener('click', () => onNext().catch((e) => setStatus('jobStatus', String(e), 'bad')));
 $('btnClaim').addEventListener('click', () => onClaim().catch((e) => setStatus('jobStatus', String(e), 'bad')));
 $('btnUpload').addEventListener('click', () => onUpload().catch((e) => setStatus('uploadStatus', String(e), 'bad')));

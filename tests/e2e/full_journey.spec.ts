@@ -242,10 +242,7 @@ test('buyer → bounty → worker → upload → verify (gateway) → payout (lo
     await page.click('#btnSetPayoutAddress');
     await expect(page.locator('#payoutAddrStatus')).toContainText('verified');
 
-    await page.click('#btnNext');
-    await expect(page.locator('#jobStatus')).toContainText('state=claimable');
-
-    await page.click('#btnClaim');
+    await page.click('#btnClaimNext');
     await expect(page.locator('#jobStatus')).toContainText('claimed leaseNonce=');
 
     // Upload a minimal PNG (scanner checks signature only).

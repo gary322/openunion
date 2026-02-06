@@ -86,7 +86,11 @@ test('create + publish via a vertical app page (github)', async ({ page }) => {
         return await page.evaluate(() => Array.from((document.getElementById('originSelect') as HTMLSelectElement | null)?.options ?? []).map((o) => o.value));
       })
       .toContain(origin);
-    await page.selectOption('#originSelect', origin);
+    if (await page.locator('#originSelect').isVisible()) {
+      await page.selectOption('#originSelect', origin);
+    } else {
+      await expect(page.locator('#originSingleText')).toContainText(origin);
+    }
 
     const title = `GitHub E2E ${Date.now()}`;
     await openDetails(page, '#payoutFold');
