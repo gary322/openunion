@@ -4,6 +4,26 @@ function $(id) {
   return document.getElementById(id);
 }
 
+function safeNextPath() {
+  // Allow same-origin, path-only redirects. Reject anything that looks like a URL.
+  const raw = new URLSearchParams(window.location.search).get('next');
+  const p = String(raw ?? '').trim();
+  if (!p) return '';
+  if (!p.startsWith('/') || p.startsWith('//')) return '';
+  if (p.includes('\n') || p.includes('\r')) return '';
+  return p;
+}
+
+function nextSlugFromPath(p) {
+  const m = String(p || '').match(/^\/apps\/app\/([^/]+)\//);
+  if (!m) return '';
+  try {
+    return decodeURIComponent(m[1] || '');
+  } catch {
+    return m[1] || '';
+  }
+}
+
 function setStatus(id, text, kind = '') {
   const node = $(id);
   if (!node) return;
@@ -423,6 +443,24 @@ async function probeSession() {
 }
 
 async function refreshAll() {
+  const nextPath = safeNextPath();
+  const nextSlug = nextSlugFromPath(nextPath);
+  const dismissedNext = storageGet('pw_onboarding_next_dismissed', '') === '1';
+
+  // If onboarding started from the catalog ("Create work"), show a fast "continue" CTA even
+  // before the user connects. This reduces cognitive load: they always know where they are
+  // heading next.
+  const nextCard = $('nextAppCard');
+  const nextLink = $('nextAppLink');
+  const nextText = $('nextAppText');
+  if (nextCard && nextPath && !dismissedNext) {
+    nextCard.hidden = false;
+    if (nextLink) nextLink.setAttribute('href', nextPath);
+    if (nextText) nextText.textContent = nextSlug ? `After you connect, open ${nextSlug} to publish work.` : 'After you connect, open the app page to publish work.';
+  } else if (nextCard) {
+    nextCard.hidden = true;
+  }
+
   const top = $('wizTopStatus');
   if (top) top.textContent = 'Checking status…';
 
@@ -482,7 +520,9 @@ async function refreshAll() {
   badge('badgeFees', feeOk ? 'Done' : '!', feeOk ? 'good' : 'warn');
 
   const apps = Array.isArray(appsRes.json?.apps) ? appsRes.json.apps : [];
-  badge('badgeApp', apps.length > 0 ? 'Done' : '!', apps.length > 0 ? 'good' : 'warn');
+  if (apps.length > 0) badge('badgeApp', 'Done', 'good');
+  else if (nextPath) badge('badgeApp', 'Optional', 'faint');
+  else badge('badgeApp', '!', 'warn');
 
   // Render origins/apps tables when their steps are visible (and useful even if not active).
   renderOriginsTable(origins, {
@@ -556,7 +596,7 @@ async function refreshAll() {
   let next = 'publish';
   if (verifiedOrigins <= 0) next = 'origin';
   else if (!feeOk) next = 'fees';
-  else if (apps.length <= 0) next = 'app';
+  else if (apps.length <= 0 && !nextPath) next = 'app';
   else next = 'publish';
 
   if (top) {
@@ -789,6 +829,13 @@ function wire() {
     await refreshAll();
   });
 
+  $('btnDismissNextApp')?.addEventListener('click', () => {
+    storageSet('pw_onboarding_next_dismissed', '1');
+    const nextCard = $('nextAppCard');
+    if (nextCard) nextCard.hidden = true;
+    toast('Dismissed', 'good');
+  });
+
   $('btnCheckPublish')?.addEventListener('click', async () => {
     await refreshAll();
   });
@@ -804,4 +851,3 @@ function wire() {
 
 wire();
 refreshAll().catch(() => toast('Failed to load onboarding status', 'bad'));
-

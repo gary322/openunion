@@ -132,6 +132,9 @@ export async function initAppPage(cfg) {
   const btnDisconnect = qs('#btnDisconnect');
   const btnSaveToken = qs('#btnSaveToken');
   const btnChangeToken = qs('#btnChangeToken');
+  const createAfterConnect = qs('#createAfterConnect');
+  const templateRow = qs('#templateRow');
+  const publishActionbar = qs('#publishActionbar');
   const tabSignIn = qs('#tabSignIn');
   const tabToken = qs('#tabToken');
   const panelSignIn = qs('#panelSignIn');
@@ -144,6 +147,9 @@ export async function initAppPage(cfg) {
   const btnApplyTemplate = qs('#btnApplyTemplate');
   const formRoot = qs('#form');
   const originSelect = qs('#originSelect');
+  const originSelectWrap = qs('#originSelectWrap');
+  const originSingle = qs('#originSingle');
+  const originSingleText = qs('#originSingleText');
   const btnRefreshOrigins = qs('#btnRefreshOrigins');
   const payoutInput = qs('#payoutCents');
   const proofsInput = qs('#requiredProofs');
@@ -159,6 +165,8 @@ export async function initAppPage(cfg) {
   const btnAutoRefresh = qs('#btnAutoRefresh');
   const bountiesTbody = qs('#bountiesTbody');
   const jobsTbody = qs('#jobsTbody');
+  const monitorGate = qs('#monitorGate');
+  const monitorActions = qs('#monitorActions');
 
   const descriptorOut = qs('#descriptorOut');
   const payloadOut = qs('#payloadOut');
@@ -229,6 +237,10 @@ export async function initAppPage(cfg) {
     const connected = Boolean(t) || sessionOk;
     if (connectRow) connectRow.hidden = connected;
     if (connectedRow) connectedRow.hidden = !connected;
+    if (createAfterConnect) createAfterConnect.hidden = !connected;
+    if (publishActionbar) publishActionbar.hidden = !connected;
+    if (monitorGate) monitorGate.hidden = connected;
+    if (monitorActions) monitorActions.hidden = !connected;
     if (connectedTokenPrefix) {
       if (t) connectedTokenPrefix.textContent = `${t.slice(0, 10)}…`;
       else connectedTokenPrefix.textContent = 'session';
@@ -260,6 +272,7 @@ export async function initAppPage(cfg) {
     setLoginStatus('');
     toast('Disconnected');
     renderConnectState();
+    enableAuto(false);
     await refreshOrigins();
     await refreshBounties();
   });
@@ -286,6 +299,7 @@ export async function initAppPage(cfg) {
     await refreshOrigins();
     setStatus('createStatus', '');
     await refreshBounties();
+    enableAuto(true);
   });
 
   btnSaveToken?.addEventListener('click', async () => {
@@ -298,21 +312,25 @@ export async function initAppPage(cfg) {
     await refreshOrigins();
     setStatus('createStatus', '');
     await refreshBounties();
+    enableAuto(true);
   });
 
   // Template dropdown
   const templates = Array.isArray(uiSchema?.templates) ? uiSchema.templates : [];
+  if (templateRow) templateRow.hidden = templates.length <= 1;
   if (templateSelect) {
     templateSelect.replaceChildren(
       el('option', { value: '' }, ['Custom']),
       ...templates.map((t) => el('option', { value: String(t.id) }, [String(t.name || t.id)]))
     );
+    if (templates.length === 1) templateSelect.value = String(templates[0]?.id ?? '');
   }
 
   // Render friendly form
   const fieldEls = new Map();
   let verifiedOriginsCount = 0;
   let platformFeeBps = 0;
+  let templateAutoApplied = false;
 
   function isMissingValue(v) {
     if (v === undefined || v === null) return true;
@@ -379,6 +397,7 @@ export async function initAppPage(cfg) {
     const placeholder = field.placeholder ? String(field.placeholder) : '';
     const help = field.help ? String(field.help) : '';
     const advanced = Boolean(field.advanced);
+    const hasDefault = field.default !== undefined && field.default !== null;
 
     const wrap = document.createElement('div');
     wrap.className = `pw-field ${advanced ? 'pw-dev' : ''}`.trim();
@@ -429,6 +448,18 @@ export async function initAppPage(cfg) {
       }
       input.setAttribute('aria-required', 'true');
     }
+
+    // Smart defaults from app schema. This reduces required manual typing.
+    if (hasDefault) {
+      const dv = field.default;
+      if (type === 'boolean') {
+        input.checked = Boolean(dv);
+      } else {
+        const v = Array.isArray(dv) ? dv.join('\n') : String(dv);
+        // Only set if currently empty (should be empty on first render).
+        if (!String(input.value || '').trim()) input.value = v;
+      }
+    }
     wrap.appendChild(input);
 
     if (help) wrap.appendChild(el('div', { class: 'pw-muted', text: help }));
@@ -473,7 +504,19 @@ export async function initAppPage(cfg) {
     refreshPreview();
   }
 
+  function recommendedTemplateId() {
+    if (!templates.length) return '';
+    const explicit = String(uiSchema?.recommended_template_id || uiSchema?.default_template_id || '').trim();
+    if (explicit && templates.some((t) => String(t.id) === explicit)) return explicit;
+    const rec = templates.find((t) => Boolean(t?.recommended)) || templates[0];
+    return rec ? String(rec.id) : '';
+  }
+
   function applyTemplateById(tid) {
+    return applyTemplateByIdInner(tid, { silent: false });
+  }
+
+  function applyTemplateByIdInner(tid, { silent }) {
     const t = templates.find((x) => String(x.id) === String(tid));
     if (!t) return;
     const preset = t.preset || {};
@@ -484,7 +527,7 @@ export async function initAppPage(cfg) {
       if (String(field.type) === 'boolean') {
         input.checked = Boolean(v);
       } else {
-        input.value = v === null || v === undefined ? '' : String(v);
+        input.value = v === null || v === undefined ? '' : Array.isArray(v) ? v.join('\n') : String(v);
       }
     }
     // Template may set a better default title.
@@ -492,7 +535,7 @@ export async function initAppPage(cfg) {
       titleInput.value = `${appName} • ${String(t.name || t.id)}`;
     }
     refreshPreview();
-    toast(`Applied template: ${String(t.name || t.id)}`, 'good');
+    if (!silent) toast(`Applied template: ${String(t.name || t.id)}`, 'good');
   }
 
   btnApplyTemplate?.addEventListener('click', () => {
@@ -501,25 +544,63 @@ export async function initAppPage(cfg) {
     applyTemplateById(tid);
   });
 
-  templateSelect?.addEventListener('change', () => {
-    // Low-effort mode: selecting a template should immediately help. We do a "soft apply" by
-    // filling only empty fields so we don't clobber user input.
-    const tid = String(templateSelect?.value ?? '').trim();
-    if (!tid) return;
-    const t = templates.find((x) => String(x.id) === String(tid));
-    if (!t) return;
+  function softApplyTemplateById(tid, { includeBooleans = false } = {}) {
+    const tId = String(tid ?? '').trim();
+    if (!tId) return 0;
+    const t = templates.find((x) => String(x.id) === tId);
+    if (!t) return 0;
     const preset = t.preset || {};
     let changed = 0;
     for (const [k, v] of Object.entries(preset)) {
       const entry = fieldEls.get(String(k));
       if (!entry) continue;
       const { field, input } = entry;
-      if (String(field.type) === 'boolean') continue; // avoid surprise toggles on soft apply
+      if (String(field.type) === 'boolean') {
+        if (!includeBooleans) continue; // avoid surprise toggles on soft apply
+        const next = Boolean(v);
+        if (input.checked !== next) {
+          input.checked = next;
+          changed++;
+        }
+        continue;
+      }
       const cur = String(input.value || '').trim();
       if (cur) continue;
-      input.value = v === null || v === undefined ? '' : String(v);
+      input.value = v === null || v === undefined ? '' : Array.isArray(v) ? v.join('\n') : String(v);
       changed++;
     }
+    return changed;
+  }
+
+  function maybeAutoApplyTemplate() {
+    if (templateAutoApplied) return;
+    if (!templates.length) return;
+    const tid = recommendedTemplateId();
+    if (!tid) return;
+
+    // Reflect selection in the UI to make the page self-explanatory.
+    if (templateSelect) {
+      const cur = String(templateSelect.value || '').trim();
+      if (!cur || templates.length === 1) templateSelect.value = tid;
+    }
+
+    if (templates.length === 1) {
+      // For a single template, fully apply once on first render (silent).
+      applyTemplateByIdInner(tid, { silent: true });
+    } else {
+      // For multiple templates, soft-apply to empty fields only (silent).
+      const changed = softApplyTemplateById(tid, { includeBooleans: false }) || 0;
+      if (changed) refreshPreview();
+    }
+    templateAutoApplied = true;
+  }
+
+  templateSelect?.addEventListener('change', () => {
+    // Low-effort mode: selecting a template should immediately help. We do a "soft apply" by
+    // filling only empty fields so we don't clobber user input.
+    const tid = String(templateSelect?.value ?? '').trim();
+    if (!tid) return;
+    const changed = softApplyTemplateById(tid, { includeBooleans: false }) || 0;
     if (changed) refreshPreview();
   });
 
@@ -527,7 +608,6 @@ export async function initAppPage(cfg) {
   const moneyDefaults = moneyDefaultsFromUiSchema(uiSchema);
   if (payoutInput && moneyDefaults.payoutCents !== null) payoutInput.value = String(moneyDefaults.payoutCents);
   if (proofsInput && moneyDefaults.requiredProofs !== null) proofsInput.value = String(moneyDefaults.requiredProofs);
-  if (titleInput && !String(titleInput.value || '').trim()) titleInput.value = `${appName} bounty`;
 
   // Preview
   function buildDescriptorFromForm() {
@@ -840,10 +920,19 @@ export async function initAppPage(cfg) {
 
   // Initial render
   renderForm();
+  maybeAutoApplyTemplate();
+  if (titleInput && !String(titleInput.value || '').trim()) titleInput.value = `${appName} bounty`;
   refreshPreview();
   await probeSession();
   renderConnectState();
-  await refreshOrigins();
-  await refreshBounties();
-  enableAuto(true);
+
+  // Low-effort default: do not start polling or loading until the user is actually connected.
+  const auth0 = effectiveBuyerAuth();
+  if (auth0.mode !== 'none') {
+    await refreshOrigins();
+    await refreshBounties();
+    enableAuto(true);
+  } else {
+    enableAuto(false);
+  }
 }
