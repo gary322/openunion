@@ -38,6 +38,17 @@ function setDeep(obj, path, value) {
   cur[parts[parts.length - 1]] = value;
 }
 
+function getDeep(obj, path) {
+  const parts = String(path || '').split('.').filter(Boolean);
+  if (parts.length < 2) return undefined;
+  let cur = obj;
+  for (const k of parts) {
+    if (!cur || typeof cur !== 'object') return undefined;
+    cur = cur[k];
+  }
+  return cur;
+}
+
 function deleteDeep(obj, path) {
   const parts = String(path || '').split('.').filter(Boolean);
   if (parts.length < 2) return;
@@ -192,6 +203,61 @@ export async function initAppPage(cfg) {
 
   // Render friendly form
   const fieldEls = new Map();
+  let verifiedOriginsCount = 0;
+
+  function isMissingValue(v) {
+    if (v === undefined || v === null) return true;
+    if (typeof v === 'string') return v.trim().length === 0;
+    if (Array.isArray(v)) return v.length === 0;
+    if (typeof v === 'number') return !Number.isFinite(v);
+    // boolean and objects count as present.
+    return false;
+  }
+
+  function validateRequiredFields(descriptor) {
+    const missing = [];
+    for (const { field, input } of fieldEls.values()) {
+      if (!field?.required) {
+        input?.removeAttribute?.('aria-invalid');
+        continue;
+      }
+      const target = String(field.target || '').trim();
+      if (!target) continue;
+
+      // Required booleans are treated as "present" even if unchecked; the field exists.
+      if (String(field.type) === 'boolean') {
+        input?.removeAttribute?.('aria-invalid');
+        continue;
+      }
+
+      const v = getDeep(descriptor, target);
+      const missingThis = isMissingValue(v);
+      if (missingThis) {
+        missing.push({
+          key: String(field.key || ''),
+          label: String(field.label || field.key || ''),
+          input,
+        });
+        input?.setAttribute?.('aria-invalid', 'true');
+      } else {
+        input?.removeAttribute?.('aria-invalid');
+      }
+    }
+    return missing;
+  }
+
+  function focusFirstMissing(missing) {
+    const first = missing?.[0]?.input;
+    if (first && typeof first.focus === 'function') first.focus();
+  }
+
+  function effectiveBuyerToken() {
+    // Prefer the locally-saved token (Connect saves it), but allow typed tokens too.
+    const saved = String(storageGet(LS.buyerToken, '') || '').trim();
+    const typed = String(tokenInput?.value ?? '').trim();
+    return saved || typed;
+  }
+
   function renderField(field) {
     const type = String(field.type || 'text');
     const key = String(field.key || '');
@@ -241,6 +307,15 @@ export async function initAppPage(cfg) {
     }
 
     input.id = `f_${key}`;
+    if (required && type !== 'boolean') {
+      // Use native required semantics for accessibility (we still gate submission ourselves).
+      try {
+        input.required = true;
+      } catch {
+        // ignore
+      }
+      input.setAttribute('aria-required', 'true');
+    }
     wrap.appendChild(input);
 
     if (help) wrap.appendChild(el('div', { class: 'pw-muted', text: help }));
@@ -313,6 +388,28 @@ export async function initAppPage(cfg) {
     applyTemplateById(tid);
   });
 
+  templateSelect?.addEventListener('change', () => {
+    // Low-effort mode: selecting a template should immediately help. We do a "soft apply" by
+    // filling only empty fields so we don't clobber user input.
+    const tid = String(templateSelect?.value ?? '').trim();
+    if (!tid) return;
+    const t = templates.find((x) => String(x.id) === String(tid));
+    if (!t) return;
+    const preset = t.preset || {};
+    let changed = 0;
+    for (const [k, v] of Object.entries(preset)) {
+      const entry = fieldEls.get(String(k));
+      if (!entry) continue;
+      const { field, input } = entry;
+      if (String(field.type) === 'boolean') continue; // avoid surprise toggles on soft apply
+      const cur = String(input.value || '').trim();
+      if (cur) continue;
+      input.value = v === null || v === undefined ? '' : String(v);
+      changed++;
+    }
+    if (changed) refreshPreview();
+  });
+
   // Smart defaults: fill payout/proofs from app schema if provided.
   const moneyDefaults = moneyDefaultsFromUiSchema(uiSchema);
   if (payoutInput && moneyDefaults.payoutCents !== null) payoutInput.value = String(moneyDefaults.payoutCents);
@@ -378,33 +475,68 @@ export async function initAppPage(cfg) {
     const p = buildBountyPayload(d).payload;
     if (descriptorOut) descriptorOut.textContent = JSON.stringify(d, null, 2);
     if (payloadOut) payloadOut.textContent = JSON.stringify(p, null, 2);
+
+    const missing = validateRequiredFields(d);
+    const token = effectiveBuyerToken();
+    const origin = String(originSelect?.value ?? '').trim();
+    const descErrs = validateDescriptorShallow(schema, d);
+    const ready = Boolean(token) && Boolean(origin) && missing.length === 0 && descErrs.length === 0;
+
+    if (btnCreateDraft) btnCreateDraft.disabled = !ready;
+    if (btnCreatePublish) btnCreatePublish.disabled = !ready;
+
+    let msg = '';
+    let kind = '';
+    if (!token) {
+      msg = 'Next: paste your buyer token and click Connect to load origins.';
+    } else if (verifiedOriginsCount <= 0) {
+      msg = 'Next: verify an origin in the Platform console, then click Refresh origins.';
+    } else if (!origin) {
+      msg = 'Next: pick an allowed origin (verified).';
+    } else if (missing.length) {
+      msg = `Missing required: ${missing.map((m) => m.label || m.key).filter(Boolean).join(', ')}`;
+      kind = 'bad';
+    } else if (descErrs.length) {
+      msg = `Descriptor invalid: ${descErrs.join('; ')}`;
+      kind = 'bad';
+    } else {
+      msg = 'Ready. Create a draft, or Create + publish.';
+      kind = 'good';
+    }
+    setStatus('preflightStatus', msg, kind);
   }
 
   // Origins
   let originsReqNo = 0;
   async function refreshOrigins() {
     const myReq = ++originsReqNo;
-    const token = String(tokenInput?.value ?? '').trim();
+    const token = effectiveBuyerToken();
     if (!originSelect) return;
     if (!token) {
+      verifiedOriginsCount = 0;
       originSelect.replaceChildren(el('option', { value: '' }, ['— paste token to load origins —']));
+      refreshPreview();
       return;
     }
     const res = await buyerApi('/api/origins', { token });
     if (myReq !== originsReqNo) return; // stale response; user changed token and reloaded.
     if (!res.ok) {
+      verifiedOriginsCount = 0;
       originSelect.replaceChildren(el('option', { value: '' }, [`Failed (${res.status})`]));
       toast('Failed to load origins', 'bad');
+      refreshPreview();
       return;
     }
     const origins = Array.isArray(res.json?.origins) ? res.json.origins : [];
     const verified = origins.filter((o) => String(o.status) === 'verified');
+    verifiedOriginsCount = verified.length;
     // Preserve a user-selected origin if they interact while a refresh is in-flight.
     const preserve = String(originSelect.value || '').trim();
     originSelect.replaceChildren(el('option', { value: '' }, ['— select —']), ...verified.map((o) => el('option', { value: String(o.origin) }, [String(o.origin)])));
     if (preserve && verified.some((o) => String(o.origin) === preserve)) originSelect.value = preserve;
     else if (verified.length === 1) originSelect.value = String(verified[0].origin);
     toast(`Loaded ${verified.length} verified origin(s)`, verified.length ? 'good' : '');
+    refreshPreview();
   }
 
   btnRefreshOrigins?.addEventListener('click', refreshOrigins);
@@ -413,6 +545,13 @@ export async function initAppPage(cfg) {
   // Create bounty
   async function createBounty(publish) {
     const descriptor = buildDescriptorFromForm();
+    const missing = validateRequiredFields(descriptor);
+    if (missing.length) {
+      setStatus('createStatus', `Missing required fields: ${missing.map((m) => m.label || m.key).filter(Boolean).join(', ')}`, 'bad');
+      focusFirstMissing(missing);
+      return;
+    }
+
     const errs = validateDescriptorShallow(schema, descriptor);
     if (errs.length) {
       setStatus('createStatus', `Descriptor invalid: ${errs.join('; ')}`, 'bad');
