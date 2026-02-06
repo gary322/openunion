@@ -262,6 +262,8 @@ a:hover {
   border-radius: var(--radius);
   box-shadow: var(--shadow);
   padding: 16px;
+  /* Cards often live inside CSS grids; allow them to shrink on narrow viewports. */
+  min-width: 0;
 }
 .pw-card.soft {
   background: var(--panel-2);
@@ -629,12 +631,14 @@ details.pw-fold .pw-fold-body {
 .pw-pill.good {
   border-color: rgba(21, 128, 61, 0.28);
   background: rgba(21, 128, 61, 0.12);
-  color: rgba(21, 128, 61, 0.95);
+  /* Keep AA contrast on the soft green pill background (12px text). */
+  color: #0b3d1c;
 }
 .pw-pill.warn {
   border-color: rgba(234, 88, 12, 0.26);
   background: rgba(234, 88, 12, 0.12);
-  color: rgba(234, 88, 12, 0.95);
+  /* Keep AA contrast on the soft orange pill background (12px text). */
+  color: #7a2a00;
 }
 .pw-pill.faint {
   background: rgba(255, 255, 255, 0.62);
@@ -738,6 +742,10 @@ body.pw-dev-on .pw-not-dev {
   grid-template-columns: 260px 1fr;
   gap: 14px;
   align-items: start;
+}
+.pw-console > * {
+  /* Prevent content-based min-width from forcing horizontal scroll on small viewports. */
+  min-width: 0;
 }
 @media (max-width: 980px) {
   .pw-console {
@@ -843,6 +851,36 @@ body.pw-dev-on .pw-not-dev {
 @media (max-width: 980px) {
   .pw-search input {
     width: 140px;
+  }
+}
+
+@media (max-width: 720px) {
+  .pw-topbar-inner {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+
+  .pw-topbar-tools {
+    width: 100%;
+    order: 2;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .pw-topnav {
+    width: 100%;
+    order: 3;
+  }
+
+  .pw-search {
+    flex: 1 1 220px;
+    min-width: 0;
+  }
+
+  .pw-search input {
+    width: 100%;
+    min-width: 0;
   }
 }
 
@@ -1007,7 +1045,8 @@ body.pw-dev-on .pw-not-dev {
 .pw-chip.good {
   border-color: rgba(21, 128, 61, 0.28);
   background: rgba(21, 128, 61, 0.14);
-  color: rgba(21, 128, 61, 0.95);
+  /* Darker than the accent green so small text meets WCAG AA contrast on the soft background. */
+  color: #0b3d1c;
 }
 .pw-chip.warn {
   border-color: rgba(234, 88, 12, 0.26);

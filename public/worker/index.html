@@ -87,11 +87,11 @@
 
             <div class="pw-row">
               <div class="pw-field">
-                <label>Display name</label>
+                <label for="regName">Display name</label>
                 <input class="pw-input" id="regName" placeholder="e.g. Alice" value="Alice" />
               </div>
               <div class="pw-field">
-                <label>Capabilities</label>
+                <label for="regBrowser">Capabilities</label>
                 <select class="pw-select" id="regBrowser">
                   <option value="true" selected>browser: true</option>
                   <option value="false">browser: false</option>
@@ -104,7 +104,7 @@
             </div>
 
             <div class="pw-field">
-              <label>Worker token</label>
+              <label for="token">Worker token</label>
               <input class="pw-input" id="token" placeholder="pw_wk_..." />
             </div>
             <div class="pw-actions">
@@ -126,11 +126,11 @@
 
             <div class="pw-row">
               <div class="pw-field">
-                <label>Min payout (cents)</label>
+                <label for="minPayoutCents">Min payout (cents)</label>
                 <input class="pw-input" id="minPayoutCents" placeholder="e.g. 1200" />
               </div>
               <div class="pw-field">
-                <label>Capability tag (optional)</label>
+                <label for="capabilityTag">Capability tag (optional)</label>
                 <input class="pw-input" id="capabilityTag" placeholder="browser|http|ffmpeg|llm_summarize|screenshot" />
               </div>
             </div>
@@ -173,18 +173,19 @@
             <div id="requiredOutputs"></div>
             <div id="requiredOutputsStatus" class="pw-status" role="status"></div>
 
+            <label class="pw-offscreen" for="slotFile">Pick a required output file</label>
             <input class="pw-input pw-offscreen" id="slotFile" type="file" />
 
             <details class="pw-details" id="advancedUploads">
               <summary>Advanced: upload extra artifacts</summary>
               <div class="pw-details-body">
                 <div class="pw-field">
-                  <label>Pick a file</label>
+                  <label for="file">Pick a file</label>
                   <input class="pw-input" id="file" type="file" />
                 </div>
                 <div class="pw-row">
                   <div class="pw-field">
-                    <label>Kind</label>
+                    <label for="kind">Kind</label>
                     <select class="pw-select" id="kind">
                       <option value="screenshot">screenshot</option>
                       <option value="snapshot">snapshot</option>
@@ -195,7 +196,7 @@
                     </select>
                   </div>
                   <div class="pw-field">
-                    <label>Label</label>
+                    <label for="label">Label</label>
                     <input class="pw-input" id="label" placeholder="e.g. repro" value="repro" />
                   </div>
                 </div>
@@ -221,16 +222,16 @@
 
             <div class="pw-row">
               <div class="pw-field">
-                <label>Expected</label>
+                <label for="expected">Expected</label>
                 <input class="pw-input" id="expected" value="Expected deliverables" />
               </div>
               <div class="pw-field">
-                <label>Observed</label>
+                <label for="observed">Observed</label>
                 <input class="pw-input" id="observed" value="Attached deliverables" />
               </div>
             </div>
             <div class="pw-field">
-              <label>Steps / notes (one per line)</label>
+              <label for="steps">Steps / notes (one per line)</label>
               <textarea class="pw-textarea" id="steps">1. Completed the requested task
 2. Uploaded required artifacts</textarea>
             </div>
@@ -254,14 +255,14 @@
             <p class="pw-muted">Set a payout address once; then check payout history (holds show as pending).</p>
 
             <div class="pw-field">
-              <label>Payout chain</label>
+              <label for="payoutChain">Payout chain</label>
               <select class="pw-select" id="payoutChain">
                 <option value="base" selected>base</option>
               </select>
             </div>
 
             <div class="pw-field">
-              <label>Payout address (EVM)</label>
+              <label for="payoutAddress">Payout address (EVM)</label>
               <input class="pw-input" id="payoutAddress" placeholder="0x..." />
             </div>
 
@@ -278,22 +279,22 @@
             </details>
 
             <div class="pw-field">
-              <label>Signature</label>
+              <label for="payoutSignature">Signature</label>
               <input class="pw-input" id="payoutSignature" placeholder="0x..." />
             </div>
             <div id="payoutAddrStatus" class="pw-status" role="status"></div>
 
             <div class="pw-field">
-              <label>Status filter</label>
+              <label for="payoutStatus">Status filter</label>
               <input class="pw-input" id="payoutStatus" placeholder="pending|paid|failed|refunded" />
             </div>
             <div class="pw-row">
               <div class="pw-field">
-                <label>Page</label>
+                <label for="payoutPage">Page</label>
                 <input class="pw-input" id="payoutPage" type="number" value="1" />
               </div>
               <div class="pw-field">
-                <label>Limit</label>
+                <label for="payoutLimit">Limit</label>
                 <input class="pw-input" id="payoutLimit" type="number" value="50" />
               </div>
               <div class="pw-field">
