@@ -138,6 +138,8 @@ export async function initAppPage(cfg) {
   const titleInput = qs('#title');
   const btnCreateDraft = qs('#btnCreateDraft');
   const btnCreatePublish = qs('#btnCreatePublish');
+  const actionbarTitle = qs('#actionbarTitle');
+  const actionbarSub = qs('#actionbarSub');
 
   const btnRefreshBounties = qs('#btnRefreshBounties');
   const btnAutoRefresh = qs('#btnAutoRefresh');
@@ -204,6 +206,7 @@ export async function initAppPage(cfg) {
   // Render friendly form
   const fieldEls = new Map();
   let verifiedOriginsCount = 0;
+  let platformFeeBps = 0;
 
   function isMissingValue(v) {
     if (v === undefined || v === null) return true;
@@ -504,6 +507,38 @@ export async function initAppPage(cfg) {
       kind = 'good';
     }
     setStatus('preflightStatus', msg, kind);
+
+    // Action bar: keep the primary CTA visible without scrolling.
+    if (actionbarTitle) {
+      actionbarTitle.textContent = kind === 'good' ? `Ready: ${formatCents(Number(payoutInput?.value ?? 0))} payout` : 'Create and publish';
+    }
+    if (actionbarSub) {
+      if (kind === 'good') {
+        const payoutCents = Math.max(0, Math.floor(Number(payoutInput?.value ?? 0)));
+        const platformCutCents = Math.round((payoutCents * Number(platformFeeBps || 0)) / 10000);
+        const workerPortionCents = Math.max(0, payoutCents - platformCutCents);
+        const proofworkFeeCents = Math.round(workerPortionCents * 0.01);
+        const workerNetCents = Math.max(0, workerPortionCents - proofworkFeeCents);
+        const originHost = origin ? String(origin).replace(/^https?:\/\//, '') : '—';
+        actionbarSub.textContent = `Origin: ${originHost} • Net to worker ${formatCents(workerNetCents)} (platform ${platformFeeBps}bps then Proofwork 1%)`;
+      } else {
+        actionbarSub.textContent = msg;
+      }
+    }
+  }
+
+  // Fee breakdown (optional but helps users understand net payout).
+  let platformFeeReqNo = 0;
+  async function refreshPlatformFee() {
+    const myReq = ++platformFeeReqNo;
+    const token = effectiveBuyerToken();
+    if (!token) return;
+    const res = await buyerApi('/api/org/platform-fee', { token });
+    if (myReq !== platformFeeReqNo) return;
+    if (!res.ok) return;
+    const bps = Number(res.json?.platformFeeBps ?? 0);
+    if (!Number.isFinite(bps) || bps < 0) return;
+    platformFeeBps = Math.floor(bps);
   }
 
   // Origins
@@ -518,6 +553,7 @@ export async function initAppPage(cfg) {
       refreshPreview();
       return;
     }
+    refreshPlatformFee().catch(() => {});
     const res = await buyerApi('/api/origins', { token });
     if (myReq !== originsReqNo) return; // stale response; user changed token and reloaded.
     if (!res.ok) {

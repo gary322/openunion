@@ -135,6 +135,15 @@
           </section>
 
           <section id="integrations" class="pw-stack">
+            <details class="pw-fold" id="foldAccess" open>
+              <summary>
+                <div>
+                  <div class="pw-fold-title">Access</div>
+                  <div class="pw-fold-sub">Sign in, register, and mint tokens</div>
+                </div>
+                <span class="pw-pill faint" id="pillAccess">Not connected</span>
+              </summary>
+              <div class="pw-fold-body">
             <div class="pw-card">
               <div class="pw-card-title">
                 <h2>Access</h2>
@@ -271,6 +280,18 @@
               </details>
             </div>
 
+              </div>
+            </details>
+
+            <details class="pw-fold" id="foldOrigins" open>
+              <summary>
+                <div>
+                  <div class="pw-fold-title">Domains and origins</div>
+                  <div class="pw-fold-sub">Verify once, then publish safely</div>
+                </div>
+                <span class="pw-pill faint" id="pillOrigins">No verified origins</span>
+              </summary>
+              <div class="pw-fold-body">
             <div class="pw-card">
               <div class="pw-card-title">
                 <h2>Domains &amp; origins</h2>
@@ -301,19 +322,24 @@
                 <button class="pw-btn" id="btnListOrigins">Refresh list</button>
               </div>
 
-              <div class="pw-row">
-                <div class="pw-field">
-                  <label>Origin ID</label>
-                  <input class="pw-input" id="originId" placeholder="originId" />
-                </div>
-                <div class="pw-field">
-                  <label>&nbsp;</label>
-                  <div class="pw-actions">
-                    <button class="pw-btn" id="btnCheckOrigin">Check verification</button>
-                    <button class="pw-btn danger" id="btnRevokeOrigin">Revoke</button>
+              <details class="pw-details pw-dev" id="originActionsById">
+                <summary>Developer: check/revoke by id</summary>
+                <div class="pw-details-body">
+                  <div class="pw-row">
+                    <div class="pw-field">
+                      <label>Origin ID</label>
+                      <input class="pw-input" id="originId" placeholder="originId" />
+                    </div>
+                    <div class="pw-field">
+                      <label>&nbsp;</label>
+                      <div class="pw-actions">
+                        <button class="pw-btn" id="btnCheckOrigin">Check verification</button>
+                        <button class="pw-btn danger" id="btnRevokeOrigin">Revoke</button>
+                      </div>
+                    </div>
                   </div>
                 </div>
-              </div>
+              </details>
 
               <div class="pw-grid">
                 <div class="pw-card soft pw-span-all" id="originGuide">
@@ -356,6 +382,18 @@
               </details>
             </div>
 
+              </div>
+            </details>
+
+            <details class="pw-fold" id="foldCors">
+              <summary>
+                <div>
+                  <div class="pw-fold-title">Browser CORS allowlist</div>
+                  <div class="pw-fold-sub">Only needed if your platform UI calls APIs from the browser</div>
+                </div>
+                <span class="pw-pill faint" id="pillCors">Optional</span>
+              </summary>
+              <div class="pw-fold-body">
             <div class="pw-card">
               <div class="pw-card-title">
                 <h2>Browser CORS allowlist</h2>
@@ -381,9 +419,20 @@
                 </div>
               </details>
             </div>
+              </div>
+            </details>
           </section>
 
           <section id="apps" class="pw-stack">
+            <details class="pw-fold" id="foldApps" open>
+              <summary>
+                <div>
+                  <div class="pw-fold-title">Apps</div>
+                  <div class="pw-fold-sub">Define friendly forms for job creators</div>
+                </div>
+                <span class="pw-pill faint" id="pillApps">No apps</span>
+              </summary>
+              <div class="pw-fold-body">
             <div class="pw-card">
               <div class="pw-card-title">
                 <h2>Apps registry</h2>
@@ -473,9 +522,20 @@
                 </div>
               </details>
             </div>
+              </div>
+            </details>
           </section>
 
           <section id="work" class="pw-stack">
+            <details class="pw-fold" id="foldWork" open>
+              <summary>
+                <div>
+                  <div class="pw-fold-title">Work</div>
+                  <div class="pw-fold-sub">Publish bounties from an app page in seconds</div>
+                </div>
+                <span class="pw-pill faint" id="pillWork">No published bounties</span>
+              </summary>
+              <div class="pw-fold-body">
             <div class="pw-card">
               <div class="pw-card-title">
                 <h2>Publish work</h2>
@@ -546,9 +606,20 @@
                 </div>
               </div>
             </details>
+              </div>
+            </details>
           </section>
 
           <section id="money" class="pw-stack">
+            <details class="pw-fold" id="foldMoney" open>
+              <summary>
+                <div>
+                  <div class="pw-fold-title">Money</div>
+                  <div class="pw-fold-sub">See earnings, payouts, and holds</div>
+                </div>
+                <span class="pw-pill faint" id="pillMoney">No payouts yet</span>
+              </summary>
+              <div class="pw-fold-body">
             <div class="pw-card">
               <div class="pw-card-title">
                 <h2>Earnings</h2>
@@ -580,9 +651,20 @@
                 </div>
               </details>
             </div>
+              </div>
+            </details>
           </section>
 
           <section id="disputes" class="pw-stack">
+            <details class="pw-fold" id="foldDisputes" open>
+              <summary>
+                <div>
+                  <div class="pw-fold-title">Disputes</div>
+                  <div class="pw-fold-sub">Default posture: 1-day hold, then auto-refund</div>
+                </div>
+                <span class="pw-pill faint" id="pillDisputes">0 open</span>
+              </summary>
+              <div class="pw-fold-body">
             <div class="pw-card">
               <div class="pw-card-title">
                 <h2>Disputes</h2>
@@ -631,9 +713,20 @@
                 </div>
               </details>
             </div>
+              </div>
+            </details>
           </section>
 
           <section id="settings" class="pw-stack">
+            <details class="pw-fold" id="foldSettings">
+              <summary>
+                <div>
+                  <div class="pw-fold-title">Settings</div>
+                  <div class="pw-fold-sub">Fees, caps, and safety controls</div>
+                </div>
+                <span class="pw-pill faint" id="pillSettings">Optional</span>
+              </summary>
+              <div class="pw-fold-body">
             <div class="pw-card">
               <div class="pw-card-title">
                 <h2>Platform fee (your cut)</h2>
@@ -706,6 +799,8 @@
                 </div>
               </details>
             </div>
+              </div>
+            </details>
           </section>
         </section>
       </div>

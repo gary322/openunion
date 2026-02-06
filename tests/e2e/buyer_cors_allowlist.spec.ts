@@ -1,7 +1,9 @@
 import { test, expect } from '@playwright/test';
+import { openDetails } from './helpers.js';
 
 test('buyer can set per-org CORS allowlist and it is enforced', async ({ page, request }) => {
   await page.goto('/buyer/index.html');
+  await openDetails(page, '#foldAccess');
   await page.click('#btnLogin');
   await expect(page.locator('#loginStatus')).toContainText('ok');
 
@@ -17,6 +19,7 @@ test('buyer can set per-org CORS allowlist and it is enforced', async ({ page, r
 
   const allowOrigin = `https://ui-${Date.now()}.example.com`;
 
+  await openDetails(page, '#foldCors');
   await page.fill('#corsOrigins', allowOrigin);
   const setRespPromise = page.waitForResponse(
     (r) => r.url().endsWith('/api/org/cors-allow-origins') && r.request().method() === 'PUT'
@@ -41,4 +44,3 @@ test('buyer can set per-org CORS allowlist and it is enforced', async ({ page, r
   });
   expect(denied.status()).toBe(403);
 });
-

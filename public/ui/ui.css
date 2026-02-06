@@ -569,6 +569,146 @@ details.pw-details .pw-details-body {
   padding: 12px;
 }
 
+/* Fold sections: workflow-first collapsible blocks (guides users through "next step"). */
+details.pw-fold {
+  border: 1px solid rgba(11, 15, 25, 0.14);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.68);
+  box-shadow: var(--shadow-soft);
+  overflow: hidden;
+}
+details.pw-fold + details.pw-fold {
+  margin-top: 14px;
+}
+details.pw-fold > summary {
+  cursor: pointer;
+  padding: 14px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  list-style: none;
+  user-select: none;
+}
+details.pw-fold > summary::-webkit-details-marker {
+  display: none;
+}
+details.pw-fold > summary .pw-fold-title {
+  font-family: var(--font-serif);
+  font-size: 18px;
+  letter-spacing: 0.2px;
+  color: rgba(11, 15, 25, 0.92);
+}
+details.pw-fold > summary .pw-fold-sub {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--muted);
+}
+details.pw-fold[open] > summary {
+  border-bottom: 1px solid rgba(11, 15, 25, 0.12);
+  background: rgba(255, 255, 255, 0.9);
+}
+details.pw-fold .pw-fold-body {
+  padding: 14px;
+}
+
+.pw-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(11, 15, 25, 0.14);
+  background: rgba(255, 255, 255, 0.82);
+  color: rgba(11, 15, 25, 0.82);
+  font-size: 12px;
+  font-weight: 750;
+  line-height: 1;
+  white-space: nowrap;
+}
+.pw-pill.good {
+  border-color: rgba(21, 128, 61, 0.28);
+  background: rgba(21, 128, 61, 0.12);
+  color: rgba(21, 128, 61, 0.95);
+}
+.pw-pill.warn {
+  border-color: rgba(234, 88, 12, 0.26);
+  background: rgba(234, 88, 12, 0.12);
+  color: rgba(234, 88, 12, 0.95);
+}
+.pw-pill.faint {
+  background: rgba(255, 255, 255, 0.62);
+  color: rgba(11, 15, 25, 0.7);
+}
+
+/* Sticky/fixed action bar for primary CTAs (e.g., publish). */
+.pw-actionbar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 12px;
+  z-index: 10;
+  pointer-events: none;
+}
+.pw-actionbar-inner {
+  max-width: var(--container);
+  margin: 0 auto;
+  padding: 0 18px;
+}
+.pw-actionbar-card {
+  pointer-events: auto;
+  border-radius: 999px;
+  border: 1px solid rgba(11, 15, 25, 0.14);
+  background: rgba(255, 255, 255, 0.78);
+  backdrop-filter: blur(12px);
+  box-shadow: var(--shadow);
+  padding: 10px 12px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+  align-items: center;
+}
+@media (max-width: 980px) {
+  .pw-actionbar-card {
+    grid-template-columns: 1fr;
+    border-radius: 20px;
+  }
+}
+.pw-actionbar-meta {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.pw-actionbar-meta .pw-actionbar-title {
+  font-weight: 850;
+  letter-spacing: 0.1px;
+  color: rgba(11, 15, 25, 0.9);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pw-actionbar-meta .pw-actionbar-sub {
+  font-size: 12px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pw-actionbar .pw-actions {
+  margin-top: 0;
+  justify-content: flex-end;
+}
+@media (max-width: 980px) {
+  .pw-actionbar .pw-actions {
+    justify-content: flex-start;
+  }
+}
+
+body.pw-has-actionbar .pw-container {
+  padding-bottom: 120px;
+}
+
 /* Small utilities used across pages. */
 .pw-stack {
   display: grid;
