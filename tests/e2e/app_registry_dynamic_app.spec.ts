@@ -74,7 +74,7 @@ test('org can register an app and use the dynamic app page to create+publish', a
 
     // Open the dynamic app page.
     const card = page.locator('.card').filter({ hasText: name });
-    await card.locator('a', { hasText: 'Open' }).click();
+    await card.locator('a', { hasText: 'Details' }).click();
     await expect(page.locator('#hdrTitle')).toContainText(name);
 
     // Token should be auto-detected from localStorage and show the connected state.

@@ -26,6 +26,8 @@ for (const app of [
     // Built-in pages redirect to the canonical dynamic app page.
     await expect(page).toHaveURL(new RegExp(`/apps/app/${app.slug}/?$`));
     await expect(page.locator('#hdrTitle')).toContainText(app.title);
-    await expect(page.locator('#btnCreatePublish')).toBeVisible();
+    // App pages are workflow-first: publishing requires a platform connection.
+    await expect(page.locator('#connectRow')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Sign in' })).toBeVisible();
   });
 }
