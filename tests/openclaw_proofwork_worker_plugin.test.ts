@@ -11,6 +11,25 @@ async function sleep(ms: number) {
   await new Promise((r) => setTimeout(r, ms));
 }
 
+async function readJsonEventually(p: string, opts: { timeoutMs?: number; intervalMs?: number } = {}) {
+  const timeoutMs = opts.timeoutMs ?? 3000;
+  const intervalMs = opts.intervalMs ?? 50;
+  const start = Date.now();
+  let lastErr: any = null;
+  for (;;) {
+    try {
+      const raw = await readFile(p, 'utf8');
+      return JSON.parse(raw);
+    } catch (err: any) {
+      lastErr = err;
+    }
+    if (Date.now() - start > timeoutMs) {
+      throw lastErr ?? new Error(`timeout reading ${p}`);
+    }
+    await sleep(intervalMs);
+  }
+}
+
 async function makeStubWorker(params: { dir: string; kind: 'stay_alive' | 'exit_1' }): Promise<string> {
   const p = join(params.dir, `stub-worker-${params.kind}.mjs`);
   const code = `import fs from "node:fs/promises";
@@ -188,14 +207,11 @@ describe('OpenClaw Proofwork Worker plugin (service + commands)', () => {
     const statusFile = join(paths.root, 'status.json');
 
     await service.start(ctx);
-    await sleep(150);
     expect(await readFile(lockFile, 'utf8')).toContain('"pid"');
 
     // Second start should be a no-op due to single-instance lock.
     await service.start(ctx);
-    await sleep(150);
-    const statusRaw = await readFile(statusFile, 'utf8');
-    const status = JSON.parse(statusRaw);
+    const status = await readJsonEventually(statusFile, { timeoutMs: 5000 });
     expect(Number(status.runCount ?? 0)).toBe(1);
 
     await service.stop(ctx);

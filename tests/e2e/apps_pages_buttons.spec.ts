@@ -21,15 +21,16 @@ test('apps pages: exercise create draft, create+publish, refresh, load jobs on e
   const buyerToken = String(apiKeyJson?.token ?? '');
   expect(buyerToken).toMatch(/^pw_bu_/);
 
+  // App pages read buyer token from localStorage; set it once for the whole test to avoid
+  // re-connecting on every app navigation.
+  await page.addInitScript(({ token }) => localStorage.setItem('pw_buyer_token', token), { token: buyerToken });
+
   for (const app of APPS) {
     await page.goto(`/apps/app/${app.slug}/`);
     await expect(page.locator('#hdrTitle')).toContainText(app.titleIncludes);
 
-    // Connect: save buyer token to localStorage to load verified origins.
-    await page.fill('#buyerToken', buyerToken);
-    const originsLoadPromise = page.waitForResponse((r) => r.url().endsWith('/api/origins') && r.request().method() === 'GET');
-    await page.click('#btnSaveToken');
-    await originsLoadPromise;
+    // Connected state should be visible (token is injected via initScript).
+    await expect(page.locator('#connectedRow')).toBeVisible();
 
     // Describe: (optional) apply the first template if available.
     const hasTemplates = (await page.locator('#template option').count()) > 1;

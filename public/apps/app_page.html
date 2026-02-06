@@ -81,14 +81,29 @@
               </div>
             </div>
 
-            <div class="pw-row">
+            <div class="pw-row" id="connectedRow" hidden>
+              <div class="pw-field">
+                <div class="pw-badge">
+                  Connected: <span class="pw-mono" id="connectedTokenPrefix">pw_bu_…</span>
+                  <span class="pw-muted">• token saved locally</span>
+                </div>
+              </div>
+              <div class="pw-field">
+                <label>&nbsp;</label>
+                <div class="pw-actions">
+                  <button class="pw-btn" id="btnChangeToken" type="button">Change token</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="pw-row" id="connectRow">
               <div class="pw-field">
                 <label>Buyer token</label>
                 <input class="pw-input" id="buyerToken" placeholder="pw_bu_…" />
               </div>
               <div class="pw-field">
                 <label>&nbsp;</label>
-                <button class="pw-btn" id="btnSaveToken" type="button">Save token</button>
+                <button class="pw-btn primary" id="btnSaveToken" type="button">Connect</button>
               </div>
             </div>
 
@@ -230,4 +245,3 @@
     <script type="module" src="/ui/shell.js"></script>
   </body>
 </html>
-

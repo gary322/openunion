@@ -38,7 +38,7 @@ test('create + publish via a vertical app page (github)', async ({ page }) => {
 
     // Add + verify the origin (real verification via http_file).
     await page.fill('#originUrl', origin);
-    await page.fill('#originMethod', 'http_file');
+    await page.selectOption('#originMethod', 'http_file');
 
     const addOriginRespPromise = page.waitForResponse((r) => r.url().includes('/api/origins') && r.request().method() === 'POST');
     await page.click('#btnAddOrigin');

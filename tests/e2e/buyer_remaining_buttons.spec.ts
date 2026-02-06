@@ -74,7 +74,7 @@ test('buyer portal: exercise remaining buttons (fee get, quotas, origins list/re
 
     // Origins: add → check → list → revoke → list.
     await page.fill('#originUrl', originSrv.origin);
-    await page.fill('#originMethod', 'http_file');
+    await page.selectOption('#originMethod', 'http_file');
 
     const addOriginRespPromise = page.waitForResponse((r) => r.url().includes('/api/origins') && r.request().method() === 'POST');
     await page.click('#btnAddOrigin');
@@ -94,6 +94,11 @@ test('buyer portal: exercise remaining buttons (fee get, quotas, origins list/re
     await page.click('#btnListOrigins');
     await expect(page.locator('#originStatus')).toContainText('ok');
     await expect(page.locator('#originOut')).toContainText(originId);
+
+    // Advanced bounty form is Dev-only and collapsed by default; enable Dev mode and open it.
+    await page.waitForSelector('#pwDevToggle');
+    await page.click('#pwDevToggle');
+    await page.locator('#workAdvanced').evaluate((d: any) => (d.open = true));
 
     // Bounties: create → list → publish (publish requires a verified origin).
     await page.fill('#bTitle', `Buyer buttons bounty ${Date.now()}`);
@@ -121,35 +126,24 @@ test('buyer portal: exercise remaining buttons (fee get, quotas, origins list/re
     await expect(page.locator('#originOut')).toContainText(originId);
 
     // Org apps: create → list.
-    const slug = `buyer-btns-${Date.now()}`;
-    const taskType = `buyer_btns_task_${Date.now()}`;
-    await page.fill('#appSlug', slug);
-    await page.fill('#appTaskType', taskType);
-    await page.fill('#appName', `Buyer Buttons App ${Date.now()}`);
-    await page.fill('#appDashboardUrl', '');
-    // Default descriptor is behind a progressive-disclosure <details>.
-    await page.locator('details:has(#appDefaultDescriptor)').evaluate((d: any) => (d.open = true));
-    await page.fill(
-      '#appDefaultDescriptor',
-      JSON.stringify(
-        {
-          schema_version: 'v1',
-          type: taskType,
-          capability_tags: ['http'],
-          input_spec: { query: 'hello' },
-          output_spec: { required_artifacts: [{ kind: 'log', label: 'report' }] },
-          freshness_sla_sec: 3600,
-        },
-        null,
-        2
-      )
-    );
+    const appName = `Buyer Buttons App ${Date.now()}`;
+    await page.fill('#appName', appName);
+    // Normal UX path: pick a template and let slug/taskType/defaultDescriptor be generated.
+    await page.selectOption('#appTemplate', 'generic_http');
+    await expect(page.locator('#appDashboardUrl')).toHaveValue(/\/apps\/app\//);
     await page.click('#btnCreateOrgApp');
     await expect(page.locator('#appsStatus')).toContainText('created app');
 
     await page.click('#btnListOrgApps');
     await expect(page.locator('#appsStatus')).toContainText('ok');
-    await expect(page.locator('#appsOut')).toContainText(slug);
+    // slug is auto-generated from app name; verify it exists in API response.
+    const expectedSlug = appName
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/^-|-$/g, '');
+    await expect(page.locator('#appsOut')).toContainText(expectedSlug);
 
     // Finally, ensure the "Register" flow works (unique email).
     const email = `e2e+${Date.now()}@example.com`;

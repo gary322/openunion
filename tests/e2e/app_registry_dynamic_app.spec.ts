@@ -33,12 +33,15 @@ test('org can register an app and use the dynamic app page to create+publish', a
     await page.click('#btnCreateKey');
     await expect(page.locator('#keyStatus')).toContainText('token created');
 
-    const buyerToken = await page.locator('#buyerToken').inputValue();
-    expect(buyerToken).toMatch(/^pw_bu_/);
+    expect(await page.locator('#buyerToken').inputValue()).toMatch(/^pw_bu_/);
+
+    // Save token once so app pages can read it from localStorage automatically.
+    await page.click('#btnSaveToken');
+    await expect(page.locator('#keyStatus')).toContainText('token saved');
 
     // Add + verify origin via http_file.
     await page.fill('#originUrl', origin);
-    await page.fill('#originMethod', 'http_file');
+    await page.selectOption('#originMethod', 'http_file');
 
     const addOriginRespPromise = page.waitForResponse((r) => r.url().includes('/api/origins') && r.request().method() === 'POST');
     await page.click('#btnAddOrigin');
@@ -52,25 +55,11 @@ test('org can register an app and use the dynamic app page to create+publish', a
     await expect(page.locator('#originStatus')).toContainText('status=verified');
 
     // Create a registry app owned by this org.
-    const slug = `e2e-${Date.now()}`;
-    const taskType = `e2e_task_${Date.now()}`;
     const name = `E2E App ${Date.now()}`;
-    const defaultDescriptor = {
-      schema_version: 'v1',
-      type: taskType,
-      capability_tags: ['http', 'llm_summarize'],
-      input_spec: { query: 'hello' },
-      output_spec: { required_artifacts: [{ kind: 'log', label: 'report_summary' }] },
-      freshness_sla_sec: 3600,
-    };
-
-    await page.fill('#appSlug', slug);
-    await page.fill('#appTaskType', taskType);
     await page.fill('#appName', name);
-    await page.fill('#appDashboardUrl', ''); // force dynamic /apps/app/:slug
-    // Default descriptor is behind a progressive-disclosure <details>.
-    await page.locator('details:has(#appDefaultDescriptor)').evaluate((d: any) => (d.open = true));
-    await page.fill('#appDefaultDescriptor', JSON.stringify(defaultDescriptor, null, 2));
+    // Use a template to avoid requiring any JSON edits or identifier typing.
+    await page.selectOption('#appTemplate', 'generic_http');
+    await expect(page.locator('#appDashboardUrl')).toHaveValue(/\/apps\/app\//);
 
     const createAppRespPromise = page.waitForResponse((r) => r.url().endsWith('/api/org/apps') && r.request().method() === 'POST');
     await page.click('#btnCreateOrgApp');
@@ -87,11 +76,8 @@ test('org can register an app and use the dynamic app page to create+publish', a
     await card.locator('a', { hasText: 'Open' }).click();
     await expect(page.locator('#hdrTitle')).toContainText(name);
 
-    // Save buyer token for this app page (stored locally in browser storage).
-    await page.fill('#buyerToken', buyerToken);
-    const originsLoadPromise = page.waitForResponse((r) => r.url().endsWith('/api/origins') && r.request().method() === 'GET');
-    await page.click('#btnSaveToken');
-    await originsLoadPromise;
+    // Token should be auto-detected from localStorage and show the connected state.
+    await expect(page.locator('#connectedRow')).toBeVisible();
 
     // Select the verified origin we just proved via http_file.
     await expect

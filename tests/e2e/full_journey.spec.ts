@@ -174,7 +174,7 @@ test('buyer → bounty → worker → upload → verify (gateway) → payout (lo
     basePaidCount = Number(e0?.totals?.paidCount ?? 0);
 
     await page.fill('#originUrl', targetOrigin);
-    await page.fill('#originMethod', 'http_file');
+    await page.selectOption('#originMethod', 'http_file');
     const addOriginRespPromise = page.waitForResponse(
       (r) => r.url().includes('/api/origins') && r.request().method() === 'POST'
     );
@@ -189,6 +189,11 @@ test('buyer → bounty → worker → upload → verify (gateway) → payout (lo
     // Auto-verifies pending origins.
     await page.click('#btnCheckOrigin');
     await expect(page.locator('#originStatus')).toContainText('status=verified');
+
+    // Advanced bounty form is Dev-only and collapsed by default; enable Dev mode and open it.
+    await page.waitForSelector('#pwDevToggle');
+    await page.click('#pwDevToggle');
+    await page.locator('#workAdvanced').evaluate((d: any) => (d.open = true));
 
     // Create a bounty with a payout higher than the seeded demo bounty so the worker selects it.
     await page.fill('#bTitle', `E2E bounty ${Date.now()}`);

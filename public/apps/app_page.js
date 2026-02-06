@@ -112,7 +112,11 @@ export async function initAppPage(cfg) {
   const schema = await loadDescriptorSchema();
 
   const tokenInput = qs('#buyerToken');
+  const connectRow = qs('#connectRow');
+  const connectedRow = qs('#connectedRow');
+  const connectedTokenPrefix = qs('#connectedTokenPrefix');
   const btnSaveToken = qs('#btnSaveToken');
+  const btnChangeToken = qs('#btnChangeToken');
   const templateSelect = qs('#template');
   const btnApplyTemplate = qs('#btnApplyTemplate');
   const formRoot = qs('#form');
@@ -144,11 +148,33 @@ export async function initAppPage(cfg) {
   // Token
   const savedToken = storageGet(LS.buyerToken, '');
   if (tokenInput) tokenInput.value = savedToken;
+
+  function renderConnectState() {
+    const t = String(storageGet(LS.buyerToken, '') || '').trim();
+    const connected = Boolean(t);
+    if (connectRow) connectRow.hidden = connected;
+    if (connectedRow) connectedRow.hidden = !connected;
+    if (connectedTokenPrefix) {
+      const prefix = t ? `${t.slice(0, 10)}…` : 'pw_bu_…';
+      connectedTokenPrefix.textContent = prefix;
+    }
+  }
+
+  // Render connect state early to avoid UI flicker on navigation.
+  renderConnectState();
+
+  btnChangeToken?.addEventListener('click', () => {
+    if (connectRow) connectRow.hidden = false;
+    if (connectedRow) connectedRow.hidden = true;
+    tokenInput?.focus?.();
+  });
+
   btnSaveToken?.addEventListener('click', async () => {
     const t = String(tokenInput?.value ?? '').trim();
     if (!t) return toast('Missing buyer token', 'bad');
     storageSet(LS.buyerToken, t);
-    toast('Saved buyer token', 'good');
+    toast('Connected', 'good');
+    renderConnectState();
     setStatus('createStatus', 'Loading verified origins…');
     await refreshOrigins();
     setStatus('createStatus', '');
