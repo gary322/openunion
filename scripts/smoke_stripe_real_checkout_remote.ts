@@ -19,6 +19,7 @@
 
 import { chromium, type Frame, type Page } from 'playwright';
 import type { Locator } from 'playwright';
+import { spawn } from 'node:child_process';
 import { writeFile } from 'node:fs/promises';
 
 function argValue(name: string): string | undefined {
@@ -39,6 +40,35 @@ function normalizeBaseUrl(raw: string): string {
 
 function tsSuffix() {
   return new Date().toISOString().replace(/[:.]/g, '');
+}
+
+function parseBool(input: string): boolean {
+  const v = String(input ?? '').trim().toLowerCase();
+  if (!v) return false;
+  if (v === '1' || v === 'true' || v === 'yes' || v === 'y' || v === 'on') return true;
+  if (v === '0' || v === 'false' || v === 'no' || v === 'n' || v === 'off') return false;
+  // Unknown values: be conservative and treat as false.
+  return false;
+}
+
+function tryOpenUrlInBrowser(url: string): boolean {
+  try {
+    if (process.platform === 'darwin') {
+      const child = spawn('open', [url], { stdio: 'ignore', detached: true });
+      child.unref();
+      return true;
+    }
+    if (process.platform === 'win32') {
+      const child = spawn('cmd', ['/c', 'start', '', url], { stdio: 'ignore', detached: true });
+      child.unref();
+      return true;
+    }
+    const child = spawn('xdg-open', [url], { stdio: 'ignore', detached: true });
+    child.unref();
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function fetchJson(input: {
@@ -378,10 +408,14 @@ async function completeStripeCheckout(input: { checkoutUrl: string; email: strin
     if (!clicked) throw new Error('stripe_checkout_submit_button_not_found');
 
       // Success is typically a redirect to success_url or a success screen.
-      await Promise.race([
+      const reachedSuccess = await Promise.race([
         page.waitForURL((u) => !u.hostname.includes('checkout.stripe.com'), { timeout: 90_000 }),
         page.getByText(/payment successful|thank you/i).first().waitFor({ timeout: 90_000 }),
-      ]).catch(() => undefined);
+      ])
+        .then(() => true)
+        .catch(() => false);
+
+      if (!reachedSuccess) throw new Error('stripe_checkout_not_confirmed');
     } catch (err) {
       const p = `tmp/stripe_checkout_fail_${tsSuffix()}.png`;
       const h = p.replace(/\.png$/, '.html');
@@ -472,6 +506,16 @@ async function main() {
   console.log(`[smoke_stripe_real] stripe_session_id=${stripeSessionId}`);
   console.log(`[smoke_stripe_real] checkout_url=${checkoutUrl}`);
   console.log('[smoke_stripe_real] note: copy the FULL Stripe Checkout URL (including any `#...` fragment) or Stripe may show "page not found".');
+
+  const openRaw = String(process.env.SMOKE_OPEN_CHECKOUT_URL ?? '').trim();
+  const openDefault = !parseBool(String(process.env.CI ?? '').trim());
+  const open = openRaw ? parseBool(openRaw) : openDefault;
+  if (open) {
+    const opened = tryOpenUrlInBrowser(checkoutUrl);
+    console.log(`[smoke_stripe_real] open_checkout_url=${opened ? 'ok' : 'failed'}`);
+  } else {
+    console.log('[smoke_stripe_real] open_checkout_url=skip');
+  }
 
   const automateRaw = String(process.env.SMOKE_AUTOMATE_CHECKOUT ?? 'false').trim().toLowerCase();
   const automate = automateRaw === '1' || automateRaw === 'true' || automateRaw === 'yes';
