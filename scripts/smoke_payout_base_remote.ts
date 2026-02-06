@@ -65,6 +65,25 @@ async function fetchJson(input: {
   return { status: resp.status, ok: resp.ok, headers: resp.headers, json, text };
 }
 
+async function explainEvmRevert(input: { provider: ethers.JsonRpcProvider; txHash: string }): Promise<string | null> {
+  try {
+    const receipt = await input.provider.getTransactionReceipt(input.txHash);
+    if (!receipt) return null;
+    if (receipt.status === 1) return null;
+    const tx = await input.provider.getTransaction(input.txHash);
+    if (!tx || !tx.to) return 'reverted (no tx data)';
+    try {
+      await input.provider.call({ to: tx.to, from: tx.from, data: tx.data, value: tx.value }, receipt.blockNumber);
+      return 'reverted (call unexpectedly succeeded)';
+    } catch (err: any) {
+      const msg = String(err?.shortMessage ?? err?.message ?? '').trim();
+      return msg || 'reverted (no reason returned)';
+    }
+  } catch {
+    return null;
+  }
+}
+
 async function runUniversalWorkerOnce(input: {
   baseUrl: string;
   workerToken: string;
@@ -405,7 +424,19 @@ async function main() {
       if (!res.ok) throw new Error(`worker_payouts_failed:${res.status}`);
       const payouts: any[] = Array.isArray(res.json?.payouts) ? res.json.payouts : [];
       payout = payouts.find((p) => String(p?.jobId ?? '') === jobId) ?? null;
-      if (payout && String(payout.status ?? '') === 'paid' && String(payout.providerRef ?? '').startsWith('0x')) break;
+      if (payout) {
+        const status = String(payout.status ?? '');
+        const providerRef = String(payout.providerRef ?? '');
+        if (status === 'paid' && providerRef.startsWith('0x')) break;
+        if (status === 'failed') {
+          let extra = '';
+          if (providerRef.startsWith('0x')) {
+            const revertReason = await explainEvmRevert({ provider, txHash: providerRef });
+            if (revertReason) extra = ` revert_reason=${revertReason}`;
+          }
+          throw new Error(`payout_failed:${JSON.stringify(payout)}${extra}`);
+        }
+      }
       if (Date.now() > payoutDeadline) throw new Error(`timeout_waiting_for_payout:${payout ? JSON.stringify(payout) : 'missing'}`);
       await sleep(3000);
     }
