@@ -17,6 +17,7 @@
 // - Do not print secrets.
 
 import { chromium, type Frame, type Page } from 'playwright';
+import type { Locator } from 'playwright';
 
 function argValue(name: string): string | undefined {
   const idx = process.argv.indexOf(name);
@@ -179,8 +180,34 @@ async function fillIfVisible(page: Page, selector: string, value: string) {
   await first.fill(value);
 }
 
+async function clickFirstVisible(locator: Locator, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const count = await locator.count().catch(() => 0);
+    for (let i = 0; i < Math.min(count, 10); i++) {
+      const el = locator.nth(i);
+      const visible = await el.isVisible().catch(() => false);
+      if (!visible) continue;
+      const enabled = await el.isEnabled().catch(() => false);
+      if (!enabled) continue;
+      await el.scrollIntoViewIfNeeded().catch(() => undefined);
+      await el.click({ timeout: 10_000 }).catch(() => undefined);
+      return true;
+    }
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  return false;
+}
+
 async function completeStripeCheckout(input: { checkoutUrl: string; email: string }) {
-  const browser = await chromium.launch({ headless: true });
+  const headlessRaw = String(process.env.SMOKE_HEADLESS ?? 'true').trim().toLowerCase();
+  const headless = !(headlessRaw === '0' || headlessRaw === 'false' || headlessRaw === 'no');
+
+  const browser = await chromium.launch({
+    headless,
+    // Best-effort reduction of naive headless detection.
+    args: ['--disable-blink-features=AutomationControlled'],
+  });
   try {
     const context = await browser.newContext({ locale: 'en-US' });
     const page = await context.newPage();
@@ -197,8 +224,18 @@ async function completeStripeCheckout(input: { checkoutUrl: string; email: strin
 
     const cardRadio = page.locator('#payment-method-accordion-item-title-card');
     if ((await cardRadio.count().catch(() => 0)) > 0) {
-      // Use click over check; Checkout sometimes overlays the input with a styled label.
-      await cardRadio.first().click({ timeout: 10_000 }).catch(() => undefined);
+      const first = cardRadio.first();
+      // Prefer `check` for radio inputs; fall back to click if Stripe changes markup.
+      if (!(await first.isChecked().catch(() => false))) {
+        await first.check({ force: true, timeout: 10_000 }).catch(() => undefined);
+      }
+      if (!(await first.isChecked().catch(() => false))) {
+        await first.click({ force: true, timeout: 10_000 }).catch(() => undefined);
+      }
+      if (!(await first.isChecked().catch(() => false))) {
+        // Without selecting "Card", the hosted card inputs never render.
+        throw new Error('stripe_checkout_card_payment_method_not_selected');
+      }
     }
 
     // Choose "Card" explicitly if multiple payment methods are shown (best-effort).
@@ -267,13 +304,13 @@ async function completeStripeCheckout(input: { checkoutUrl: string; email: strin
       2_000
     ).catch(() => undefined);
 
-    // Click pay/submit.
-    const payByRole = page.getByRole('button', { name: /pay|purchase|checkout/i });
-    if ((await payByRole.count().catch(() => 0)) > 0) {
-      await payByRole.first().click();
-    } else {
-      await page.locator('button[type="submit"]').first().click();
-    }
+    // Click pay/submit (avoid payment method buttons like "Pay with card").
+    const clicked =
+      (await clickFirstVisible(page.locator('button[type="submit"]'), 30_000)) ||
+      (await clickFirstVisible(page.locator('button[data-testid*="submit" i]'), 30_000)) ||
+      (await clickFirstVisible(page.getByRole('button', { name: /^Pay(?! with card)/i }), 30_000)) ||
+      (await clickFirstVisible(page.getByRole('button', { name: /purchase|complete/i }), 30_000));
+    if (!clicked) throw new Error('stripe_checkout_submit_button_not_found');
 
     // Success is typically a redirect to success_url or a success screen.
     await Promise.race([
