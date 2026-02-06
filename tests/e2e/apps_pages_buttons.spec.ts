@@ -24,7 +24,11 @@ test('apps pages: exercise create draft, create+publish, refresh, load jobs on e
 
   // App pages read buyer token from localStorage; set it once for the whole test to avoid
   // re-connecting on every app navigation.
-  await page.addInitScript(({ token }) => localStorage.setItem('pw_buyer_token', token), { token: buyerToken });
+  await page.addInitScript(({ token }) => {
+    localStorage.setItem('pw_buyer_token', token);
+    // Create-draft is developer-oriented and intentionally hidden by default.
+    localStorage.setItem('pw_dev_mode', '1');
+  }, { token: buyerToken });
 
   for (const app of APPS) {
     await page.goto(`/apps/app/${app.slug}/`);
