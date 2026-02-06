@@ -80,6 +80,9 @@ test('org can register an app and use the dynamic app page to create+publish', a
     // Token should be auto-detected from localStorage and show the connected state.
     await expect(page.locator('#connectedRow')).toBeVisible();
 
+    // The app page keeps advanced settings behind a fold by default.
+    await openDetails(page, '#settingsFold');
+
     // Select the verified origin we just proved via http_file.
     await expect
       .poll(async () => {
@@ -95,7 +98,6 @@ test('org can register an app and use the dynamic app page to create+publish', a
 
     // Create + publish with a unique title.
     const title = `Dynamic app bounty ${Date.now()}`;
-    await openDetails(page, '#payoutFold');
     await page.fill('#payoutCents', '1200');
     await page.fill('#requiredProofs', '1');
     await page.fill('#title', title);

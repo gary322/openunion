@@ -76,7 +76,7 @@
                 <div class="pw-step-dot">3</div>
                 <div>
                   <div class="pw-step-title">Publish</div>
-                  <div class="pw-step-desc">Choose origin + payout, then Create + publish.</div>
+                  <div class="pw-step-desc">Review settings (optional), then Create + publish.</div>
                 </div>
               </div>
             </div>
@@ -85,7 +85,7 @@
               <div class="pw-field">
                 <div class="pw-badge">
                   Connected: <span class="pw-mono" id="connectedTokenPrefix">session</span>
-                  <span class="pw-muted">• saved locally</span>
+                  <span class="pw-muted">• session or token</span>
                 </div>
               </div>
               <div class="pw-field">
@@ -169,33 +169,33 @@
               <div id="form"></div>
 
               <div class="pw-grid">
-                <div class="pw-card soft">
-                  <div class="pw-kicker">Allowed origin</div>
-                  <div class="pw-muted">Pick from verified origins for your org.</div>
-                  <div class="pw-field" id="originSelectWrap">
-                    <label class="pw-offscreen" for="originSelect">Origin</label>
-                    <select class="pw-select" id="originSelect"></select>
-                  </div>
-                  <div class="pw-field" id="originSingle" hidden>
-                    <div class="pw-badge">
-                      Origin: <span class="pw-mono" id="originSingleText">—</span>
-                    </div>
-                  </div>
-                  <div class="pw-actions">
-                    <button class="pw-btn" id="btnRefreshOrigins" type="button">Refresh origins</button>
-                    <a class="pw-btn" id="linkVerifyOrigins" href="/buyer/onboarding.html" rel="noreferrer">Verify origins</a>
-                  </div>
-                </div>
-
-                <details class="pw-fold" id="payoutFold">
+                <details class="pw-fold" id="settingsFold">
                   <summary>
                     <div>
-                      <div class="pw-fold-title">Payout</div>
-                      <div class="pw-fold-sub">Worker net is after platform cut + Proofwork 1%</div>
+                      <div class="pw-fold-title">Adjust settings</div>
+                      <div class="pw-fold-sub">Optional: origin, payout, proofs, title</div>
                     </div>
                     <span class="pw-pill faint" id="payoutPill">Defaults</span>
                   </summary>
                   <div class="pw-fold-body">
+                    <div class="pw-card soft">
+                      <div class="pw-kicker">Allowed origin</div>
+                      <div class="pw-muted">Verified origins are required for your own domains. System apps may also provide supported origins.</div>
+                      <div class="pw-field" id="originSelectWrap">
+                        <label class="pw-offscreen" for="originSelect">Origin</label>
+                        <select class="pw-select" id="originSelect"></select>
+                      </div>
+                      <div class="pw-field" id="originSingle" hidden>
+                        <div class="pw-badge">
+                          Origin: <span class="pw-mono" id="originSingleText">—</span>
+                        </div>
+                      </div>
+                      <div class="pw-actions">
+                        <button class="pw-btn" id="btnRefreshOrigins" type="button">Refresh</button>
+                        <a class="pw-btn" id="linkVerifyOrigins" href="/buyer/onboarding.html" rel="noreferrer">Verify origin</a>
+                      </div>
+                    </div>
+
                     <div class="pw-presets" id="payoutPresets" aria-label="Payout presets"></div>
                     <div class="pw-row">
                       <div class="pw-field">
@@ -208,6 +208,14 @@
                       </div>
                     </div>
                     <div class="pw-help" id="payoutBreakdown"></div>
+
+                    <div class="pw-row">
+                      <div class="pw-field">
+                        <label for="title">Title (optional)</label>
+                        <input class="pw-input" id="title" placeholder="Auto-filled" />
+                        <div class="pw-help">Titles help you find bounties later. Everything else is generated from the form.</div>
+                      </div>
+                    </div>
                   </div>
                 </details>
 
@@ -216,14 +224,6 @@
                   <div class="pw-muted" id="deliverablesSub">What workers must submit for this app.</div>
                   <div class="pw-chips" id="deliverablesList"></div>
                   <div class="pw-help" id="deliverablesHelp"></div>
-                </div>
-              </div>
-
-              <div class="pw-row">
-                <div class="pw-field">
-                  <label for="title">Title (optional)</label>
-                  <input class="pw-input" id="title" placeholder="Auto-filled" />
-                  <div class="pw-help">Titles help you find bounties later. Everything else is generated from the form.</div>
                 </div>
               </div>
 

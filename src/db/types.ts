@@ -321,6 +321,36 @@ export interface AppsTable {
   updated_at: Timestamp;
 }
 
+export interface AppSupportedOriginsTable {
+  app_id: string;
+  origin: string;
+  notes: string | null;
+  created_at: Timestamp;
+}
+
+export interface MarketplaceOriginTemplatesTable {
+  origin: string;
+  enabled: boolean;
+  search_url_template: string | null;
+  wait_selector: string | null;
+  selectors_json: unknown;
+  created_at: Timestamp;
+  updated_at: Timestamp;
+}
+
+export interface AppOriginRequestsTable {
+  id: string;
+  org_id: string;
+  app_id: string;
+  origin: string;
+  status: string;
+  message: string | null;
+  reviewed_by: string | null;
+  review_notes: string | null;
+  created_at: Timestamp;
+  reviewed_at: Timestamp | null;
+}
+
 export interface AlarmNotificationsTable {
   id: string;
   environment: string;
@@ -399,6 +429,9 @@ export interface DB {
   workers: WorkersTable;
   orgs: OrgsTable;
   apps: AppsTable;
+  app_supported_origins: AppSupportedOriginsTable;
+  marketplace_origin_templates: MarketplaceOriginTemplatesTable;
+  app_origin_requests: AppOriginRequestsTable;
   alarm_notifications: AlarmNotificationsTable;
   blocked_domains: BlockedDomainsTable;
   bounties: BountiesTable;

@@ -1128,7 +1128,9 @@ async function getGithubReposFromApi(input) {
   for (const l of languages) qParts.push(`language:${l}`);
   if (licenseAllow[0]) qParts.push(`license:${licenseAllow[0]}`);
   const q = qParts.join(" ").trim();
-  const url = new URL("/search/repositories", GITHUB_API_BASE_URL);
+  // Allow GITHUB_API_BASE_URL to include a path prefix (useful for deterministic smoke endpoints).
+  const ghBase = GITHUB_API_BASE_URL.endsWith("/") ? GITHUB_API_BASE_URL : `${GITHUB_API_BASE_URL}/`;
+  const url = new URL("search/repositories", ghBase);
   url.searchParams.set("q", q);
   url.searchParams.set("sort", "stars");
   url.searchParams.set("order", "desc");
@@ -1563,9 +1565,17 @@ function getMarketplaceSelectorConfig(job) {
     selectorsRaw?.availability ?? selectorsRaw?.stock ?? sp.stock_selector ?? sp.stockSelector ?? "",
   );
   const url = normalizeCssSelector(selectorsRaw?.url ?? sp.url_selector ?? sp.urlSelector ?? "");
+  const waitSelector = normalizeCssSelector(
+    selectorsRaw?.wait_selector ??
+      sp.marketplace_wait_selector ??
+      sp.marketplaceWaitSelector ??
+      sp.wait_selector ??
+      sp.waitSelector ??
+      "",
+  );
 
-  if (!items && !title && !price && !availability && !url) return null;
-  return { items, title, price, availability, url };
+  if (!items && !title && !price && !availability && !url && !waitSelector) return null;
+  return { items, title, price, availability, url, waitSelector };
 }
 
 function currencyFromText(raw) {
@@ -1713,6 +1723,18 @@ async function runOpenClawMarketplacePageModule(input) {
 
   try {
     await enforcePagePolicy({ targetId, allowedOrigins, what: "after_open" });
+
+    if (selectorCfg?.waitSelector) {
+      try {
+        await runOpenClaw(
+          ["browser", "wait", selectorCfg.waitSelector, "--timeout-ms", "20000", "--target-id", targetId, "--json"],
+          { timeoutMs: 22_000 },
+        );
+      } catch (err) {
+        debugLog("marketplace wait selector failed", String(err?.message ?? err));
+      }
+      await enforcePagePolicy({ targetId, allowedOrigins, what: "after_wait_selector" });
+    }
 
     let extractedItems = [];
     if (selectorCfg) {

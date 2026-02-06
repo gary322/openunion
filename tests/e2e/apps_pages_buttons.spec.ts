@@ -47,6 +47,9 @@ test('apps pages: exercise create draft, create+publish, refresh, load jobs on e
     // Fill any required friendly-form inputs that templates didn't populate.
     await fillRequiredAppForm(page);
 
+    // Most config is intentionally tucked behind a fold so the default workflow stays simple.
+    await openDetails(page, '#settingsFold');
+
     // Publish: choose a verified origin and set payout.
     await expect
       .poll(async () => {
@@ -59,7 +62,6 @@ test('apps pages: exercise create draft, create+publish, refresh, load jobs on e
       await expect(page.locator('#originSingleText')).toContainText('https://example.com');
     }
 
-    await openDetails(page, '#payoutFold');
     await page.fill('#payoutCents', '1200');
     await page.fill('#requiredProofs', '1');
 
