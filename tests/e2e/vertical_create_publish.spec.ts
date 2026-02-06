@@ -81,6 +81,9 @@ test('create + publish via a vertical app page (github)', async ({ page }) => {
       await expect(page.locator('#connectedRow')).toBeVisible();
     }
 
+    // The app page keeps advanced settings behind a fold by default.
+    await openDetails(page, '#settingsFold');
+
     await expect
       .poll(async () => {
         return await page.evaluate(() => Array.from((document.getElementById('originSelect') as HTMLSelectElement | null)?.options ?? []).map((o) => o.value));
@@ -93,7 +96,6 @@ test('create + publish via a vertical app page (github)', async ({ page }) => {
     }
 
     const title = `GitHub E2E ${Date.now()}`;
-    await openDetails(page, '#payoutFold');
     await page.fill('#payoutCents', '1200');
     await page.fill('#requiredProofs', '1');
     await page.fill('#title', title);

@@ -65,6 +65,12 @@ import {
   listPublicApps,
   getPublicAppBySlug,
   adminSetAppStatus,
+  listSupportedOriginsForApp,
+  addSupportedOriginForApp,
+  createAppOriginRequest,
+  listAppOriginRequestsByOrg,
+  listAppOriginRequestsAdmin,
+  reviewAppOriginRequestAdmin,
   updateOrgApp,
   listPayoutsByOrg,
   listPayoutsByWorker,
@@ -119,6 +125,8 @@ import {
   disputeCreateSchema,
   disputeResolveSchema,
   adminAppStatusSchema,
+  appOriginRequestCreateSchema,
+  adminOriginRequestReviewSchema,
   adminPayoutMarkSchema,
   blockedDomainCreateSchema,
   adminArtifactQuarantineSchema,
@@ -538,6 +546,260 @@ export function buildServer(opts: { taskDescriptorBrowserFlowValidationGate?: bo
     prefix: '/docs/',
     decorateReply: false,
     index: ['index.html'],
+  });
+
+  // Deterministic smoke targets used by remote E2E tests (OpenClaw worker + payouts).
+  // Keep them "public web" safe: no secrets, no auth, no dynamic side effects.
+  const smokeHtml = (title: string, bodyHtml: string) =>
+    `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>${title}</title>
+    <style>
+      body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; padding: 24px; line-height: 1.45; }
+      code { background: #f2f2f2; padding: 2px 4px; border-radius: 4px; }
+      .card { max-width: 720px; border: 1px solid #e5e5e5; border-radius: 12px; padding: 16px 18px; }
+      .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+      input { padding: 10px 12px; border-radius: 10px; border: 1px solid #ccc; min-width: 240px; }
+      button { padding: 10px 14px; border-radius: 10px; border: 1px solid #111; background: #111; color: #fff; cursor: pointer; }
+      button:active { transform: translateY(1px); }
+      .muted { color: #666; }
+      .ok { color: #0a7a2f; font-weight: 700; }
+      .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+      .item { border: 1px solid #e5e5e5; border-radius: 12px; padding: 12px; }
+      .price { font-weight: 700; }
+    </style>
+  </head>
+  <body>
+    ${bodyHtml}
+  </body>
+</html>`;
+
+  app.get('/__smoke/browser-flow/ok', async (_req, reply) => {
+    reply.header('content-type', 'text/html; charset=utf-8');
+    return reply.send(
+      smokeHtml(
+        'Proofwork Smoke: browser_flow ok',
+        `<div class="card">
+  <h1>Smoke: browser_flow ok</h1>
+  <p class="muted">Used to validate OpenClaw <code>type</code> + <code>click</code> and same-origin navigation.</p>
+  <form class="row" action="/__smoke/browser-flow/ok/done" method="GET">
+    <label>
+      <span class="muted">Query</span><br />
+      <input name="q" placeholder="type something" />
+    </label>
+    <button id="go" type="submit">Go</button>
+  </form>
+</div>`
+      )
+    );
+  });
+
+  app.get('/__smoke/browser-flow/ok/done', async (req: any, reply) => {
+    const q = typeof req.query?.q === 'string' ? req.query.q : '';
+    reply.header('content-type', 'text/html; charset=utf-8');
+    return reply.send(
+      smokeHtml(
+        'Proofwork Smoke: ok done',
+        `<div class="card">
+  <h1 class="ok" id="pw-success">OK</h1>
+  <p>q: <code>${String(q).slice(0, 120)}</code></p>
+  <p class="muted">If you can see <code>#pw-success</code>, click/type worked.</p>
+  <p><a href="/__smoke/browser-flow/ok">back</a></p>
+</div>`
+      )
+    );
+  });
+
+  app.get('/__smoke/browser-flow/redirect', async (_req, reply) => reply.redirect('https://example.com/'));
+
+  app.get('/__smoke/browser-flow/loginish', async (_req, reply) => {
+    reply.header('content-type', 'text/html; charset=utf-8');
+    return reply.send(
+      smokeHtml(
+        'Proofwork Smoke: loginish',
+        `<div class="card">
+  <h1>Smoke: loginish</h1>
+  <p class="muted">Workers should refuse this under the no-login policy.</p>
+  <form class="row" action="#" method="POST">
+    <label>
+      <span class="muted">Email</span><br />
+      <input name="email" autocomplete="username" placeholder="email@example.com" />
+    </label>
+    <label>
+      <span class="muted">Password</span><br />
+      <input name="password" type="password" autocomplete="current-password" placeholder="••••••••" />
+    </label>
+    <button type="submit">Sign in</button>
+  </form>
+</div>`
+      )
+    );
+  });
+
+  app.get('/__smoke/marketplace/items', async (_req, reply) => {
+    reply.header('content-type', 'text/html; charset=utf-8');
+    return reply.send(
+      smokeHtml(
+        'Proofwork Smoke: marketplace items',
+        `<div class="card">
+  <h1>Smoke: marketplace items</h1>
+  <p class="muted">Deterministic DOM for marketplace selector templates.</p>
+  <div class="grid pw-items">
+    <div class="item pw-item">
+      <a class="pw-url" href="/__smoke/marketplace/item/1">View</a>
+      <div class="pw-title">Sample Item One</div>
+      <div class="price pw-price">$123.45</div>
+      <div class="pw-availability">in stock</div>
+    </div>
+    <div class="item pw-item">
+      <a class="pw-url" href="/__smoke/marketplace/item/2">View</a>
+      <div class="pw-title">Sample Item Two</div>
+      <div class="price pw-price">$67.89</div>
+      <div class="pw-availability">out of stock</div>
+    </div>
+  </div>
+</div>`
+      )
+    );
+  });
+
+  app.get('/__smoke/marketplace/item/:id', async (req: any, reply) => {
+    const id = String(req.params?.id ?? '').replace(/[^0-9]/g, '').slice(0, 6) || '0';
+    reply.header('content-type', 'text/html; charset=utf-8');
+    return reply.send(
+      smokeHtml(
+        `Proofwork Smoke: marketplace item ${id}`,
+        `<div class="card">
+  <h1>Item ${id}</h1>
+  <p class="muted">Used only as a same-origin URL target.</p>
+  <p><a href="/__smoke/marketplace/items">back</a></p>
+</div>`
+      )
+    );
+  });
+
+  const smokeRequestOrigin = (req: any): string => {
+    const xfProto = String(req.headers?.['x-forwarded-proto'] ?? '').split(',')[0].trim();
+    const xfHost = String(req.headers?.['x-forwarded-host'] ?? '').split(',')[0].trim();
+    const host = xfHost || String(req.headers?.host ?? '').split(',')[0].trim();
+    const proto = xfProto || (req.protocol ? String(req.protocol) : 'http');
+    if (!host) return '';
+    return `${proto}://${host}`;
+  };
+
+  app.get('/__smoke/jobs/board', async (_req, reply) => {
+    reply.header('content-type', 'text/html; charset=utf-8');
+    return reply.send(
+      smokeHtml(
+        'Proofwork Smoke: jobs board',
+        `<div class="card">
+  <h1>Smoke: jobs board</h1>
+  <p class="muted">Deterministic public page used for Jobs screenshots.</p>
+  <ul>
+    <li><strong>Example Corp</strong> is hiring: <code>Backend Engineer</code></li>
+    <li><strong>Sample Inc</strong> is hiring: <code>ML Engineer</code></li>
+  </ul>
+</div>`
+      )
+    );
+  });
+
+  app.get('/__smoke/jobs/job/:id', async (req: any, reply) => {
+    const id = String(req.params?.id ?? '').replace(/[^0-9]/g, '').slice(0, 6) || '0';
+    reply.header('content-type', 'text/html; charset=utf-8');
+    return reply.send(
+      smokeHtml(
+        `Proofwork Smoke: job ${id}`,
+        `<div class="card">
+  <h1>Job ${id}</h1>
+  <p class="muted">Used as a stable URL in smoke API responses.</p>
+  <p>Role: <code>Backend Engineer</code></p>
+  <p>Company: <code>Example Corp</code></p>
+</div>`
+      )
+    );
+  });
+
+  app.get('/__smoke/remotive/api/remote-jobs', async (req: any, reply) => {
+    const origin = smokeRequestOrigin(req);
+    const nowIso = new Date().toISOString();
+    reply.header('content-type', 'application/json; charset=utf-8');
+    return reply.send({
+      jobs: [
+        {
+          id: 1,
+          title: 'Backend Engineer',
+          company_name: 'Example Corp',
+          publication_date: nowIso,
+          candidate_required_location: 'Remote',
+          url: origin ? `${origin}/__smoke/jobs/job/1` : 'https://example.com/',
+          category: 'Software Development',
+          job_type: 'full_time',
+        },
+        {
+          id: 2,
+          title: 'ML Engineer',
+          company_name: 'Sample Inc',
+          publication_date: nowIso,
+          candidate_required_location: 'Remote',
+          url: origin ? `${origin}/__smoke/jobs/job/2` : 'https://example.com/',
+          category: 'Data',
+          job_type: 'contract',
+        },
+      ],
+    });
+  });
+
+  app.get('/__smoke/github/search/repositories', async (_req, reply) => {
+    reply.header('content-type', 'application/json; charset=utf-8');
+    return reply.send({
+      total_count: 2,
+      incomplete_results: false,
+      items: [
+        {
+          id: 1001,
+          full_name: 'proofwork/smoke-repo-one',
+          html_url: 'https://github.com/proofwork/smoke-repo-one',
+          stargazers_count: 123,
+          description: 'Deterministic smoke repository entry.',
+          license: { spdx_id: 'MIT', key: 'mit' },
+        },
+        {
+          id: 1002,
+          full_name: 'proofwork/smoke-repo-two',
+          html_url: 'https://github.com/proofwork/smoke-repo-two',
+          stargazers_count: 45,
+          description: 'Second deterministic smoke repository entry.',
+          license: { spdx_id: 'Apache-2.0', key: 'apache-2.0' },
+        },
+      ],
+    });
+  });
+
+  app.get('/__smoke/arxiv/api/query', async (req: any, reply) => {
+    const q = typeof req.query?.search_query === 'string' ? req.query.search_query : '';
+    const nowIso = new Date().toISOString();
+    const safeQ = String(q).slice(0, 40).replace(/</g, '').replace(/>/g, '');
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Proofwork Smoke: arXiv query</title>
+  <id>http://arxiv.org/api/query</id>
+  <updated>${nowIso}</updated>
+  <entry>
+    <id>http://arxiv.org/abs/1234.5678v1</id>
+    <title>Smoke Paper One (${safeQ})</title>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2345.6789v2</id>
+    <title>Smoke Paper Two</title>
+  </entry>
+</feed>
+`;
+    reply.header('content-type', 'application/atom+xml; charset=utf-8');
+    return reply.send(xml);
   });
 
   // Dynamic app page for registry apps (works even when no static /public/apps/<slug>/ folder exists).
@@ -972,6 +1234,34 @@ export function buildServer(opts: { taskDescriptorBrowserFlowValidationGate?: bo
             : false;
     reply.header('set-cookie', `pw_sess=${sess.cookieValue}; Path=/; HttpOnly; SameSite=Lax; ${secure ? 'Secure; ' : ''}Max-Age=${7 * 24 * 3600}`);
     return { ok: true, orgId: user.orgId, role: user.role, email: user.email, csrfToken: csrfToken(sess.csrfSecret) };
+  });
+
+  // Buyer auth: session introspection for first-party UIs (no token copy/paste).
+  //
+  // This endpoint intentionally returns the derived CSRF token so same-origin UIs can perform
+  // unsafe writes (POST/PUT/etc) using the cookie session.
+  app.get('/api/auth/session', async (request: any, reply: any) => {
+    const cookies = parseCookies(request.headers['cookie'] as string | undefined);
+    const sessCookie = cookies['pw_sess'];
+    if (!sessCookie) return reply.code(401).send({ error: { code: 'unauthorized', message: 'Missing session' } });
+    const sessId = verifySessionCookie(sessCookie);
+    if (!sessId) return reply.code(401).send({ error: { code: 'unauthorized', message: 'Invalid session' } });
+    const sess = await getSession(sessId);
+    if (!sess) return reply.code(401).send({ error: { code: 'unauthorized', message: 'Session expired' } });
+
+    const userRow = await db
+      .selectFrom('org_users')
+      .select(['email', 'org_id'])
+      .where('id', '=', sess.userId)
+      .executeTakeFirst();
+
+    const email = userRow?.email ?? null;
+    // Defense-in-depth: avoid returning mismatched user/org pairs.
+    if (userRow?.org_id && String(userRow.org_id) !== String(sess.orgId)) {
+      return reply.code(401).send({ error: { code: 'unauthorized', message: 'Session invalid' } });
+    }
+
+    return { ok: true, orgId: sess.orgId, role: sess.role, email, csrfToken: csrfToken(sess.csrfSecret), expiresAt: sess.expiresAt.getTime() };
   });
 
   app.post('/api/auth/logout', async (request: any, reply: any) => {
@@ -1720,6 +2010,81 @@ export function buildServer(opts: { taskDescriptorBrowserFlowValidationGate?: bo
     }
   });
 
+  // Supported origin requests (buyer): ask the operator to add a third-party origin to a system app's curated allowlist.
+  // This is for third-party sites buyers do not control (so they can't pass origin verification).
+  app.get('/api/apps/:appId/supported-origins', async (request: any, reply) => {
+    const appId = String(request.params.appId ?? '').trim();
+    if (!appId) return reply.code(400).send({ error: { code: 'invalid', message: 'appId required' } });
+    const rec = await db.selectFrom('apps').select(['id', 'status']).where('id', '=', appId).executeTakeFirst();
+    if (!rec || rec.status !== 'active') return reply.code(404).send({ error: { code: 'not_found', message: 'app not found' } });
+    return { appId, supportedOrigins: await listSupportedOriginsForApp(appId) };
+  });
+
+  app.get('/api/apps/:appId/origin-requests', { preHandler: (app as any).authenticateBuyer }, async (request: any, reply) => {
+    const appId = String(request.params.appId ?? '').trim();
+    if (!appId) return reply.code(400).send({ error: { code: 'invalid', message: 'appId required' } });
+    const appRow = await db.selectFrom('apps').select(['id', 'owner_org_id']).where('id', '=', appId).executeTakeFirst();
+    if (!appRow) return reply.code(404).send({ error: { code: 'not_found', message: 'app not found' } });
+    if (String((appRow as any).owner_org_id) !== 'org_system') {
+      return reply.code(400).send({ error: { code: 'invalid', message: 'origin requests are only supported for system apps' } });
+    }
+    return { appId, requests: await listAppOriginRequestsByOrg(request.orgId, { appId }) };
+  });
+
+  app.post(
+    '/api/apps/:appId/origin-requests',
+    { preHandler: (app as any).authenticateBuyer, schema: { body: appOriginRequestCreateSchema } },
+    async (request: any, reply) => {
+      const appId = String(request.params.appId ?? '').trim();
+      if (!appId) return reply.code(400).send({ error: { code: 'invalid', message: 'appId required' } });
+
+      const appRow = await db.selectFrom('apps').select(['id', 'owner_org_id', 'status']).where('id', '=', appId).executeTakeFirst();
+      if (!appRow || String((appRow as any).status) !== 'active') {
+        return reply.code(404).send({ error: { code: 'not_found', message: 'app not found' } });
+      }
+      if (String((appRow as any).owner_org_id) !== 'org_system') {
+        return reply.code(400).send({ error: { code: 'invalid', message: 'origin requests are only supported for system apps' } });
+      }
+
+      const body = request.body as any;
+      const originRaw = String(body.origin ?? '').trim();
+      if (!originRaw) return reply.code(400).send({ error: { code: 'invalid', message: 'origin required' } });
+
+      // Require http(s) origins. In production, enforce https to avoid footguns.
+      let u: URL;
+      try {
+        u = new URL(originRaw);
+      } catch {
+        return reply.code(400).send({ error: { code: 'invalid', message: 'invalid origin' } });
+      }
+      if (!['http:', 'https:'].includes(u.protocol)) {
+        return reply.code(400).send({ error: { code: 'invalid', message: `invalid origin protocol: ${u.protocol}` } });
+      }
+      if (process.env.NODE_ENV === 'production' && u.protocol !== 'https:') {
+        return reply.code(400).send({ error: { code: 'invalid', message: 'origin must be https in production' } });
+      }
+
+      try {
+        await assertUrlNotBlocked(u.origin);
+      } catch (err: any) {
+        const msg = String(err?.message ?? err);
+        if (msg.startsWith('blocked_domain:')) return reply.code(403).send({ error: { code: 'blocked_domain', message: msg } });
+        return reply.code(400).send({ error: { code: 'invalid', message: msg } });
+      }
+
+      const rec = await createAppOriginRequest(request.orgId, appId, u.origin, { message: body.message ?? null });
+      await writeAuditEvent({
+        actorType: request.sessionId ? 'buyer_session' : 'buyer_api_key',
+        actorId: request.sessionId ?? request.apiKeyId ?? null,
+        action: 'app.origin_request.create',
+        targetType: 'app_origin_request',
+        targetId: rec.id,
+        metadata: { appId, origin: rec.origin },
+      });
+      return { request: rec };
+    }
+  );
+
   // Org financial visibility (buyer): earnings + payout history + disputes.
   app.get('/api/org/earnings', { preHandler: (app as any).authenticateBuyer }, async (request: any) => {
     return await getOrgEarningsSummary(request.orgId);
@@ -1893,6 +2258,119 @@ export function buildServer(opts: { taskDescriptorBrowserFlowValidationGate?: bo
     const effectiveAllowedOrigins = Array.from(effectiveAllowedOriginsSet);
     if (!effectiveAllowedOrigins.length) {
       return reply.code(400).send({ error: { code: 'invalid', message: 'allowedOrigins required (or use a system app with public origins)' } });
+    }
+
+    // System app affordances: inject curated templates and validate descriptor-bound URLs early so jobs don't get stuck.
+    if (taskDescriptor?.type && appRecForType?.ownerOrgId === 'org_system') {
+      const type = String(taskDescriptor.type);
+
+      if (type === 'clips_highlights') {
+        const vodUrl = (taskDescriptor as any)?.input_spec?.vod_url;
+        if (typeof vodUrl !== 'string' || !vodUrl.trim()) {
+          return reply.code(400).send({ error: { code: 'invalid', message: 'missing_vod_url' } });
+        }
+        let u: URL;
+        try {
+          u = new URL(vodUrl);
+        } catch {
+          return reply.code(400).send({ error: { code: 'invalid', message: 'invalid_vod_url' } });
+        }
+        if (!['http:', 'https:'].includes(u.protocol)) {
+          return reply.code(400).send({ error: { code: 'invalid', message: 'invalid_vod_url_protocol' } });
+        }
+        const vodOrigin = normalizeOrigin(u.origin);
+        if (!effectiveAllowedOriginsSet.has(vodOrigin)) {
+          return reply.code(400).send({ error: { code: 'invalid', message: 'vod_url_origin_not_allowed' } });
+        }
+        // Policy: for curated (platform-supported) third-party origins, only allow direct MP4 URLs.
+        // This makes Clips reliable without credentials/DRM/HLS playlists.
+        if (publicOriginSet.has(vodOrigin) && !u.pathname.toLowerCase().endsWith('.mp4')) {
+          return reply.code(400).send({ error: { code: 'invalid', message: 'vod_url_must_be_direct_mp4_for_supported_origins' } });
+        }
+      }
+
+      if (type === 'marketplace_drops') {
+        const tdAny: any = taskDescriptor as any;
+        const inputSpec: any = tdAny.input_spec ?? {};
+        const query = typeof inputSpec.query === 'string' ? inputSpec.query.trim() : '';
+        const explicitUrl = typeof inputSpec.url === 'string' ? inputSpec.url.trim() : '';
+        const sitesRaw = inputSpec.sites;
+        const sitesList: string[] = Array.isArray(sitesRaw)
+          ? sitesRaw.map((s: any) => String(s ?? '').trim()).filter(Boolean)
+          : typeof sitesRaw === 'string'
+            ? sitesRaw.split(/\r?\n/).map((s) => s.trim()).filter(Boolean)
+            : [];
+        let startUrl = explicitUrl || sitesList[0] || '';
+
+        // If no URL is provided, generate one from the marketplace templates using the query.
+        if (!startUrl && query) {
+          const preferOrigin = 'https://www.ebay.com';
+          const tPreferred = await db
+            .selectFrom('marketplace_origin_templates')
+            .select(['origin', 'enabled', 'search_url_template'])
+            .where('origin', '=', normalizeOrigin(preferOrigin))
+            .where('enabled', '=', true)
+            .executeTakeFirst();
+          const tFallback = !tPreferred
+            ? await db
+                .selectFrom('marketplace_origin_templates')
+                .select(['origin', 'enabled', 'search_url_template'])
+                .where('enabled', '=', true)
+                .orderBy('origin', 'asc')
+                .executeTakeFirst()
+            : null;
+
+          const tpl = String((tPreferred ?? tFallback)?.search_url_template ?? '').trim();
+          if (tpl) {
+            startUrl = tpl.replaceAll('{query}', encodeURIComponent(query));
+            tdAny.input_spec = { ...inputSpec, url: startUrl };
+            taskDescriptor = tdAny;
+          }
+        }
+
+        if (startUrl) {
+          let u: URL;
+          try {
+            u = new URL(startUrl);
+          } catch {
+            return reply.code(400).send({ error: { code: 'invalid', message: 'invalid_marketplace_start_url' } });
+          }
+          const startOrigin = normalizeOrigin(u.origin);
+          if (!effectiveAllowedOriginsSet.has(startOrigin)) {
+            return reply.code(400).send({ error: { code: 'invalid', message: 'marketplace_start_url_origin_not_allowed' } });
+          }
+
+          const siteProfile: any = (tdAny.site_profile ?? {}) as any;
+          const selectorsProvided = Boolean(siteProfile?.selectors || siteProfile?.price_selector || siteProfile?.stock_selector || siteProfile?.title_selector);
+
+          if (!selectorsProvided) {
+            const tmpl = await db
+              .selectFrom('marketplace_origin_templates')
+              .select(['selectors_json', 'wait_selector', 'enabled'])
+              .where('origin', '=', startOrigin)
+              .where('enabled', '=', true)
+              .executeTakeFirst();
+            const selectors = (tmpl as any)?.selectors_json ?? null;
+            const waitSelector = typeof (tmpl as any)?.wait_selector === 'string' ? String((tmpl as any).wait_selector) : '';
+            const hasSelectors = selectors && typeof selectors === 'object' && Object.keys(selectors).length > 0;
+
+            // "Definitely works" contract for curated origins: if the platform claims to support an origin,
+            // we must have a template unless the buyer provided explicit selectors.
+            if (publicOriginSet.has(startOrigin) && !hasSelectors) {
+              return reply.code(400).send({ error: { code: 'invalid', message: 'missing_marketplace_template_for_supported_origin' } });
+            }
+
+            if (hasSelectors) {
+              tdAny.site_profile = {
+                ...siteProfile,
+                selectors,
+                ...(waitSelector ? { marketplace_wait_selector: waitSelector } : {}),
+              };
+              taskDescriptor = tdAny;
+            }
+          }
+        }
+      }
     }
 
     // Defense-in-depth: block global disallowed domains even if an origin was previously verified.
@@ -3253,6 +3731,48 @@ export function buildServer(opts: { taskDescriptorBrowserFlowValidationGate?: bo
         metadata: { status: body.status },
       });
       return { app: updated };
+    }
+  );
+
+  // Supported origin requests (admin): review and approve/reject buyer requests.
+  app.get('/api/admin/origin-requests', { preHandler: (app as any).authenticateAdmin }, async (request: any) => {
+    const q = (request.query ?? {}) as any;
+    const status = typeof q.status === 'string' && ['pending', 'approved', 'rejected'].includes(q.status) ? (q.status as any) : undefined;
+    const appId = typeof q.appId === 'string' ? q.appId : typeof q.app_id === 'string' ? q.app_id : undefined;
+    const limit = Math.max(1, Math.min(500, Number(q.limit ?? 200)));
+    return { requests: await listAppOriginRequestsAdmin({ status, appId, limit }) };
+  });
+
+  app.post(
+    '/api/admin/origin-requests/:requestId/review',
+    { preHandler: (app as any).authenticateAdmin, schema: { body: adminOriginRequestReviewSchema } },
+    async (request: any, reply) => {
+      const requestId = String(request.params.requestId ?? '').trim();
+      if (!requestId) return reply.code(400).send({ error: { code: 'invalid', message: 'requestId required' } });
+      const body = request.body as any;
+      const action = String(body.action ?? '').trim();
+      if (!['approve', 'reject'].includes(action)) {
+        return reply.code(400).send({ error: { code: 'invalid', message: 'invalid action' } });
+      }
+      try {
+        const reviewed = await reviewAppOriginRequestAdmin(requestId, action as any, {
+          reviewedBy: 'admin_token',
+          reviewNotes: body.notes ?? null,
+        });
+        await writeAuditEvent({
+          actorType: 'admin_token',
+          actorId: null,
+          action: 'app.origin_request.review',
+          targetType: 'app_origin_request',
+          targetId: requestId,
+          metadata: { action, appId: reviewed.appId, origin: reviewed.origin },
+        });
+        return { request: reviewed };
+      } catch (err: any) {
+        const msg = String(err?.message ?? err);
+        const code = msg === 'not_found' ? 404 : 400;
+        return reply.code(code).send({ error: { code: 'invalid', message: msg } });
+      }
     }
   );
 

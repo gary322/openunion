@@ -286,6 +286,16 @@ export const adminAppStatusSchema = z.object({
   status: z.enum(['active', 'disabled']),
 });
 
+export const appOriginRequestCreateSchema = z.object({
+  origin: z.string().min(1).max(300),
+  message: z.string().max(2000).optional().nullable(),
+});
+
+export const adminOriginRequestReviewSchema = z.object({
+  action: z.enum(['approve', 'reject']),
+  notes: z.string().max(5000).optional().nullable(),
+});
+
 export const adminPayoutMarkSchema = z.object({
   status: z.enum(['paid', 'failed', 'refunded']),
   provider: z.string().max(120).optional().nullable(),

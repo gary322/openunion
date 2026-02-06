@@ -68,6 +68,20 @@ function normalizeLines(raw) {
     .filter(Boolean);
 }
 
+function normalizeOriginClient(raw) {
+  const s = String(raw ?? '').trim();
+  if (!s) return '';
+  let u;
+  try {
+    u = new URL(s);
+  } catch {
+    return '';
+  }
+  if (!['http:', 'https:'].includes(String(u.protocol))) return '';
+  if (u.username || u.password) return '';
+  return `${u.protocol}//${u.host}`;
+}
+
 function validateDescriptorShallow(schema, desc) {
   const errs = [];
   if (!desc || typeof desc !== 'object') return ['descriptor must be an object'];
@@ -183,6 +197,20 @@ export async function initAppPage(cfg) {
   const uiSchema = cfg?.uiSchema || {};
   const defaultDescriptor = cfg?.defaultDescriptor || cfg?.default_descriptor || null;
   const appSlug = String(cfg?.slug || '').trim();
+  const publicAllowedOriginsRaw = Array.isArray(cfg?.publicAllowedOrigins)
+    ? cfg.publicAllowedOrigins
+    : Array.isArray(cfg?.public_allowed_origins)
+      ? cfg.public_allowed_origins
+      : [];
+  const publicAllowedOrigins = Array.from(
+    new Set(publicAllowedOriginsRaw.map((o) => normalizeOriginClient(o)).filter(Boolean))
+  ).sort();
+  const publicAllowedOriginsSet = new Set(publicAllowedOrigins);
+  const preferredMarketplaceOrigin =
+    publicAllowedOrigins.find((o) => o.includes('ebay.com')) ||
+    publicAllowedOrigins.find((o) => o.includes('store.steampowered.com')) ||
+    publicAllowedOrigins[0] ||
+    '';
 
   function appStorageKey(suffix) {
     const raw = String(appSlug || taskType || appName || 'app')
@@ -211,6 +239,7 @@ export async function initAppPage(cfg) {
   // Session connect: app pages can also use the buyer cookie session (no token copy/paste).
   // We keep token mode as the programmatic/advanced option.
   let sessionOk = false;
+  let sessionEmail = '';
   let sessionProbeReqNo = 0;
 
   function csrfToken() {
@@ -219,16 +248,25 @@ export async function initAppPage(cfg) {
 
   async function probeSession() {
     const myReq = ++sessionProbeReqNo;
-    // If we don't have a CSRF token saved, assume no session UX is intended.
-    // (GETs would work without it, but unsafe calls would fail.)
-    if (!csrfToken()) {
+    try {
+      const res = await fetchJson(`${apiBase()}/api/auth/session`, { method: 'GET', credentials: 'include' });
+      if (myReq !== sessionProbeReqNo) return sessionOk;
+      if (!res.ok) {
+        sessionOk = false;
+        sessionEmail = '';
+        return false;
+      }
+      const csrf = String(res.json?.csrfToken ?? '').trim();
+      if (csrf) storageSet(LS.csrfToken, csrf);
+      sessionOk = true;
+      sessionEmail = String(res.json?.email ?? '').trim();
+      return true;
+    } catch {
+      if (myReq !== sessionProbeReqNo) return sessionOk;
       sessionOk = false;
+      sessionEmail = '';
       return false;
     }
-    const res = await buyerApi('/api/org/platform-fee', { method: 'GET' });
-    if (myReq !== sessionProbeReqNo) return sessionOk;
-    sessionOk = Boolean(res.ok);
-    return sessionOk;
   }
 
   function setLoginStatus(text, kind = '') {
@@ -267,7 +305,7 @@ export async function initAppPage(cfg) {
     if (monitorActions) monitorActions.hidden = !connected;
     if (connectedTokenPrefix) {
       if (t) connectedTokenPrefix.textContent = `${t.slice(0, 10)}…`;
-      else connectedTokenPrefix.textContent = 'session';
+      else connectedTokenPrefix.textContent = sessionEmail ? `${sessionEmail}` : 'session';
     }
   }
 
@@ -292,6 +330,7 @@ export async function initAppPage(cfg) {
     storageSet(LS.buyerToken, '');
     storageSet(LS.csrfToken, '');
     sessionOk = false;
+    sessionEmail = '';
     if (tokenInput) tokenInput.value = '';
     setLoginStatus('');
     toast('Disconnected');
@@ -317,6 +356,7 @@ export async function initAppPage(cfg) {
     }
     if (res.json?.csrfToken) storageSet(LS.csrfToken, String(res.json.csrfToken));
     sessionOk = true;
+    sessionEmail = email;
     toast('Signed in', 'good');
     renderConnectState();
     setStatus('createStatus', 'Loading verified origins…');
@@ -354,6 +394,8 @@ export async function initAppPage(cfg) {
   const fieldEls = new Map();
   const touchedKeys = new Set();
   let verifiedOriginsCount = 0;
+  let availableOriginsCount = 0;
+  let originTouched = false;
   let platformFeeBps = 0;
   let templateAutoApplied = false;
 
@@ -804,6 +846,37 @@ export async function initAppPage(cfg) {
     };
   }
 
+  function inferOriginCandidateFromDescriptor(descriptor) {
+    const d = descriptor ?? {};
+    const inputSpec = d?.input_spec ?? {};
+
+    const vodUrl = typeof inputSpec?.vod_url === 'string' ? inputSpec.vod_url.trim() : '';
+    if (vodUrl) {
+      const o = normalizeOriginClient(vodUrl);
+      if (o) return o;
+    }
+
+    const explicitUrl = typeof inputSpec?.url === 'string' ? inputSpec.url.trim() : '';
+    if (explicitUrl) {
+      const o = normalizeOriginClient(explicitUrl);
+      if (o) return o;
+    }
+
+    const sites = inputSpec?.sites;
+    const firstSite = Array.isArray(sites) ? String(sites[0] ?? '').trim() : typeof sites === 'string' ? normalizeLines(sites)[0] ?? '' : '';
+    if (firstSite) {
+      const o = normalizeOriginClient(firstSite);
+      if (o) return o;
+    }
+
+    // Low-effort default for marketplace: if they provide a query, we default to a curated origin
+    // (the server will also generate a search URL if none is provided).
+    const query = typeof inputSpec?.query === 'string' ? inputSpec.query.trim() : '';
+    if (taskType === 'marketplace_drops' && query && preferredMarketplaceOrigin) return preferredMarketplaceOrigin;
+
+    return '';
+  }
+
   function refreshPreview() {
     const d = buildDescriptorFromForm();
     const p = buildBountyPayload(d);
@@ -813,9 +886,19 @@ export async function initAppPage(cfg) {
 
     const missing = validateRequiredFields(d);
     const auth = effectiveBuyerAuth();
-    const origin = String(originSelect?.value ?? '').trim();
+    let origin = String(originSelect?.value ?? '').trim();
+    const inferredOrigin = inferOriginCandidateFromDescriptor(d);
+    if (!originTouched && !origin && inferredOrigin && originSelect) {
+      const exists = Array.from(originSelect.options || []).some((o) => String(o?.value ?? '') === inferredOrigin);
+      if (exists) {
+        originSelect.value = inferredOrigin;
+        origin = inferredOrigin;
+        storageSet(appStorageKey('origin'), inferredOrigin);
+      }
+    }
     const descErrs = validateDescriptorShallow(schema, d);
-    const ready = auth.mode !== 'none' && Boolean(origin) && missing.length === 0 && descErrs.length === 0;
+    const hasSupportedOrigins = publicAllowedOrigins.length > 0;
+    const ready = auth.mode !== 'none' && (Boolean(origin) || hasSupportedOrigins) && missing.length === 0 && descErrs.length === 0;
 
     if (btnCreateDraft) btnCreateDraft.disabled = !ready;
     if (btnCreatePublish) btnCreatePublish.disabled = !ready;
@@ -823,10 +906,10 @@ export async function initAppPage(cfg) {
     let msg = '';
     let kind = '';
     if (auth.mode === 'none') {
-      msg = 'Next: sign in or paste an API token to load verified origins.';
-    } else if (verifiedOriginsCount <= 0) {
-      msg = 'Next: verify an origin in the Platform console, then click Refresh origins.';
-    } else if (!origin) {
+      msg = 'Next: sign in (recommended) or paste an API token.';
+    } else if (!origin && !hasSupportedOrigins && verifiedOriginsCount <= 0) {
+      msg = 'Next: verify an origin in the Platform console.';
+    } else if (!origin && !hasSupportedOrigins && verifiedOriginsCount > 0) {
       msg = 'Next: pick an allowed origin (verified).';
     } else if (missing.length) {
       msg = `Missing required: ${missing.map((m) => m.label || m.key).filter(Boolean).join(', ')}`;
@@ -835,7 +918,7 @@ export async function initAppPage(cfg) {
       msg = `Descriptor invalid: ${descErrs.join('; ')}`;
       kind = 'bad';
     } else {
-      msg = 'Ready. Create a draft, or Create + publish.';
+      msg = 'Ready. Create and publish.';
       kind = 'good';
     }
     setStatus('preflightStatus', msg, kind);
@@ -861,7 +944,7 @@ export async function initAppPage(cfg) {
     }
     if (actionbarSub) {
       if (kind === 'good') {
-        const originHost = origin ? String(origin).replace(/^https?:\/\//, '') : '—';
+        const originHost = origin ? String(origin).replace(/^https?:\/\//, '') : hasSupportedOrigins ? 'supported origins' : '—';
         actionbarSub.textContent = `Origin: ${originHost} • Net to worker ${formatCents(workerNetCents)} (platform ${platformFeeBps}bps then Proofwork 1%)`;
       } else {
         actionbarSub.textContent = msg;
@@ -891,31 +974,40 @@ export async function initAppPage(cfg) {
     const auth = effectiveBuyerAuth();
     if (auth.mode === 'none') {
       verifiedOriginsCount = 0;
-      originSelect.replaceChildren(el('option', { value: '' }, ['— connect to load origins —']));
+      availableOriginsCount = 0;
+      originSelect.replaceChildren(el('option', { value: '' }, ['— connect to publish —']));
       refreshPreview();
       return;
     }
     refreshPlatformFee().catch(() => {});
     const res = await buyerApi('/api/origins', { token: auth.token, csrf: auth.csrf });
     if (myReq !== originsReqNo) return; // stale response; user changed token and reloaded.
-    if (!res.ok) {
-      verifiedOriginsCount = 0;
-      originSelect.replaceChildren(el('option', { value: '' }, [`Failed (${res.status})`]));
-      toast('Failed to load origins', 'bad');
-      refreshPreview();
-      return;
-    }
-    const origins = Array.isArray(res.json?.origins) ? res.json.origins : [];
-    const verified = origins.filter((o) => String(o.status) === 'verified');
+    const origins = res.ok && Array.isArray(res.json?.origins) ? res.json.origins : [];
+    const verified = origins
+      .filter((o) => String(o.status) === 'verified')
+      .map((o) => String(o.origin || '').trim())
+      .filter(Boolean);
     verifiedOriginsCount = verified.length;
+
+    // Supported (system) origins do not require per-org verification. Merge with verified origins.
+    const union = Array.from(new Set([...publicAllowedOrigins, ...verified])).filter(Boolean).sort();
+    availableOriginsCount = union.length;
+
     // Preserve a user-selected origin if they interact while a refresh is in-flight.
     const preserve = String(originSelect.value || '').trim();
     const saved = String(storageGet(appStorageKey('origin'), '') || '').trim();
-    originSelect.replaceChildren(el('option', { value: '' }, ['— select —']), ...verified.map((o) => el('option', { value: String(o.origin) }, [String(o.origin)])));
+
+    originSelect.replaceChildren(el('option', { value: '' }, ['— auto —']), ...union.map((o) => el('option', { value: String(o) }, [String(o)])));
+
     let chosen = '';
-    if (preserve && verified.some((o) => String(o.origin) === preserve)) chosen = preserve;
-    else if (saved && verified.some((o) => String(o.origin) === saved)) chosen = saved;
-    else if (verified.length === 1) chosen = String(verified[0].origin);
+    if (preserve && union.includes(preserve)) chosen = preserve;
+    else if (saved && union.includes(saved)) chosen = saved;
+    else if (!originTouched) {
+      const inferred = inferOriginCandidateFromDescriptor(buildDescriptorFromForm());
+      if (inferred && union.includes(inferred)) chosen = inferred;
+      else if (union.length === 1) chosen = union[0];
+    }
+
     if (chosen) {
       originSelect.value = chosen;
       storageSet(appStorageKey('origin'), chosen);
@@ -923,17 +1015,21 @@ export async function initAppPage(cfg) {
       originSelect.value = '';
     }
 
-    const single = verified.length === 1 && Boolean(chosen);
+    const single = union.length === 1 && Boolean(chosen);
     if (originSelectWrap) originSelectWrap.hidden = single;
     if (originSingle) originSingle.hidden = !single;
     if (originSingleText) originSingleText.textContent = single ? chosen.replace(/^https?:\/\//, '') : '—';
-    toast(`Loaded ${verified.length} verified origin(s)`, verified.length ? 'good' : '');
+
+    if (!res.ok && !publicAllowedOrigins.length) {
+      toast('Failed to load origins', 'bad');
+    }
     refreshPreview();
   }
 
   btnRefreshOrigins?.addEventListener('click', refreshOrigins);
   originSelect?.addEventListener('change', () => {
     const v = String(originSelect?.value ?? '').trim();
+    originTouched = true;
     if (v) storageSet(appStorageKey('origin'), v);
     refreshPreview();
   });
@@ -957,7 +1053,9 @@ export async function initAppPage(cfg) {
     if (auth.mode === 'none') return setStatus('createStatus', 'Connect first (sign in or token)', 'bad');
 
     const payload = buildBountyPayload(descriptor);
-    if (!payload.allowedOrigins.length) return setStatus('createStatus', 'Pick a verified origin (or verify one first)', 'bad');
+    if (!payload.allowedOrigins.length && publicAllowedOrigins.length <= 0) {
+      return setStatus('createStatus', 'Pick a verified origin (or verify one first)', 'bad');
+    }
 
     setStatus('createStatus', `Creating… (descriptor ${bytesOf(descriptor)} B)`);
     const res = await buyerApi('/api/bounties', { method: 'POST', token: auth.token, csrf: auth.csrf, body: payload });

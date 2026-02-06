@@ -561,7 +561,7 @@ describe('Buyer bounty lifecycle', () => {
     const descriptor = {
       type: 'clips_highlights',
       capability_tags: ['ffmpeg', 'llm_summarize'],
-      input_spec: { vod_url: 'https://vod.example/test' },
+      input_spec: { vod_url: 'https://example.com/test.mp4' },
       output_spec: { mp4: true },
       freshness_sla_sec: 3600,
     };

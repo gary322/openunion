@@ -373,6 +373,38 @@
                 </div>
               </div>
 
+              <div class="pw-grid">
+                <div class="pw-card soft pw-span-all" id="originGuide">
+                  <div class="pw-card-title">
+                    <h3>Verification instructions</h3>
+                    <span class="pw-kicker" id="originGuideKicker">Add an origin to see the exact steps</span>
+                  </div>
+                  <div id="originGuideBody" class="pw-stack"></div>
+                </div>
+
+                <div class="pw-card soft pw-span-all">
+                  <div class="pw-card-title">
+                    <h3>Origins</h3>
+                    <span class="pw-kicker">Verified origins can publish bounties</span>
+                  </div>
+                  <div class="pw-scroll">
+                    <table class="pw-table" aria-label="Origins list">
+                      <thead>
+                        <tr>
+                          <th>Status</th>
+                          <th>Origin</th>
+                          <th>Method</th>
+                          <th>Verified</th>
+                          <th>Failure</th>
+                          <th>Action</th>
+                        </tr>
+                      </thead>
+                      <tbody id="originsTbody"></tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+
               <div id="originStatus" class="pw-status" role="status"></div>
               <details class="pw-details pw-dev">
                 <summary>Developer response</summary>
