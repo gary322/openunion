@@ -64,6 +64,9 @@ API_SERVICE="${API_SERVICE:-${PREFIX}-api}"
 VERIFIER_SERVICE="${VERIFIER_SERVICE:-${PREFIX}-verifier-gateway}"
 MIGRATE_TASK_FAMILY="${MIGRATE_TASK_FAMILY:-${PREFIX}-migrate}"
 WORKER_SERVICES="${WORKER_SERVICES:-${PREFIX}-outbox,${PREFIX}-verification,${PREFIX}-payout,${PREFIX}-scanner,${PREFIX}-retention,${PREFIX}-alarm_inbox}"
+# Some services are optional and may be disabled by Terraform in certain environments
+# (for example, alarm_inbox is only enabled when real alerting is configured).
+OPTIONAL_SERVICES="${OPTIONAL_SERVICES:-${PREFIX}-alarm_inbox}"
 
 SKIP_MIGRATIONS="${SKIP_MIGRATIONS:-false}"
 CLAMAV_IMAGE="${CLAMAV_IMAGE:-clamav/clamav-debian:latest}"
@@ -71,6 +74,23 @@ CLAMAV_IMAGE="${CLAMAV_IMAGE:-clamav/clamav-debian:latest}"
 log() {
   echo "[deploy] $*"
 }
+
+is_optional_service() {
+  local svc="$1"
+  local csv="$2"
+  local IFS=','
+  read -r -a items <<<"$csv"
+  for it in "${items[@]}"; do
+    it="$(echo "$it" | xargs)"
+    [[ -z "$it" ]] && continue
+    if [[ "$it" == "$svc" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+WAIT_SERVICES=()
 
 render_new_taskdef() {
   local task_def_arn="$1"
@@ -94,10 +114,22 @@ deploy_service() {
   local image_uri="$2"
 
   log "service=$service: resolving current task definition..."
+  local svc_json
+  svc_json="$(aws ecs describe-services --cluster "$CLUSTER" --services "$service" --query 'services[0]' --output json)"
+
+  local svc_status
+  svc_status="$(jq -r '.status // ""' <<<"$svc_json")"
   local current_td
-  current_td="$(aws ecs describe-services --cluster "$CLUSTER" --services "$service" --query 'services[0].taskDefinition' --output text)"
-  if [[ -z "$current_td" || "$current_td" == "None" ]]; then
-    echo "[deploy] failed to resolve current task definition for service=$service" >&2
+  current_td="$(jq -r '.taskDefinition // ""' <<<"$svc_json")"
+
+  # If Terraform disables a worker service, AWS keeps the name but the service can become INACTIVE.
+  # Treat optional services as best-effort so production deploys don't fail on disabled components.
+  if [[ "$svc_status" != "ACTIVE" || -z "$current_td" || "$current_td" == "None" || "$current_td" == "null" ]]; then
+    if is_optional_service "$service" "$OPTIONAL_SERVICES"; then
+      log "service=$service: status=$svc_status; skipping (optional)"
+      return 0
+    fi
+    echo "[deploy] service=$service not ACTIVE or missing task definition (status=$svc_status taskDef=$current_td)" >&2
     exit 1
   fi
 
@@ -150,6 +182,8 @@ deploy_service() {
 
   log "service=$service: updating ECS service to taskDefinition=$new_td_arn"
   aws ecs update-service --cluster "$CLUSTER" --service "$service" --task-definition "$new_td_arn" >/dev/null
+
+  WAIT_SERVICES+=("$service")
 }
 
 run_migrations() {
@@ -234,13 +268,11 @@ main() {
   deploy_service "$VERIFIER_SERVICE" "$VERIFIER_IMAGE_URI"
 
   log "waiting for services to become stable..."
-  local all_services=("$API_SERVICE" "$VERIFIER_SERVICE")
-  for svc in "${workers[@]}"; do
-    svc="$(echo "$svc" | xargs)"
-    [[ -z "$svc" ]] && continue
-    all_services+=("$svc")
-  done
-  aws ecs wait services-stable --cluster "$CLUSTER" --services "${all_services[@]}"
+  if [[ "${#WAIT_SERVICES[@]}" -eq 0 ]]; then
+    echo "[deploy] no ACTIVE services were updated; refusing to call services-stable" >&2
+    exit 1
+  fi
+  aws ecs wait services-stable --cluster "$CLUSTER" --services "${WAIT_SERVICES[@]}"
 
   log "deploy OK"
 }
