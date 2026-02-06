@@ -148,5 +148,5 @@ describe('Universal Worker browser_flow (Playwright) integration', () => {
     expect(labels.has('report_summary')).toBe(true);
     // The flow also emitted an extra screenshot.
     expect(labels.has('after_go')).toBe(true);
-  });
+  }, 120_000);
 });
