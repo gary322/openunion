@@ -24,107 +24,353 @@
     </header>
 
     <main class="pw-container">
-      <section class="pw-hero">
+      <section class="pw-hero" id="home">
         <h1>Platform onboarding</h1>
-        <p>Attach your platform, publish your first app, and get paid - with the least possible effort.</p>
+        <p>Attach your platform, publish an app, and create your first bounty without reading docs.</p>
         <div class="pw-hero-actions">
-          <div class="pw-badge">
-            Full docs: <a href="/docs/view.html?path=runbooks/ThirdPartyOnboarding.md" target="_blank" rel="noreferrer">ThirdPartyOnboarding</a>
-          </div>
+          <div class="pw-badge" id="wizTopStatus">Checking status…</div>
           <div class="pw-actions">
-            <a class="pw-btn" href="/buyer/index.html">Open Buyer Portal</a>
+            <a class="pw-btn" href="/buyer/">Open full console</a>
             <a class="pw-btn primary" href="/apps/">Browse apps</a>
           </div>
         </div>
       </section>
 
-      <div class="pw-card">
-        <div class="pw-card-title">
-          <h2>Guided checklist</h2>
-          <span class="pw-kicker">5-10 minutes</span>
-        </div>
+      <div class="pw-console pw-wizard">
+        <aside class="pw-sidebar" aria-label="Onboarding steps">
+          <nav class="pw-sidenav">
+            <div class="pw-sidenav-title">Onboarding</div>
+            <a href="#connect" id="navConnect" aria-current="page">Connect <span class="pw-sidenav-badge" id="badgeConnect">1</span></a>
+            <a href="#origin" id="navOrigin">Verify origin <span class="pw-sidenav-badge" id="badgeOrigin">-</span></a>
+            <a href="#cors" id="navCors">CORS allowlist <span class="pw-sidenav-badge" id="badgeCors">Optional</span></a>
+            <a href="#fees" id="navFees">Fees <span class="pw-sidenav-badge" id="badgeFees">-</span></a>
+            <a href="#app" id="navApp">Create app <span class="pw-sidenav-badge" id="badgeApp">-</span></a>
+            <a href="#publish" id="navPublish">Publish work <span class="pw-sidenav-badge" id="badgePublish">-</span></a>
+          </nav>
 
-        <div class="pw-stepper">
-          <div class="pw-step">
-            <div class="pw-step-dot">1</div>
-            <div>
-              <div class="pw-step-title">Create org + get a token</div>
-              <div class="pw-step-desc">Register your platform (recommended) or sign in with demo credentials.</div>
-            </div>
-            <a class="pw-btn" href="/buyer/#integrations">Start</a>
+          <div class="pw-card soft pw-mt-6">
+            <div class="pw-kicker">Rule of thumb</div>
+            <div class="pw-muted">Only do the required steps. Everything else is automated.</div>
           </div>
-          <div class="pw-step">
-            <div class="pw-step-dot">2</div>
-            <div>
-              <div class="pw-step-title">Verify your domain</div>
-              <div class="pw-step-desc">Required to publish bounties. We give you DNS, HTTP-file, and header options with copy buttons.</div>
-            </div>
-            <a class="pw-btn" href="/buyer/#integrations">Verify</a>
-          </div>
-          <div class="pw-step">
-            <div class="pw-step-dot">3</div>
-            <div>
-              <div class="pw-step-title">Set your platform cut</div>
-              <div class="pw-step-desc">Pick your fee percentage and wallet. Proofwork always takes 1% from the worker portion.</div>
-            </div>
-            <a class="pw-btn" href="/buyer/#settings">Set fees</a>
-          </div>
-          <div class="pw-step">
-            <div class="pw-step-dot">4</div>
-            <div>
-              <div class="pw-step-title">Allow your web UI (optional)</div>
-              <div class="pw-step-desc">If your platform UI calls Proofwork from the browser, add a per-org CORS allowlist.</div>
-            </div>
-            <a class="pw-btn" href="/buyer/#integrations">Set CORS</a>
-          </div>
-          <div class="pw-step">
-            <div class="pw-step-dot">5</div>
-            <div>
-              <div class="pw-step-title">Register your app</div>
-              <div class="pw-step-desc">Apps are published instantly (no approval). Each app defines the friendly form for task creation.</div>
-            </div>
-            <a class="pw-btn" href="/buyer/#apps">Create app</a>
-          </div>
-          <div class="pw-step">
-            <div class="pw-step-dot">6</div>
-            <div>
-              <div class="pw-step-title">Publish work</div>
-              <div class="pw-step-desc">Pick an app in the catalog, create a bounty draft, and publish with one click.</div>
-            </div>
-            <a class="pw-btn primary" href="/apps/">Publish</a>
-          </div>
-          <div class="pw-step">
-            <div class="pw-step-dot">7</div>
-            <div>
-              <div class="pw-step-title">Monitor + get paid</div>
-              <div class="pw-step-desc">Watch jobs, submissions, disputes, and payouts. Default disputes posture: 1-day hold.</div>
-            </div>
-            <a class="pw-btn" href="/buyer/#money">View money</a>
-          </div>
-        </div>
+        </aside>
 
-        <div class="pw-actions">
-          <a class="pw-btn" href="/worker/index.html">Worker portal</a>
-          <a class="pw-btn" href="/admin/index.html">Admin console</a>
-          <a class="pw-btn" href="/apps/">Apps marketplace</a>
-        </div>
+        <section class="pw-stack" aria-label="Onboarding content">
+          <section class="pw-card pw-wizard-step" id="stepConnect" data-step="connect">
+            <div class="pw-card-title">
+              <h2>Connect</h2>
+              <span class="pw-kicker">Required</span>
+            </div>
+            <p class="pw-muted">Sign in (recommended) or create a new platform org. We use a cookie session for safety and CSRF protection.</p>
 
-        <details class="pw-details pw-dev">
-          <summary>Developer reference: API endpoints</summary>
-          <div class="pw-details-body">
-            <ol class="pw-muted">
-              <li>Create org + first API key: <code>POST /api/org/register</code></li>
-              <li>Verify domain: <code>POST /api/origins</code> then <code>POST /api/origins/:id/check</code></li>
-              <li>Per-org CORS allowlist: <code>PUT /api/org/cors-allow-origins</code></li>
-              <li>Platform fee + wallet: <code>PUT /api/org/platform-fee</code></li>
-              <li>Register app type: <code>POST /api/org/apps</code></li>
-              <li>Create + publish: <code>POST /api/bounties</code>, <code>POST /api/bounties/:id/publish</code></li>
-              <li>Disputes posture: 1-day hold. After hold, auto-refund runs as <code>refund = gross - Proofwork fee</code>.</li>
-            </ol>
-          </div>
-        </details>
+            <div class="pw-row" id="connectConnectedRow" hidden>
+              <div class="pw-field">
+                <div class="pw-badge">
+                  Connected as <span class="pw-mono" id="connectEmail">buyer</span>
+                  <span class="pw-muted">• session active</span>
+                </div>
+              </div>
+              <div class="pw-field">
+                <label>&nbsp;</label>
+                <div class="pw-actions">
+                  <button class="pw-btn danger" id="btnLogout" type="button">Disconnect</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="pw-tabs" role="tablist" aria-label="Connect options" id="connectTabs">
+              <button class="pw-tab active" id="tabSignIn" type="button" role="tab" aria-selected="true" aria-controls="panelSignIn">Sign in</button>
+              <button class="pw-tab" id="tabRegister" type="button" role="tab" aria-selected="false" aria-controls="panelRegister">Create org</button>
+            </div>
+
+            <div class="pw-tabpanels">
+              <div class="pw-tabpanel" id="panelSignIn" role="tabpanel" aria-labelledby="tabSignIn">
+                <div class="pw-row">
+                  <div class="pw-field">
+                    <label for="loginEmail">Email</label>
+                    <input class="pw-input" id="loginEmail" autocomplete="email" placeholder="buyer@company.com" />
+                  </div>
+                  <div class="pw-field">
+                    <label for="loginPassword">Password</label>
+                    <input class="pw-input" id="loginPassword" type="password" autocomplete="current-password" placeholder="password" />
+                  </div>
+                </div>
+                <div class="pw-actions">
+                  <button class="pw-btn primary" id="btnLogin" type="button">Sign in</button>
+                </div>
+                <div id="loginStatus" class="pw-status" role="status"></div>
+              </div>
+
+              <div class="pw-tabpanel" id="panelRegister" role="tabpanel" aria-labelledby="tabRegister" hidden>
+                <div class="pw-row">
+                  <div class="pw-field">
+                    <label for="regOrgName">Org name</label>
+                    <input class="pw-input" id="regOrgName" placeholder="My Platform" />
+                  </div>
+                  <div class="pw-field">
+                    <label for="regApiKeyName">API key name</label>
+                    <input class="pw-input" id="regApiKeyName" value="default" />
+                  </div>
+                </div>
+                <div class="pw-row">
+                  <div class="pw-field">
+                    <label for="regEmail">Email</label>
+                    <input class="pw-input" id="regEmail" autocomplete="email" placeholder="you@company.com" />
+                  </div>
+                  <div class="pw-field">
+                    <label for="regPassword">Password</label>
+                    <input class="pw-input" id="regPassword" type="password" autocomplete="new-password" placeholder="min 8 chars" />
+                  </div>
+                </div>
+                <div class="pw-actions">
+                  <button class="pw-btn primary" id="btnRegister" type="button">Create org</button>
+                </div>
+                <div id="regStatus" class="pw-status" role="status"></div>
+
+                <details class="pw-details pw-dev">
+                  <summary>Developer response</summary>
+                  <div class="pw-details-body">
+                    <pre class="pw-codeblock" id="regOut">{}</pre>
+                  </div>
+                </details>
+              </div>
+            </div>
+
+            <details class="pw-details" id="tokenTools" hidden>
+              <summary>Advanced: API token (for server-to-server integrations)</summary>
+              <div class="pw-details-body">
+                <div class="pw-row">
+                  <div class="pw-field">
+                    <label for="keyName">API key name</label>
+                    <input class="pw-input" id="keyName" value="portal" />
+                  </div>
+                  <div class="pw-field">
+                    <label>&nbsp;</label>
+                    <button class="pw-btn primary" id="btnCreateKey" type="button">Create API token</button>
+                  </div>
+                </div>
+                <div class="pw-field">
+                  <label for="buyerToken">Buyer token</label>
+                  <input class="pw-input" id="buyerToken" placeholder="pw_bu_…" />
+                </div>
+                <div class="pw-actions">
+                  <button class="pw-btn" id="btnCopyBuyerToken" type="button">Copy token</button>
+                </div>
+                <div id="keyStatus" class="pw-status" role="status"></div>
+              </div>
+            </details>
+          </section>
+
+          <section class="pw-card pw-wizard-step" id="stepOrigin" data-step="origin" hidden>
+            <div class="pw-card-title">
+              <h2>Verify your origin</h2>
+              <span class="pw-kicker">Required</span>
+            </div>
+            <p class="pw-muted">Proofwork only allows publishing bounties from verified origins. Pick the method that is easiest for you.</p>
+
+            <div class="pw-row">
+              <div class="pw-field">
+                <label for="originUrl">Origin URL</label>
+                <input class="pw-input" id="originUrl" placeholder="https://app.yourdomain.com" />
+              </div>
+              <div class="pw-field">
+                <label for="originMethod">Method</label>
+                <select class="pw-select" id="originMethod">
+                  <option value="dns_txt" selected>DNS TXT</option>
+                  <option value="http_file">HTTP file</option>
+                  <option value="header">Header</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="pw-actions">
+              <button class="pw-btn primary" id="btnAddOrigin" type="button">Add origin</button>
+              <button class="pw-btn" id="btnListOrigins" type="button">Refresh list</button>
+            </div>
+            <div id="originStatus" class="pw-status" role="status"></div>
+
+            <div class="pw-card soft" id="originGuide">
+              <div class="pw-card-title">
+                <h3>Verification instructions</h3>
+                <span class="pw-kicker" id="originGuideKicker">Add an origin to see exact steps</span>
+              </div>
+              <div id="originGuideBody" class="pw-stack"></div>
+            </div>
+
+            <div class="pw-scroll">
+              <table class="pw-table" aria-label="Origins list">
+                <thead>
+                  <tr>
+                    <th>Status</th>
+                    <th>Origin</th>
+                    <th>Method</th>
+                    <th>Verified</th>
+                    <th>Failure</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="originsTbody"></tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="pw-card pw-wizard-step" id="stepCors" data-step="cors" hidden>
+            <div class="pw-card-title">
+              <h2>Browser CORS allowlist</h2>
+              <span class="pw-kicker">Optional</span>
+            </div>
+            <p class="pw-muted">Only needed if your own platform web UI calls Proofwork APIs directly from the browser. One origin per line.</p>
+
+            <div class="pw-field">
+              <label for="corsOrigins">Allowed origins</label>
+              <textarea class="pw-textarea" id="corsOrigins" placeholder="https://app.yourdomain.com"></textarea>
+            </div>
+            <div class="pw-actions">
+              <button class="pw-btn" id="btnGetCors" type="button">Load</button>
+              <button class="pw-btn primary" id="btnSetCors" type="button">Save</button>
+            </div>
+            <div id="corsStatus" class="pw-status" role="status"></div>
+          </section>
+
+          <section class="pw-card pw-wizard-step" id="stepFees" data-step="fees" hidden>
+            <div class="pw-card-title">
+              <h2>Fees</h2>
+              <span class="pw-kicker">Required</span>
+            </div>
+            <p class="pw-muted">Your platform can take a cut from each successful job. Proofwork always takes a fixed 1% from the worker portion.</p>
+
+            <div class="pw-row">
+              <div class="pw-field">
+                <label for="pfPct">Platform cut</label>
+                <input class="pw-input" id="pfPct" type="range" min="0" max="20" value="5" />
+                <div class="pw-help">Current: <span class="pw-mono" id="pfPctLabel">5%</span> (<span class="pw-mono" id="pfBpsLabel">500 bps</span>)</div>
+              </div>
+              <div class="pw-field">
+                <label for="pfWallet">Platform wallet (Base)</label>
+                <input class="pw-input" id="pfWallet" placeholder="0x…" />
+                <div class="pw-help">Required when cut is non-zero.</div>
+              </div>
+            </div>
+            <div class="pw-actions">
+              <button class="pw-btn primary" id="btnSetPlatformFee" type="button">Save fee</button>
+            </div>
+            <div id="pfStatus" class="pw-status" role="status"></div>
+          </section>
+
+          <section class="pw-card pw-wizard-step" id="stepApp" data-step="app" hidden>
+            <div class="pw-card-title">
+              <h2>Create your first app</h2>
+              <span class="pw-kicker">Required</span>
+            </div>
+            <p class="pw-muted">Apps define the friendly form that job publishers use. Apps show up instantly. No admin approval.</p>
+
+            <div class="pw-row">
+              <div class="pw-field">
+                <label for="appName">App name</label>
+                <input class="pw-input" id="appName" placeholder="e.g. Flight deals monitor" />
+              </div>
+              <div class="pw-field">
+                <label>Template</label>
+                <div class="pw-template-grid" id="appTemplateGrid" role="list" aria-label="App templates"></div>
+                <div class="pw-help">Pick a starting point. You can edit fields later.</div>
+
+                <div class="pw-dev pw-mt-10">
+                  <label for="appTemplate">Developer: template id</label>
+                  <select class="pw-select" id="appTemplate">
+                    <option value="generic_http" selected>generic_http</option>
+                    <option value="github_scan">github_scan</option>
+                    <option value="research_arxiv">research_arxiv</option>
+                    <option value="marketplace_watch">marketplace_watch</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <details class="pw-details" id="appAdvancedIds">
+              <summary>Advanced identifiers</summary>
+              <div class="pw-details-body">
+                <div class="pw-row">
+                  <div class="pw-field">
+                    <label for="appSlug">Slug</label>
+                    <input class="pw-input" id="appSlug" placeholder="my-app" />
+                    <div class="pw-help">Auto-generated from name.</div>
+                  </div>
+                  <div class="pw-field">
+                    <label for="appTaskType">Task type</label>
+                    <input class="pw-input" id="appTaskType" placeholder="my_task_type" />
+                    <div class="pw-help">Maps to <span class="pw-mono">task_descriptor.type</span>.</div>
+                  </div>
+                </div>
+              </div>
+            </details>
+
+            <div class="pw-actions">
+              <button class="pw-btn primary" id="btnCreateOrgApp" type="button">Create app</button>
+              <button class="pw-btn" id="btnListOrgApps" type="button">Refresh</button>
+            </div>
+            <div id="appsStatus" class="pw-status" role="status"></div>
+
+            <div class="pw-scroll">
+              <table class="pw-table" aria-label="Apps list">
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>Slug</th>
+                    <th>Task type</th>
+                    <th>Public</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody id="appsTbody"></tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="pw-card pw-wizard-step" id="stepPublish" data-step="publish" hidden>
+            <div class="pw-card-title">
+              <h2>Publish work</h2>
+              <span class="pw-kicker">Required</span>
+            </div>
+            <p class="pw-muted">Pick an app and publish your first bounty from its app page. This keeps the workflow simple and repeatable.</p>
+
+            <div class="pw-card soft" id="nextAppCard" hidden>
+              <div class="pw-card-title">
+                <h3>Continue where you left off</h3>
+                <span class="pw-kicker">From catalog</span>
+              </div>
+              <p class="pw-muted" id="nextAppText">Open the app page to publish work.</p>
+              <div class="pw-actions">
+                <a class="pw-btn primary" id="nextAppLink" href="/apps/" rel="noreferrer">Open app page</a>
+                <button class="pw-btn" id="btnDismissNextApp" type="button">Dismiss</button>
+              </div>
+            </div>
+
+            <div class="pw-row">
+              <div class="pw-field">
+                <label for="publishApp">App</label>
+                <select class="pw-select" id="publishApp"></select>
+              </div>
+              <div class="pw-field">
+                <label>&nbsp;</label>
+                <div class="pw-actions">
+                  <a class="pw-btn primary" id="btnOpenAppPage" href="/apps/" rel="noreferrer">Open app page</a>
+                  <button class="pw-btn" id="btnCheckPublish" type="button">Check status</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="pw-badge" id="publishStatus">Pick an app to continue.</div>
+
+            <div class="pw-actions">
+              <a class="pw-btn" href="/worker/">Worker portal</a>
+              <a class="pw-btn" href="/admin/">Admin console</a>
+              <a class="pw-btn" href="/docs/view.html?path=runbooks/ThirdPartyOnboarding.md" target="_blank" rel="noreferrer">Read runbook</a>
+            </div>
+          </section>
+        </section>
       </div>
     </main>
+
+    <script type="module" src="/buyer/onboarding.js"></script>
     <script type="module" src="/ui/shell.js"></script>
   </body>
 </html>

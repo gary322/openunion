@@ -1,4 +1,4 @@
-import { el, formatCents, toast } from '/ui/pw.js';
+import { el, formatCents, toast, storageGet, LS } from '/ui/pw.js';
 
 const statusEl = document.getElementById('status');
 const statsEl = document.getElementById('stats');
@@ -12,6 +12,19 @@ const capFilters = document.getElementById('capFilters');
 const onlyUniversal = document.getElementById('onlyUniversal');
 
 const UNIVERSAL_CAPS = new Set(['browser', 'http', 'ffmpeg', 'llm_summarize', 'screenshot']);
+
+function hasBuyerCreds() {
+  const token = String(storageGet(LS.buyerToken, '') || '').trim();
+  const csrf = String(storageGet(LS.csrfToken, '') || '').trim();
+  return Boolean(token || csrf);
+}
+
+function onboardingHrefFor(nextPath) {
+  // Only allow same-origin, path-only redirects.
+  const p = String(nextPath || '').trim();
+  const safe = p.startsWith('/') && !p.startsWith('//') ? p : '/apps/';
+  return `/buyer/onboarding.html?next=${encodeURIComponent(safe)}`;
+}
 
 function getCategory(app) {
   const cat = app?.uiSchema?.category;
@@ -64,7 +77,8 @@ function renderCard(app) {
   const title = String(app?.name || app?.slug || 'App');
   const desc = String(app?.description || '');
   const slug = String(app?.slug || '');
-  const href = app?.dashboardUrl || (slug ? `/apps/app/${encodeURIComponent(slug)}/` : '/apps/');
+  const appPath = slug ? `/apps/app/${encodeURIComponent(slug)}/` : '/apps/';
+  const href = app?.dashboardUrl || appPath;
 
   const cat = getCategory(app);
   const caps = getCaps(app);
@@ -89,9 +103,16 @@ function renderCard(app) {
   card.appendChild(chips);
 
   const actions = el('div', { class: 'pw-actions' }, []);
-  const open = el('a', { class: 'pw-btn primary', href }, ['Create work']);
+  const open = el('a', { class: 'pw-btn primary', href: appPath }, ['Create work']);
+  open.addEventListener('click', (ev) => {
+    if (hasBuyerCreds()) return;
+    // New users should be guided through onboarding (origin verification, fees, app template),
+    // then returned to the app page to publish work.
+    ev.preventDefault();
+    window.location.assign(onboardingHrefFor(appPath));
+  });
   actions.appendChild(open);
-  const learn = el('a', { class: 'pw-btn', href }, ['Open']);
+  const learn = el('a', { class: 'pw-btn', href }, ['Details']);
   actions.appendChild(learn);
   card.appendChild(actions);
 
@@ -197,4 +218,3 @@ async function load() {
 }
 
 load();
-

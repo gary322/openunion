@@ -10,6 +10,7 @@ node_modules/
 dist/
 build/
 *.log
+*.tgz
 
 # IDE
 .vscode/
@@ -39,3 +40,9 @@ infra/terraform/tfplan_*
 # Playwright
 test-results/
 playwright-report/
+
+# Local scratch
+tmp/
+
+# Local specs (Smart-Ralph)
+specs/

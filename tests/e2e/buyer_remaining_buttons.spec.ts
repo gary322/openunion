@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { Wallet } from 'ethers';
-import { startHttpFileOriginServer } from './helpers.js';
+import { openDetails, startHttpFileOriginServer } from './helpers.js';
 
 test('buyer portal: exercise remaining buttons (fee get, quotas, origins list/revoke, bounties list, org apps list, register)', async ({ page, request }) => {
   test.setTimeout(120_000);
@@ -14,15 +14,12 @@ test('buyer portal: exercise remaining buttons (fee get, quotas, origins list/re
 
     // Mint a buyer token via session (CSRF-protected).
     await page.click('#btnCreateKey');
-    await expect(page.locator('#keyStatus')).toContainText('token created');
-    const buyerToken = await page.locator('#buyerToken').inputValue();
+    await expect(page.locator('#keyStatus')).toContainText('token created and saved');
+    const buyerToken = await page.evaluate(() => localStorage.getItem('pw_buyer_token') || '');
     expect(buyerToken).toMatch(/^pw_bu_/);
 
-    // Save token button should persist token in localStorage.
-    await page.click('#btnSaveToken');
-    await expect(page.locator('#keyStatus')).toContainText('token saved');
-    await page.reload();
-    await expect(page.locator('#buyerToken')).toHaveValue(buyerToken);
+    // Platform fee fold is guided; ensure it is open before interacting.
+    await openDetails(page, '#foldSettings');
 
     // Platform fee: get → set → get; then reset to 0 to avoid cross-test drift.
     await page.click('#btnGetPlatformFee');
@@ -73,8 +70,9 @@ test('buyer portal: exercise remaining buttons (fee get, quotas, origins list/re
     await expect(page.locator('#quotaMaxOpenJobs')).toHaveValue('');
 
     // Origins: add → check → list → revoke → list.
+    await openDetails(page, '#foldOrigins');
     await page.fill('#originUrl', originSrv.origin);
-    await page.fill('#originMethod', 'http_file');
+    await page.selectOption('#originMethod', 'http_file');
 
     const addOriginRespPromise = page.waitForResponse((r) => r.url().includes('/api/origins') && r.request().method() === 'POST');
     await page.click('#btnAddOrigin');
@@ -87,13 +85,19 @@ test('buyer portal: exercise remaining buttons (fee get, quotas, origins list/re
     expect(verifyToken).toMatch(/^pw_verify_/);
     originSrv.setVerifyToken(verifyToken);
 
-    await page.fill('#originId', originId);
-    await page.click('#btnCheckOrigin');
+    const originRow = page.locator('#originsTbody tr').filter({ hasText: originSrv.origin }).first();
+    await originRow.getByRole('button', { name: 'Check' }).click();
     await expect(page.locator('#originStatus')).toContainText('status=verified');
 
     await page.click('#btnListOrigins');
     await expect(page.locator('#originStatus')).toContainText('ok');
     await expect(page.locator('#originOut')).toContainText(originId);
+
+    // Advanced bounty form is Dev-only and collapsed by default; enable Dev mode and open it.
+    await page.waitForSelector('#pwDevToggle');
+    await page.click('#pwDevToggle');
+    await openDetails(page, '#foldWork');
+    await page.locator('#workAdvanced').evaluate((d: any) => (d.open = true));
 
     // Bounties: create → list → publish (publish requires a verified origin).
     await page.fill('#bTitle', `Buyer buttons bounty ${Date.now()}`);
@@ -114,44 +118,35 @@ test('buyer portal: exercise remaining buttons (fee get, quotas, origins list/re
     await expect(page.locator('#bountyStatus')).toContainText('published');
 
     // Revoke origin after publish (still must work and show revoked in list).
-    await page.click('#btnRevokeOrigin');
+    await originRow.getByRole('button', { name: 'Revoke' }).click();
     await expect(page.locator('#originStatus')).toContainText('status=revoked');
 
     await page.click('#btnListOrigins');
     await expect(page.locator('#originOut')).toContainText(originId);
 
     // Org apps: create → list.
-    const slug = `buyer-btns-${Date.now()}`;
-    const taskType = `buyer_btns_task_${Date.now()}`;
-    await page.fill('#appSlug', slug);
-    await page.fill('#appTaskType', taskType);
-    await page.fill('#appName', `Buyer Buttons App ${Date.now()}`);
-    await page.fill('#appDashboardUrl', '');
-    // Default descriptor is behind a progressive-disclosure <details>.
-    await page.locator('details:has(#appDefaultDescriptor)').evaluate((d: any) => (d.open = true));
-    await page.fill(
-      '#appDefaultDescriptor',
-      JSON.stringify(
-        {
-          schema_version: 'v1',
-          type: taskType,
-          capability_tags: ['http'],
-          input_spec: { query: 'hello' },
-          output_spec: { required_artifacts: [{ kind: 'log', label: 'report' }] },
-          freshness_sla_sec: 3600,
-        },
-        null,
-        2
-      )
-    );
+    await openDetails(page, '#foldApps');
+    const appName = `Buyer Buttons App ${Date.now()}`;
+    await page.fill('#appName', appName);
+    // Normal UX path: pick a template and let slug/taskType/defaultDescriptor be generated.
+    await page.selectOption('#appTemplate', 'generic_http');
+    await expect(page.locator('#appDashboardUrl')).toHaveValue(/\/apps\/app\//);
     await page.click('#btnCreateOrgApp');
     await expect(page.locator('#appsStatus')).toContainText('created app');
 
     await page.click('#btnListOrgApps');
     await expect(page.locator('#appsStatus')).toContainText('ok');
-    await expect(page.locator('#appsOut')).toContainText(slug);
+    // slug is auto-generated from app name; verify it exists in API response.
+    const expectedSlug = appName
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/^-|-$/g, '');
+    await expect(page.locator('#appsOut')).toContainText(expectedSlug);
 
     // Finally, ensure the "Register" flow works (unique email).
+    await openDetails(page, '#foldAccess');
     const email = `e2e+${Date.now()}@example.com`;
     await page.fill('#regOrgName', `E2E Org ${Date.now()}`);
     await page.fill('#regApiKeyName', 'default');

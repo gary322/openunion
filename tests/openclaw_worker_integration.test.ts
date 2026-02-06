@@ -3,7 +3,7 @@ import request from 'supertest';
 import { buildServer } from '../src/server.js';
 import { pool } from '../src/db/client.js';
 import { resetStore, getJob, getSubmission } from '../src/store.js';
-import { mkdtemp, writeFile, chmod } from 'node:fs/promises';
+import { mkdtemp, writeFile, chmod, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
@@ -189,8 +189,23 @@ async function main() {
   if (cmd === "evaluate") {
     const fnIdx = argv.indexOf("--fn");
     const fn = fnIdx >= 0 && argv[fnIdx + 1] ? String(argv[fnIdx + 1]) : "";
-    // The worker uses location.href to enforce origin policies.
-    if (fn.includes("location.href")) {
+    // Used by the marketplace selector extractor.
+    if (fn.includes("proofwork_marketplace_extract_v1")) {
+      const raw = String(process.env.MOCK_OPENCLAW_MARKETPLACE_RESULT_JSON ?? "").trim();
+      if (raw) {
+        try {
+          out({ result: JSON.parse(raw) });
+          return;
+        } catch {
+          // fall through
+        }
+      }
+      out({ result: [] });
+      return;
+    }
+    // The worker uses a dedicated location.href probe to enforce origin policies.
+    // Match strictly so other evaluators (which may reference location.href) don't get routed here.
+    if (fn.replace(/\\s+/g, " ").trim() === "() => location.href") {
       const forced = process.env.MOCK_OPENCLAW_FORCE_LOCATION_HREF;
       const st = await readState(stateFile);
       out({ result: forced ?? st.url ?? (process.env.MOCK_OPENCLAW_FALLBACK_HREF ?? "https://example.com/") });
@@ -198,7 +213,7 @@ async function main() {
     }
     out({ result: "ok" });
     return;
-	  }
+		  }
 	  if (cmd === "screenshot") {
 	    // Match OpenClaw's screenshot CLI: no --target-id and no --out.
 	    if (argv.includes("--target-id")) {
@@ -298,7 +313,34 @@ process.exit(0);
     // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
     await once(arxivServer, 'listening');
     const arxivAddr: any = arxivServer.address();
+    const arxivOrigin = `http://127.0.0.1:${arxivAddr.port}`;
     const arxivApiBaseUrl = `http://127.0.0.1:${arxivAddr.port}/api/query`;
+
+    // Strict origin enforcement applies to worker-side HTTP fetches. Allow the stub arXiv origin
+    // for this test job so the worker can fetch references without external network access.
+    const b = await pool.query('SELECT allowed_origins FROM bounties WHERE id=$1', [job.bountyId]);
+    const curAllowedRaw = b.rows?.[0]?.allowed_origins;
+    const curAllowed: string[] = Array.isArray(curAllowedRaw)
+      ? curAllowedRaw.map((o: any) => String(o))
+      : typeof curAllowedRaw === 'string'
+        ? (JSON.parse(curAllowedRaw) as any[]).map((o: any) => String(o))
+        : [];
+    const nextAllowed = Array.from(new Set([...curAllowed, arxivOrigin, 'https://arxiv.org']));
+    await pool.query('UPDATE bounties SET allowed_origins=$1 WHERE id=$2', [JSON.stringify(nextAllowed), job.bountyId]);
+    const orgRes = await pool.query('SELECT org_id FROM bounties WHERE id=$1', [job.bountyId]);
+    const bountyOrgId = String(orgRes.rows?.[0]?.org_id ?? 'org_demo');
+    await pool.query(
+      `INSERT INTO origins (id, org_id, origin, status, method, token, verified_at, created_at)
+       VALUES ($1,$2,$3,'verified','http_file','tok', now(), now())
+       ON CONFLICT (id) DO NOTHING`,
+      [`orig_stub_arxiv_${arxivAddr.port}`, bountyOrgId, arxivOrigin],
+    );
+    await pool.query(
+      `INSERT INTO origins (id, org_id, origin, status, method, token, verified_at, created_at)
+       VALUES ($1,$2,$3,'verified','http_file','tok', now(), now())
+       ON CONFLICT (id) DO NOTHING`,
+      [`orig_stub_arxiv_org_${arxivAddr.port}`, bountyOrgId, 'https://arxiv.org'],
+    );
 
     const descriptor = {
       schema_version: 'v1',
@@ -534,6 +576,441 @@ process.exit(0);
     expect(done.body.finalVerdict).toBe('pass');
   });
 
+  it('completes jobs_scrape using REMOTIVE_API_URL override (stubbed API)', async () => {
+    const reg = await request(app.server).post('/api/workers/register').send({ displayName: 'A', capabilities: { openclaw: true } });
+    expect(reg.status).toBe(200);
+    const workerToken = reg.body.token as string;
+
+    const apiServer = createServer((req, res) => {
+      const u = new URL(req.url ?? '/', 'http://127.0.0.1');
+      if (u.pathname === '/api/remote-jobs') {
+        const origin = `http://127.0.0.1:${(apiServer.address() as any)?.port ?? 0}`;
+        const payload = {
+          jobs: [
+            {
+              title: 'Software Engineer',
+              company_name: 'Acme',
+              url: `${origin}/job/1`,
+              publication_date: '2026-01-01T00:00:00Z',
+              candidate_required_location: 'Remote',
+              category: 'Software Dev',
+              job_type: 'Full-time',
+            },
+          ],
+        };
+        res.statusCode = 200;
+        res.setHeader('content-type', 'application/json; charset=utf-8');
+        res.end(JSON.stringify(payload));
+        return;
+      }
+      res.statusCode = 200;
+      res.setHeader('content-type', 'text/plain; charset=utf-8');
+      res.end('ok');
+    });
+    apiServer.listen(0, '127.0.0.1');
+    await once(apiServer, 'listening');
+    const addr: any = apiServer.address();
+    const origin = `http://127.0.0.1:${addr.port}`;
+
+    try {
+      const next = await request(app.server).get('/api/jobs/next').set('Authorization', `Bearer ${workerToken}`);
+      expect(next.status).toBe(200);
+      expect(next.body.state).toBe('claimable');
+      const job = next.body.data.job;
+      await pool.query('DELETE FROM jobs WHERE id <> $1', [job.jobId]);
+
+      const orgRes = await pool.query<{ org_id: string }>('SELECT org_id FROM bounties WHERE id=$1', [job.bountyId]);
+      const orgId = String(orgRes.rows[0]?.org_id ?? '');
+      expect(orgId).toBeTruthy();
+      await pool.query(
+        `INSERT INTO origins(id, org_id, origin, status, method, token, verified_at)
+         VALUES ($1, $2, $3, 'verified', 'manual', 't', now())
+         ON CONFLICT (org_id, origin) DO UPDATE SET status='verified', verified_at=now()`,
+        [`orig_${Date.now()}_${Math.random().toString(16).slice(2)}`, orgId, origin]
+      );
+      await pool.query('UPDATE bounties SET allowed_origins=$1 WHERE id=$2', [JSON.stringify([origin]), job.bountyId]);
+
+      const descriptor = {
+        schema_version: 'v1',
+        type: 'jobs_scrape',
+        capability_tags: ['http', 'llm_summarize', 'screenshot'],
+        input_spec: { titles: ['engineer'], location: 'remote', url: `${origin}/jobs` },
+        output_spec: {
+          required_artifacts: [
+            { kind: 'screenshot', count: 1 },
+            { kind: 'other', count: 1, label_prefix: 'rows' },
+            { kind: 'log', count: 1, label_prefix: 'report' },
+          ],
+        },
+        freshness_sla_sec: 86400,
+      };
+      await pool.query('UPDATE jobs SET task_descriptor=$1 WHERE id=$2', [JSON.stringify(descriptor), job.jobId]);
+
+      const mockOpenClaw = await makeMockOpenClawBin();
+      const profile = 'pw-test-profile';
+      const stateDir = await mkdtemp(join(tmpdir(), 'mock-openclaw-state-'));
+      const stateFile = join(stateDir, 'state.json');
+      const scriptPath = 'integrations/openclaw/skills/proofwork-universal-worker/scripts/proofwork_worker.mjs';
+      const run = await runNodeScript({
+        scriptPath,
+        cwd: process.cwd(),
+        env: {
+          ONCE: 'true',
+          PROOFWORK_API_BASE_URL: baseUrl,
+          PROOFWORK_WORKER_TOKEN: workerToken,
+          PROOFWORK_SUPPORTED_CAPABILITY_TAGS: 'http,screenshot,llm_summarize',
+          PROOFWORK_CANARY_PERCENT: '100',
+          OPENCLAW_BIN: mockOpenClaw,
+          OPENCLAW_BROWSER_PROFILE: profile,
+          MOCK_OPENCLAW_EXPECT_PROFILE: profile,
+          MOCK_OPENCLAW_STATE_FILE: stateFile,
+          REMOTIVE_API_URL: `${origin}/api/remote-jobs`,
+        },
+      });
+      await rm(stateDir, { recursive: true, force: true });
+      if (run.code !== 0) {
+        // eslint-disable-next-line no-console
+        console.log('openclaw worker stdout:\n', run.stdout);
+        // eslint-disable-next-line no-console
+        console.log('openclaw worker stderr:\n', run.stderr);
+      }
+      expect(run.code).toBe(0);
+
+      const updated = await getJob(job.jobId);
+      expect(updated?.status).toBe('verifying');
+      expect(updated?.currentSubmissionId).toBeTruthy();
+
+      const sub = await getSubmission(String(updated?.currentSubmissionId ?? ''));
+      expect(sub).toBeTruthy();
+
+      const rowsArt = (sub?.artifactIndex ?? []).find((a: any) => String(a.label) === 'rows_main');
+      expect(rowsArt).toBeTruthy();
+      const rowsUrl = String((rowsArt as any)?.url ?? '');
+      const m = rowsUrl.match(/\/api\/artifacts\/([^/]+)\/download/);
+      expect(m?.[1]).toBeTruthy();
+
+      const dl = await request(app.server)
+        .get(`/api/artifacts/${m?.[1]}/download`)
+        .set('Authorization', `Bearer ${workerToken}`);
+      expect(dl.status).toBe(200);
+      const parsed = JSON.parse(String(dl.text ?? dl.body ?? ''));
+      expect(Array.isArray(parsed?.rows)).toBe(true);
+      expect(String(parsed.rows[0]?.title ?? '')).toContain('Engineer');
+
+      const screenshotArt = (sub?.artifactIndex ?? []).find((a: any) => String(a.kind) === 'screenshot');
+      expect(screenshotArt).toBeTruthy();
+    } finally {
+      await new Promise<void>((resolve) => apiServer.close(() => resolve()));
+    }
+  });
+
+  it('completes github_scan using GITHUB_API_BASE_URL override (stubbed API)', async () => {
+    const reg = await request(app.server).post('/api/workers/register').send({ displayName: 'A', capabilities: {} });
+    expect(reg.status).toBe(200);
+    const workerToken = reg.body.token as string;
+
+    const apiServer = createServer((req, res) => {
+      const u = new URL(req.url ?? '/', 'http://127.0.0.1');
+      if (u.pathname === '/search/repositories') {
+        const origin = `http://127.0.0.1:${(apiServer.address() as any)?.port ?? 0}`;
+        const payload = {
+          items: [
+            {
+              full_name: 'example/repo',
+              html_url: `${origin}/repo`,
+              stargazers_count: 123,
+              license: { spdx_id: 'MIT' },
+              description: 'test repo',
+            },
+          ],
+        };
+        res.statusCode = 200;
+        res.setHeader('content-type', 'application/json; charset=utf-8');
+        res.end(JSON.stringify(payload));
+        return;
+      }
+      res.statusCode = 200;
+      res.setHeader('content-type', 'text/plain; charset=utf-8');
+      res.end('ok');
+    });
+    apiServer.listen(0, '127.0.0.1');
+    await once(apiServer, 'listening');
+    const addr: any = apiServer.address();
+    const origin = `http://127.0.0.1:${addr.port}`;
+
+    try {
+      const next = await request(app.server).get('/api/jobs/next').set('Authorization', `Bearer ${workerToken}`);
+      expect(next.status).toBe(200);
+      expect(next.body.state).toBe('claimable');
+      const job = next.body.data.job;
+      await pool.query('DELETE FROM jobs WHERE id <> $1', [job.jobId]);
+
+      const orgRes = await pool.query<{ org_id: string }>('SELECT org_id FROM bounties WHERE id=$1', [job.bountyId]);
+      const orgId = String(orgRes.rows[0]?.org_id ?? '');
+      expect(orgId).toBeTruthy();
+      await pool.query(
+        `INSERT INTO origins(id, org_id, origin, status, method, token, verified_at)
+         VALUES ($1, $2, $3, 'verified', 'manual', 't', now())
+         ON CONFLICT (org_id, origin) DO UPDATE SET status='verified', verified_at=now()`,
+        [`orig_${Date.now()}_${Math.random().toString(16).slice(2)}`, orgId, origin]
+      );
+      await pool.query('UPDATE bounties SET allowed_origins=$1 WHERE id=$2', [JSON.stringify([origin]), job.bountyId]);
+
+      const descriptor = {
+        schema_version: 'v1',
+        type: 'github_scan',
+        capability_tags: ['http', 'llm_summarize'],
+        input_spec: { idea: 'vector database', url: `${origin}/` },
+        output_spec: {
+          required_artifacts: [
+            { kind: 'other', count: 1, label_prefix: 'repos' },
+            { kind: 'log', count: 1, label_prefix: 'report' },
+          ],
+        },
+        freshness_sla_sec: 86400,
+      };
+      await pool.query('UPDATE jobs SET task_descriptor=$1 WHERE id=$2', [JSON.stringify(descriptor), job.jobId]);
+
+      const scriptPath = 'integrations/openclaw/skills/proofwork-universal-worker/scripts/proofwork_worker.mjs';
+      const run = await runNodeScript({
+        scriptPath,
+        cwd: process.cwd(),
+        env: {
+          ONCE: 'true',
+          PROOFWORK_API_BASE_URL: baseUrl,
+          PROOFWORK_WORKER_TOKEN: workerToken,
+          PROOFWORK_SUPPORTED_CAPABILITY_TAGS: 'http,llm_summarize',
+          PROOFWORK_CANARY_PERCENT: '100',
+          GITHUB_API_BASE_URL: origin,
+        },
+      });
+      if (run.code !== 0) {
+        // eslint-disable-next-line no-console
+        console.log('openclaw worker stdout:\n', run.stdout);
+        // eslint-disable-next-line no-console
+        console.log('openclaw worker stderr:\n', run.stderr);
+      }
+      expect(run.code).toBe(0);
+
+      const updated = await getJob(job.jobId);
+      expect(updated?.status).toBe('verifying');
+      expect(updated?.currentSubmissionId).toBeTruthy();
+
+      const sub = await getSubmission(String(updated?.currentSubmissionId ?? ''));
+      expect(sub).toBeTruthy();
+      const reposArt = (sub?.artifactIndex ?? []).find((a: any) => String(a.label) === 'repos_main');
+      expect(reposArt).toBeTruthy();
+      const reposUrl = String((reposArt as any)?.url ?? '');
+      const m = reposUrl.match(/\/api\/artifacts\/([^/]+)\/download/);
+      expect(m?.[1]).toBeTruthy();
+
+      const dl = await request(app.server)
+        .get(`/api/artifacts/${m?.[1]}/download`)
+        .set('Authorization', `Bearer ${workerToken}`);
+      expect(dl.status).toBe(200);
+      const parsed = JSON.parse(String(dl.text ?? dl.body ?? ''));
+      expect(Array.isArray(parsed?.repos)).toBe(true);
+      expect(String(parsed.repos[0]?.name ?? '')).toBe('example/repo');
+    } finally {
+      await new Promise<void>((resolve) => apiServer.close(() => resolve()));
+    }
+  });
+
+  it('extracts marketplace_drops items via selector-based OpenClaw evaluate (stubbed openclaw)', async () => {
+    const reg = await request(app.server).post('/api/workers/register').send({ displayName: 'A', capabilities: { openclaw: true } });
+    expect(reg.status).toBe(200);
+    const workerToken = reg.body.token as string;
+
+    const next = await request(app.server).get('/api/jobs/next').set('Authorization', `Bearer ${workerToken}`);
+    expect(next.status).toBe(200);
+    expect(next.body.state).toBe('claimable');
+    const job = next.body.data.job;
+    await pool.query('DELETE FROM jobs WHERE id <> $1', [job.jobId]);
+
+    const descriptor = {
+      schema_version: 'v1',
+      type: 'marketplace_drops',
+      capability_tags: ['browser', 'screenshot'],
+      input_spec: { url: 'https://example.com/product', query: 'SHOULD_NOT_APPEAR', max_price_usd: 1500 },
+      output_spec: {
+        required_artifacts: [
+          { kind: 'screenshot', count: 1 },
+          { kind: 'other', count: 1, label_prefix: 'results' },
+        ],
+        results_json: true,
+      },
+      site_profile: {
+        selectors: { items: '.item', title: '.title', price: '.price', availability: '.stock', url: 'a[href]' },
+      },
+      freshness_sla_sec: 600,
+    };
+    await pool.query('UPDATE jobs SET task_descriptor=$1 WHERE id=$2', [JSON.stringify(descriptor), job.jobId]);
+
+    const mockOpenClaw = await makeMockOpenClawBin();
+    const profile = 'pw-test-profile';
+    const scriptPath = 'integrations/openclaw/skills/proofwork-universal-worker/scripts/proofwork_worker.mjs';
+    const run = await runNodeScript({
+      scriptPath,
+      cwd: process.cwd(),
+      env: {
+        ONCE: 'true',
+        PROOFWORK_API_BASE_URL: baseUrl,
+        PROOFWORK_WORKER_TOKEN: workerToken,
+        PROOFWORK_SUPPORTED_CAPABILITY_TAGS: 'browser,screenshot',
+        PROOFWORK_CANARY_PERCENT: '100',
+        OPENCLAW_BIN: mockOpenClaw,
+        OPENCLAW_BROWSER_PROFILE: profile,
+        MOCK_OPENCLAW_EXPECT_PROFILE: profile,
+        MOCK_OPENCLAW_MARKETPLACE_RESULT_JSON: JSON.stringify([
+          { title: 'RTX 4090', price_text: '$999', availability_text: 'in stock', url: 'https://example.com/item1' },
+        ]),
+      },
+    });
+    if (run.code !== 0) {
+      // eslint-disable-next-line no-console
+      console.log('openclaw worker stdout:\n', run.stdout);
+      // eslint-disable-next-line no-console
+      console.log('openclaw worker stderr:\n', run.stderr);
+    }
+    expect(run.code).toBe(0);
+
+    const updated = await getJob(job.jobId);
+    expect(updated?.status).toBe('verifying');
+    expect(updated?.currentSubmissionId).toBeTruthy();
+
+    const sub = await getSubmission(String(updated?.currentSubmissionId ?? ''));
+    expect(sub).toBeTruthy();
+
+    const resultsArt = (sub?.artifactIndex ?? []).find((a: any) => String(a.label) === 'results_main');
+    expect(resultsArt).toBeTruthy();
+    const resultsUrl = String((resultsArt as any)?.url ?? '');
+    const m = resultsUrl.match(/\/api\/artifacts\/([^/]+)\/download/);
+    expect(m?.[1]).toBeTruthy();
+
+    const dl = await request(app.server)
+      .get(`/api/artifacts/${m?.[1]}/download`)
+      .set('Authorization', `Bearer ${workerToken}`);
+    expect(dl.status).toBe(200);
+    const parsed = JSON.parse(String(dl.text ?? dl.body ?? ''));
+    expect(Array.isArray(parsed?.items)).toBe(true);
+    expect(String(parsed.items[0]?.title ?? '')).toBe('RTX 4090');
+    expect(Number(parsed.items[0]?.price ?? 0)).toBe(999);
+  });
+
+  it('completes clips_highlights using an ffmpeg stub (uploads clip + timeline)', async () => {
+    const reg = await request(app.server).post('/api/workers/register').send({ displayName: 'A', capabilities: {} });
+    expect(reg.status).toBe(200);
+    const workerToken = reg.body.token as string;
+
+    const next = await request(app.server).get('/api/jobs/next').set('Authorization', `Bearer ${workerToken}`);
+    expect(next.status).toBe(200);
+    expect(next.body.state).toBe('claimable');
+    const job = next.body.data.job;
+    await pool.query('DELETE FROM jobs WHERE id <> $1', [job.jobId]);
+
+    const descriptor = {
+      schema_version: 'v1',
+      type: 'clips_highlights',
+      capability_tags: ['ffmpeg', 'llm_summarize'],
+      input_spec: { vod_url: 'https://example.com/vod.mp4', start_sec: 0, duration_sec: 10 },
+      output_spec: {
+        required_artifacts: [
+          { kind: 'video', count: 1, label_prefix: 'clip' },
+          { kind: 'other', count: 1, label_prefix: 'timeline' },
+          { kind: 'log', count: 1, label_prefix: 'report' },
+        ],
+      },
+      freshness_sla_sec: 3600,
+    };
+    await pool.query('UPDATE jobs SET task_descriptor=$1 WHERE id=$2', [JSON.stringify(descriptor), job.jobId]);
+
+    const stubDir = await mkdtemp(join(tmpdir(), 'mock-ffmpeg-'));
+    const ffmpegBin = join(stubDir, 'ffmpeg');
+    const minimalMp4 = Buffer.from([
+      0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6f, 0x6d, 0x00, 0x00, 0x02, 0x00,
+      0x69, 0x73, 0x6f, 0x6d, 0x69, 0x73, 0x6f, 0x32,
+    ]);
+    const ffmpegScript = `#!/usr/bin/env node
+import fs from "node:fs/promises";
+
+const argv = process.argv.slice(2);
+if (argv.includes("-version")) {
+  process.stdout.write("ffmpeg stub\\n");
+  process.exit(0);
+}
+const outPath = argv[argv.length - 1];
+await fs.writeFile(outPath, Buffer.from([${Array.from(minimalMp4).join(',')}]));
+process.exit(0);
+`;
+    await writeFile(ffmpegBin, ffmpegScript, 'utf8');
+    await chmod(ffmpegBin, 0o755);
+
+    try {
+      const scriptPath = 'integrations/openclaw/skills/proofwork-universal-worker/scripts/proofwork_worker.mjs';
+      const run = await runNodeScript({
+        scriptPath,
+        cwd: process.cwd(),
+        env: {
+          ONCE: 'true',
+          PROOFWORK_API_BASE_URL: baseUrl,
+          PROOFWORK_WORKER_TOKEN: workerToken,
+          PROOFWORK_SUPPORTED_CAPABILITY_TAGS: 'ffmpeg,llm_summarize',
+          PROOFWORK_CANARY_PERCENT: '100',
+          PATH: `${stubDir}:${process.env.PATH ?? ''}`,
+        },
+      });
+      if (run.code !== 0) {
+        // eslint-disable-next-line no-console
+        console.log('openclaw worker stdout:\n', run.stdout);
+        // eslint-disable-next-line no-console
+        console.log('openclaw worker stderr:\n', run.stderr);
+      }
+      expect(run.code).toBe(0);
+
+      const updated = await getJob(job.jobId);
+      expect(updated?.status).toBe('verifying');
+      expect(updated?.currentSubmissionId).toBeTruthy();
+
+      const sub = await getSubmission(String(updated?.currentSubmissionId ?? ''));
+      expect(sub).toBeTruthy();
+
+      const clipArt = (sub?.artifactIndex ?? []).find((a: any) => String(a.label) === 'clip_main');
+      expect(clipArt).toBeTruthy();
+      const clipUrl = String((clipArt as any)?.url ?? '');
+      const m1 = clipUrl.match(/\/api\/artifacts\/([^/]+)\/download/);
+      expect(m1?.[1]).toBeTruthy();
+      const bin = await request(app.server)
+        .get(`/api/artifacts/${m1?.[1]}/download`)
+        .set('Authorization', `Bearer ${workerToken}`)
+        .buffer(true)
+        .parse((res, cb) => {
+          const chunks: Buffer[] = [];
+          res.on('data', (c) => chunks.push(Buffer.from(c)));
+          res.on('end', () => cb(null, Buffer.concat(chunks)));
+        });
+      expect(bin.status).toBe(200);
+      const bytes = bin.body as Buffer;
+      expect(bytes[4]).toBe(0x66); // 'f'
+      expect(bytes[5]).toBe(0x74); // 't'
+      expect(bytes[6]).toBe(0x79); // 'y'
+      expect(bytes[7]).toBe(0x70); // 'p'
+
+      const timelineArt = (sub?.artifactIndex ?? []).find((a: any) => String(a.label) === 'timeline_main');
+      expect(timelineArt).toBeTruthy();
+      const timelineUrl = String((timelineArt as any)?.url ?? '');
+      const m2 = timelineUrl.match(/\/api\/artifacts\/([^/]+)\/download/);
+      expect(m2?.[1]).toBeTruthy();
+      const dlTimeline = await request(app.server)
+        .get(`/api/artifacts/${m2?.[1]}/download`)
+        .set('Authorization', `Bearer ${workerToken}`);
+      expect(dlTimeline.status).toBe(200);
+      const timeline = JSON.parse(String(dlTimeline.text ?? dlTimeline.body ?? ''));
+      expect(timeline?.schema).toBe('timeline.v1');
+    } finally {
+      await rm(stubDir, { recursive: true, force: true });
+    }
+  });
+
   it('does not claim jobs that require unsupported capability tags', async () => {
     const reg = await request(app.server).post('/api/workers/register').send({ displayName: 'A', capabilities: { openclaw: true } });
     const workerToken = reg.body.token as string;
@@ -675,6 +1152,61 @@ process.exit(0);
     expect(a?.leaseWorkerId).toBeUndefined();
     expect(b?.status).toBe('verifying');
     expect(b?.currentSubmissionId).toBeTruthy();
+  });
+
+  it('does not claim jobs when browser health disables all supported capability tags', async () => {
+    const reg = await request(app.server)
+      .post('/api/workers/register')
+      .send({ displayName: 'A', capabilities: { openclaw: true } });
+    const workerToken = reg.body.token as string;
+
+    const next = await request(app.server).get('/api/jobs/next').set('Authorization', `Bearer ${workerToken}`);
+    expect(next.status).toBe(200);
+    const job = next.body.data.job;
+    // Seed data creates multiple jobs (one per fingerprint class). Make the test deterministic by leaving exactly one job.
+    await pool.query('DELETE FROM jobs WHERE id <> $1', [job.jobId]);
+
+    const descriptor = {
+      schema_version: 'v1',
+      type: 'browser_only_job',
+      capability_tags: ['browser', 'screenshot'],
+      input_spec: { url: 'https://example.com' },
+      output_spec: { required_artifacts: [{ kind: 'screenshot', count: 1 }] },
+      freshness_sla_sec: 3600,
+    };
+    await pool.query('UPDATE jobs SET task_descriptor=$1 WHERE id=$2', [JSON.stringify(descriptor), job.jobId]);
+
+    const mockOpenClaw = await makeMockOpenClawBin();
+    const profile = 'pw-test-profile';
+    const scriptPath = 'integrations/openclaw/skills/proofwork-universal-worker/scripts/proofwork_worker.mjs';
+    const run = await runNodeScript({
+      scriptPath,
+      cwd: process.cwd(),
+      env: {
+        ONCE: 'true',
+        PROOFWORK_API_BASE_URL: baseUrl,
+        PROOFWORK_WORKER_TOKEN: workerToken,
+        // Only browser/screenshot capabilities: when the browser health probe fails, this worker's effective set becomes empty.
+        PROOFWORK_SUPPORTED_CAPABILITY_TAGS: 'browser,screenshot',
+        PROOFWORK_CANARY_PERCENT: '100',
+        OPENCLAW_BIN: mockOpenClaw,
+        OPENCLAW_BROWSER_PROFILE: profile,
+        MOCK_OPENCLAW_EXPECT_PROFILE: profile,
+        // Force interactive snapshot to fail (simulates missing Playwright / unsupported browser actions).
+        MOCK_OPENCLAW_FAIL_SNAPSHOT: 'true',
+      },
+    });
+    if (run.code !== 0) {
+      // eslint-disable-next-line no-console
+      console.log('openclaw worker stdout:\n', run.stdout);
+      // eslint-disable-next-line no-console
+      console.log('openclaw worker stderr:\n', run.stderr);
+    }
+    expect(run.code).toBe(0);
+
+    const row = await getJob(job.jobId);
+    expect(row?.status).toBe('open');
+    expect(row?.leaseWorkerId).toBeUndefined();
   });
 
   it('executes site_profile.browser_flow steps via OpenClaw browser actions', async () => {

@@ -1,7 +1,7 @@
 {
   "schema_version": "v1",
   "type": "clips_highlights",
-  "capability_tags": ["ffmpeg", "llm_summarize", "screenshot"],
+  "capability_tags": ["ffmpeg", "llm_summarize"],
   "input_spec": {"vod_url": "https://vod.example/test", "rules": {"peaks": true}},
   "output_spec": {
     "required_artifacts": [

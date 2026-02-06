@@ -12,6 +12,9 @@ import type {
   JobsTable,
   OrgsTable,
   AppsTable,
+  AppSupportedOriginsTable,
+  AppOriginRequestsTable,
+  MarketplaceOriginTemplatesTable,
   DisputesTable,
   OutboxEventsTable,
   PayoutsTable,
@@ -73,6 +76,7 @@ function appFromRow(row: Selectable<AppsTable>): App {
     public: Boolean(row.public),
     status: (row.status as any) === 'disabled' ? 'disabled' : 'active',
     defaultDescriptor: ((row.default_descriptor ?? {}) as any) || {},
+    publicAllowedOrigins: ((row.public_allowed_origins_json ?? []) as any) || [],
     uiSchema: ((row.ui_schema ?? {}) as any) || {},
     createdAt: (row.created_at as any as Date).getTime(),
     updatedAt: (row.updated_at as any as Date).getTime(),
@@ -289,10 +293,11 @@ export async function seedBuiltInApps() {
       task_type: 'clips_highlights',
       name: 'Clips',
       description: 'VOD clipping, highlights, timestamping.',
+      public_allowed_origins: [],
       default_descriptor: {
         schema_version: 'v1',
         type: 'clips_highlights',
-        capability_tags: ['ffmpeg', 'llm_summarize', 'screenshot'],
+        capability_tags: ['ffmpeg', 'llm_summarize'],
         input_spec: { vod_url: 'https://vod.example/test' },
         output_spec: {
           required_artifacts: [
@@ -396,6 +401,7 @@ export async function seedBuiltInApps() {
       task_type: 'marketplace_drops',
       name: 'Marketplace',
       description: 'Price checks, drops, screenshots.',
+      public_allowed_origins: [],
       default_descriptor: {
         schema_version: 'v1',
         type: 'marketplace_drops',
@@ -489,6 +495,7 @@ export async function seedBuiltInApps() {
       task_type: 'jobs_scrape',
       name: 'Jobs',
       description: 'Job scraping for a personal hunt.',
+      public_allowed_origins: ['https://remotive.com'],
       default_descriptor: {
         schema_version: 'v1',
         type: 'jobs_scrape',
@@ -563,6 +570,7 @@ export async function seedBuiltInApps() {
       task_type: 'travel_deals',
       name: 'Travel',
       description: 'Flights/hotels deal hunting.',
+      public_allowed_origins: [],
       default_descriptor: {
         schema_version: 'v1',
         type: 'travel_deals',
@@ -614,6 +622,7 @@ export async function seedBuiltInApps() {
       task_type: 'arxiv_research_plan',
       name: 'Research',
       description: 'ArXiv idea to research-grade plan.',
+      public_allowed_origins: ['https://export.arxiv.org', 'https://arxiv.org'],
       default_descriptor: {
         schema_version: 'v1',
         type: 'arxiv_research_plan',
@@ -665,6 +674,7 @@ export async function seedBuiltInApps() {
       task_type: 'github_scan',
       name: 'GitHub Scan',
       description: 'Scan GitHub for similar repos/components.',
+      public_allowed_origins: ['https://api.github.com', 'https://github.com', 'https://raw.githubusercontent.com'],
       default_descriptor: {
         schema_version: 'v1',
         type: 'github_scan',
@@ -718,6 +728,8 @@ export async function seedBuiltInApps() {
         public: true,
         status: 'active',
         default_descriptor: a.default_descriptor ?? {},
+        // JSONB column: ensure arrays are passed as JSON, not Postgres text[].
+        public_allowed_origins_json: JSON.stringify((a as any).public_allowed_origins ?? []),
         ui_schema: (a as any).ui_schema ?? {},
         created_at: now,
         updated_at: now,
@@ -732,9 +744,188 @@ export async function seedBuiltInApps() {
           public: true,
           status: 'active',
           default_descriptor: a.default_descriptor ?? {},
+          public_allowed_origins_json: JSON.stringify((a as any).public_allowed_origins ?? []),
           ui_schema: (a as any).ui_schema ?? {},
           updated_at: now,
         })
+      )
+      .execute();
+  }
+
+  // Supported-origins allow system apps to operate against curated third-party sites without
+  // requiring each buyer org to verify those origins. Origins are still enforced per job via
+  // bounty.allowedOrigins and strict worker enforcement.
+  //
+  // This table is the source of truth for "public origins we support". It is append-only
+  // (idempotent inserts) so later admin approvals are not clobbered by restarts.
+  const supportedSeeds: Array<Selectable<AppSupportedOriginsTable>> = [];
+  const addSupported = (appId: string, origin: string, notes?: string) => {
+    try {
+      supportedSeeds.push({
+        app_id: appId,
+        origin: normalizeOrigin(origin),
+        notes: notes ?? null,
+        created_at: now,
+      });
+    } catch {
+      // ignore invalid origins in seed data
+    }
+  };
+
+  // Seed supported origins declared inline on the built-in app definitions above.
+  for (const a of apps) {
+    const origins = Array.isArray((a as any).public_allowed_origins) ? (a as any).public_allowed_origins : [];
+    for (const o of origins) addSupported(String((a as any).id), String(o), 'builtin_default');
+  }
+
+  // Curated origins for Marketplace/Clips (initial set).
+  //
+  // IMPORTANT: do not add a marketplace "supported origin" unless we also ship a template for
+  // it in `marketplace_origin_templates`. The UX contract is "it works by default".
+  const marketplaceOrigins = ['https://www.ebay.com', 'https://store.steampowered.com'];
+  for (const o of marketplaceOrigins) addSupported('app_marketplace', o, 'marketplace_supported');
+
+  const clipsOrigins = [
+    'https://storage.googleapis.com',
+    'https://commondatastorage.googleapis.com',
+    'https://download.samplelib.com',
+    'https://filesamples.com',
+  ];
+  for (const o of clipsOrigins) addSupported('app_clips', o, 'clips_supported');
+
+  // When PUBLIC_BASE_URL is configured (staging/prod behind HTTPS), include it so we can host
+  // deterministic smoke targets for Marketplace browser_flow and Clips MP4 tests.
+  try {
+    const env = String(process.env.PUBLIC_BASE_URL ?? '').trim();
+    if (env) {
+      const origin = new URL(env).origin;
+      addSupported('app_marketplace', origin, 'proofwork_smoke_origin');
+      addSupported('app_clips', origin, 'proofwork_smoke_origin');
+      addSupported('app_jobs', origin, 'proofwork_smoke_origin');
+      addSupported('app_research', origin, 'proofwork_smoke_origin');
+      addSupported('app_github', origin, 'proofwork_smoke_origin');
+    }
+  } catch {
+    // ignore
+  }
+
+  if (supportedSeeds.length) {
+    // De-dup within the same seed run to reduce noise.
+    const uniq = new Map<string, Selectable<AppSupportedOriginsTable>>();
+    for (const r of supportedSeeds) uniq.set(`${r.app_id}::${r.origin}`, r);
+
+    await db
+      .insertInto('app_supported_origins')
+      .values(Array.from(uniq.values()))
+      .onConflict((oc) => oc.columns(['app_id', 'origin']).doNothing())
+      .execute();
+  }
+
+  // Marketplace templates: used to (a) generate a search URL from query and (b) inject selectors.
+  // For third-party sites, templates may require maintenance as site DOMs change.
+  const templateSeeds: Array<Selectable<MarketplaceOriginTemplatesTable>> = [];
+  const addTemplate = (t: Omit<Selectable<MarketplaceOriginTemplatesTable>, 'created_at' | 'updated_at'>) =>
+    templateSeeds.push({ ...t, created_at: now, updated_at: now });
+
+  const smokeOrigin = (() => {
+    try {
+      const env = String(process.env.PUBLIC_BASE_URL ?? '').trim();
+      return env ? new URL(env).origin : null;
+    } catch {
+      return null;
+    }
+  })();
+  if (smokeOrigin) {
+    addTemplate({
+      origin: normalizeOrigin(smokeOrigin),
+      enabled: true,
+      search_url_template: `${new URL(smokeOrigin).origin}/__smoke/marketplace/items?q={query}`,
+      wait_selector: '.pw-item',
+      selectors_json: {
+        items: '.pw-item',
+        title: '.pw-title',
+        price: '.pw-price',
+        availability: '.pw-availability',
+        url: '.pw-url',
+      },
+    });
+  }
+
+  // Example templates for a small initial set of marketplace sites.
+  addTemplate({
+    origin: normalizeOrigin('https://www.ebay.com'),
+    enabled: true,
+    search_url_template: 'https://www.ebay.com/sch/i.html?_nkw={query}',
+    wait_selector: '.s-item',
+    selectors_json: {
+      items: '.s-item',
+      title: '.s-item__title',
+      price: '.s-item__price',
+      availability: '.SECONDARY_INFO',
+      url: 'a.s-item__link',
+    },
+  });
+  addTemplate({
+    origin: normalizeOrigin('https://www.newegg.com'),
+    enabled: true,
+    search_url_template: 'https://www.newegg.com/p/pl?d={query}',
+    wait_selector: '.item-cell',
+    selectors_json: {
+      items: '.item-cell',
+      title: 'a.item-title',
+      price: '.price-current',
+      availability: '.item-promo',
+      url: 'a.item-title',
+    },
+  });
+  addTemplate({
+    origin: normalizeOrigin('https://store.steampowered.com'),
+    enabled: true,
+    search_url_template: 'https://store.steampowered.com/search/?term={query}',
+    wait_selector: 'a.search_result_row',
+    selectors_json: {
+      items: 'a.search_result_row',
+      title: '.title',
+      price: '.discount_final_price',
+      availability: '',
+      url: '',
+    },
+  });
+  addTemplate({
+    origin: normalizeOrigin('https://www.humblebundle.com'),
+    enabled: true,
+    search_url_template: 'https://www.humblebundle.com/store/search?search={query}',
+    wait_selector: '.entity-row',
+    selectors_json: {
+      items: '.entity-row',
+      title: '.entity-title',
+      price: '.current-price',
+      availability: '',
+      url: 'a',
+    },
+  });
+  addTemplate({
+    origin: normalizeOrigin('https://www.gog.com'),
+    enabled: true,
+    search_url_template: 'https://www.gog.com/en/games?query={query}',
+    wait_selector: '[data-testid=\"product-tile\"]',
+    selectors_json: {
+      items: '[data-testid=\"product-tile\"]',
+      title: '[data-testid=\"product-title\"]',
+      price: '[data-testid=\"product-price\"]',
+      availability: '',
+      url: 'a[href]',
+    },
+  });
+
+  if (templateSeeds.length) {
+    await db
+      .insertInto('marketplace_origin_templates')
+      .values(templateSeeds)
+      .onConflict((oc) =>
+        // Allow operators to update templates in-place (dom changes). Do not overwrite
+        // existing operator edits on restart; only insert missing rows.
+        oc.column('origin').doNothing()
       )
       .execute();
   }
@@ -923,6 +1114,29 @@ export async function findClaimableJob(
   const candidates = await q.execute();
 
   let best: { score: number; job: Job; bounty: Bounty } | undefined;
+  const systemAppPublicOriginsCache = new Map<string, Set<string> | null>();
+
+  async function getSystemAppPublicOriginSet(taskType: string): Promise<Set<string> | null> {
+    const t = String(taskType ?? '').trim();
+    if (!t) return null;
+    if (systemAppPublicOriginsCache.has(t)) return systemAppPublicOriginsCache.get(t) ?? null;
+    const app = await getAppByTaskType(t);
+    if (!app || app.ownerOrgId !== 'org_system' || !Array.isArray(app.publicAllowedOrigins) || !app.publicAllowedOrigins.length) {
+      systemAppPublicOriginsCache.set(t, null);
+      return null;
+    }
+    const normalized = new Set<string>();
+    for (const o of app.publicAllowedOrigins) {
+      try {
+        normalized.add(normalizeOrigin(String(o)));
+      } catch {
+        // ignore invalid
+      }
+    }
+    const out = normalized.size ? normalized : null;
+    systemAppPublicOriginsCache.set(t, out);
+    return out;
+  }
 
   for (const row of candidates as any[]) {
     if (excludeSet && excludeSet.has(String(row.job_id))) continue;
@@ -960,22 +1174,29 @@ export async function findClaimableJob(
       taskDescriptor: (row.bounty_task_descriptor ?? undefined) as any,
     };
 
-    // Re-check bounty origins remain verified (revokes should take effect).
-    const originChecks = await Promise.all(bounty.allowedOrigins.map((o) => originAllowed(bounty.orgId, o)));
+    const descriptor = (job.taskDescriptor as any) ?? (bounty.taskDescriptor as any);
+    const descriptorType = typeof descriptor?.type === 'string' ? String(descriptor.type) : '';
+    const systemPublicOrigins = await getSystemAppPublicOriginSet(descriptorType);
+
+    // Re-check bounty origins remain verified (revokes should take effect), except for system app public origins.
+    const originsToVerify = systemPublicOrigins
+      ? bounty.allowedOrigins.filter((o) => !systemPublicOrigins.has(String(o)))
+      : bounty.allowedOrigins;
+    const originChecks = await Promise.all(originsToVerify.map((o) => originAllowed(bounty.orgId, o)));
     if (!originChecks.every(Boolean)) continue;
 
     // Optional filters
     if (opts.minPayoutCents && (bounty.payoutCents ?? 0) < opts.minPayoutCents) continue;
-    const descriptor = (job.taskDescriptor as any) ?? (bounty.taskDescriptor as any);
     const jobTagsRaw = Array.isArray(descriptor?.capability_tags) ? descriptor.capability_tags : [];
     // For legacy bounties/jobs with no descriptor, assume browser capability is required.
     const jobTags: string[] = jobTagsRaw.length ? jobTagsRaw.filter((t: any) => typeof t === 'string') : ['browser'];
 
     if (opts.capabilityTag && !jobTags.includes(opts.capabilityTag)) continue;
 
-    if (opts.supportedCapabilityTags && opts.supportedCapabilityTags.length) {
+    if (opts.supportedCapabilityTags) {
       const supported = new Set(opts.supportedCapabilityTags.filter((t) => typeof t === 'string' && t.length));
       // Job requires a tag the worker doesn't claim to support.
+      // NOTE: An explicitly empty supportedCapabilityTags list means "match nothing".
       if (jobTags.some((t) => !supported.has(t))) continue;
     } else {
       // Fallback: if the worker explicitly disables browser, do not assign browser-required jobs.
@@ -1611,6 +1832,9 @@ export async function resetStore() {
       [
         'accepted_dedupe',
         'apps',
+        'app_supported_origins',
+        'marketplace_origin_templates',
+        'app_origin_requests',
         'alarm_notifications',
         'blocked_domains',
         'payouts',
@@ -1834,6 +2058,44 @@ export async function getAppSummary(): Promise<
 }
 
 export async function listPublicApps(opts: { page?: number; limit?: number } = {}): Promise<{ rows: App[]; total: number }> {
+  async function supportedOriginsByAppIds(appIds: string[]): Promise<Map<string, string[]>> {
+    const ids = Array.from(new Set(appIds.filter(Boolean)));
+    const map = new Map<string, string[]>();
+    if (ids.length === 0) return map;
+    const rows = await db
+      .selectFrom('app_supported_origins')
+      .select(['app_id', 'origin'])
+      .where('app_id', 'in', ids)
+      .orderBy('origin', 'asc')
+      .execute();
+    for (const r of rows) {
+      const arr = map.get(r.app_id) ?? [];
+      arr.push(String((r as any).origin ?? ''));
+      map.set(r.app_id, arr);
+    }
+    return map;
+  }
+
+  function mergeOrigins(a: string[], b: string[]): string[] {
+    const out: string[] = [];
+    const seen = new Set<string>();
+    for (const x of [...a, ...b]) {
+      const s = String(x ?? '').trim();
+      if (!s) continue;
+      if (seen.has(s)) continue;
+      seen.add(s);
+      out.push(s);
+    }
+    out.sort();
+    return out;
+  }
+
+  async function attachSupportedOrigins(apps: App[]): Promise<App[]> {
+    const ids = apps.map((a) => a.id);
+    const map = await supportedOriginsByAppIds(ids);
+    return apps.map((a) => ({ ...a, publicAllowedOrigins: mergeOrigins(a.publicAllowedOrigins ?? [], map.get(a.id) ?? []) }));
+  }
+
   const page = Math.max(1, Number(opts.page ?? 1));
   const limit = Math.max(1, Math.min(200, Number(opts.limit ?? 50)));
   const offset = (page - 1) * limit;
@@ -1841,7 +2103,7 @@ export async function listPublicApps(opts: { page?: number; limit?: number } = {
   const filtered = db.selectFrom('apps').where('public', '=', true).where('status', '=', 'active');
   const rows = await filtered.selectAll().orderBy('created_at', 'desc').offset(offset).limit(limit).execute();
   const totalRow = await filtered.select(({ fn }) => fn.countAll<number>().as('c')).executeTakeFirst();
-  return { rows: rows.map(appFromRow), total: Number(totalRow?.c ?? 0) };
+  return { rows: await attachSupportedOrigins(rows.map(appFromRow)), total: Number(totalRow?.c ?? 0) };
 }
 
 export async function getPublicAppBySlug(slug: string): Promise<App | undefined> {
@@ -1852,12 +2114,22 @@ export async function getPublicAppBySlug(slug: string): Promise<App | undefined>
     .where('public', '=', true)
     .where('status', '=', 'active')
     .executeTakeFirst();
-  return row ? appFromRow(row) : undefined;
+  if (!row) return undefined;
+  const app = appFromRow(row);
+  const supported = await db.selectFrom('app_supported_origins').select(['origin']).where('app_id', '=', app.id).orderBy('origin', 'asc').execute();
+  const sup = supported.map((r) => String((r as any).origin ?? '')).filter(Boolean);
+  const merged = Array.from(new Set([...(app.publicAllowedOrigins ?? []), ...sup])).filter(Boolean).sort();
+  return { ...app, publicAllowedOrigins: merged };
 }
 
 export async function getAppByTaskType(taskType: string): Promise<App | undefined> {
   const row = await db.selectFrom('apps').selectAll().where('task_type', '=', taskType).executeTakeFirst();
-  return row ? appFromRow(row) : undefined;
+  if (!row) return undefined;
+  const app = appFromRow(row);
+  const supported = await db.selectFrom('app_supported_origins').select(['origin']).where('app_id', '=', app.id).orderBy('origin', 'asc').execute();
+  const sup = supported.map((r) => String((r as any).origin ?? '')).filter(Boolean);
+  const merged = Array.from(new Set([...(app.publicAllowedOrigins ?? []), ...sup])).filter(Boolean).sort();
+  return { ...app, publicAllowedOrigins: merged };
 }
 
 export async function listAppsByOrg(orgId: string, opts: { page?: number; limit?: number } = {}): Promise<{ rows: App[]; total: number }> {
@@ -1868,7 +2140,30 @@ export async function listAppsByOrg(orgId: string, opts: { page?: number; limit?
   const filtered = db.selectFrom('apps').where('owner_org_id', '=', orgId);
   const rows = await filtered.selectAll().orderBy('created_at', 'desc').offset(offset).limit(limit).execute();
   const totalRow = await filtered.select(({ fn }) => fn.countAll<number>().as('c')).executeTakeFirst();
-  return { rows: rows.map(appFromRow), total: Number(totalRow?.c ?? 0) };
+  // NOTE: org apps are not expected to have supported-origins, but attach anyway (no-op) for consistency.
+  const mapped = rows.map(appFromRow);
+  if (mapped.length === 0) return { rows: [], total: Number(totalRow?.c ?? 0) };
+  const supported = await db
+    .selectFrom('app_supported_origins')
+    .select(['app_id', 'origin'])
+    .where(
+      'app_id',
+      'in',
+      mapped.map((a) => a.id)
+    )
+    .orderBy('origin', 'asc')
+    .execute();
+  const map = new Map<string, string[]>();
+  for (const r of supported) {
+    const arr = map.get(r.app_id) ?? [];
+    arr.push(String((r as any).origin ?? ''));
+    map.set(r.app_id, arr);
+  }
+  const out = mapped.map((a) => {
+    const merged = Array.from(new Set([...(a.publicAllowedOrigins ?? []), ...(map.get(a.id) ?? [])])).filter(Boolean).sort();
+    return { ...a, publicAllowedOrigins: merged };
+  });
+  return { rows: out, total: Number(totalRow?.c ?? 0) };
 }
 
 export async function listAllAppsAdmin(
@@ -1884,7 +2179,29 @@ export async function listAllAppsAdmin(
 
   const rows = await filtered.selectAll().orderBy('created_at', 'desc').offset(offset).limit(limit).execute();
   const totalRow = await filtered.select(({ fn }) => fn.countAll<number>().as('c')).executeTakeFirst();
-  return { rows: rows.map(appFromRow), total: Number(totalRow?.c ?? 0) };
+  const mapped = rows.map(appFromRow);
+  if (mapped.length === 0) return { rows: [], total: Number(totalRow?.c ?? 0) };
+  const supported = await db
+    .selectFrom('app_supported_origins')
+    .select(['app_id', 'origin'])
+    .where(
+      'app_id',
+      'in',
+      mapped.map((a) => a.id)
+    )
+    .orderBy('origin', 'asc')
+    .execute();
+  const map = new Map<string, string[]>();
+  for (const r of supported) {
+    const arr = map.get(r.app_id) ?? [];
+    arr.push(String((r as any).origin ?? ''));
+    map.set(r.app_id, arr);
+  }
+  const out = mapped.map((a) => {
+    const merged = Array.from(new Set([...(a.publicAllowedOrigins ?? []), ...(map.get(a.id) ?? [])])).filter(Boolean).sort();
+    return { ...a, publicAllowedOrigins: merged };
+  });
+  return { rows: out, total: Number(totalRow?.c ?? 0) };
 }
 
 export async function createOrgApp(
@@ -1915,6 +2232,7 @@ export async function createOrgApp(
       public: input.public ?? true,
       status: 'active',
       default_descriptor: input.defaultDescriptor ?? {},
+      public_allowed_origins_json: JSON.stringify([]),
       ui_schema: input.uiSchema ?? {},
       created_at: now,
       updated_at: now,
@@ -1970,6 +2288,180 @@ export async function adminSetAppStatus(appId: string, status: 'active' | 'disab
     .returningAll()
     .executeTakeFirst();
   return row ? appFromRow(row) : undefined;
+}
+
+export async function listSupportedOriginsForApp(appId: string): Promise<string[]> {
+  const rows = await db
+    .selectFrom('app_supported_origins')
+    .select(['origin'])
+    .where('app_id', '=', appId)
+    .orderBy('origin', 'asc')
+    .execute();
+  return rows.map((r) => String((r as any).origin ?? '')).filter(Boolean);
+}
+
+export async function addSupportedOriginForApp(appId: string, origin: string, opts: { notes?: string | null } = {}) {
+  const now = new Date();
+  const normalized = normalizeOrigin(origin);
+  await db
+    .insertInto('app_supported_origins')
+    .values({
+      app_id: appId,
+      origin: normalized,
+      notes: opts.notes ?? null,
+      created_at: now,
+    } satisfies Selectable<AppSupportedOriginsTable>)
+    .onConflict((oc) => oc.columns(['app_id', 'origin']).doNothing())
+    .execute();
+  return { appId, origin: normalized };
+}
+
+export async function createAppOriginRequest(
+  orgId: string,
+  appId: string,
+  origin: string,
+  opts: { message?: string | null } = {}
+) {
+  const id = nanoid(12);
+  const now = new Date();
+  const normalized = normalizeOrigin(origin);
+  const row = await db
+    .insertInto('app_origin_requests')
+    .values({
+      id,
+      org_id: orgId,
+      app_id: appId,
+      origin: normalized,
+      status: 'pending',
+      message: opts.message ?? null,
+      reviewed_by: null,
+      review_notes: null,
+      created_at: now,
+      reviewed_at: null,
+    } satisfies Selectable<AppOriginRequestsTable>)
+    .onConflict((oc) =>
+      oc.columns(['org_id', 'app_id', 'origin']).doUpdateSet({
+        status: 'pending',
+        message: opts.message ?? null,
+        reviewed_by: null,
+        review_notes: null,
+        created_at: now,
+        reviewed_at: null,
+      })
+    )
+    .returningAll()
+    .executeTakeFirst();
+  if (!row) throw new Error('origin_request_create_failed');
+  return {
+    id: row.id,
+    orgId: row.org_id,
+    appId: row.app_id,
+    origin: row.origin,
+    status: row.status,
+    message: row.message ?? null,
+    reviewedBy: row.reviewed_by ?? null,
+    reviewNotes: row.review_notes ?? null,
+    createdAt: (row.created_at as any as Date).toISOString(),
+    reviewedAt: row.reviewed_at ? (row.reviewed_at as any as Date).toISOString() : null,
+  };
+}
+
+export async function listAppOriginRequestsByOrg(orgId: string, opts: { appId?: string; status?: string; limit?: number } = {}) {
+  let q = db.selectFrom('app_origin_requests').selectAll().where('org_id', '=', orgId);
+  if (opts.appId) q = q.where('app_id', '=', opts.appId);
+  if (opts.status) q = q.where('status', '=', opts.status);
+  const limit = Math.max(1, Math.min(200, Number(opts.limit ?? 50)));
+  const rows = await q.orderBy('created_at', 'desc').limit(limit).execute();
+  return rows.map((row) => ({
+    id: row.id,
+    orgId: row.org_id,
+    appId: row.app_id,
+    origin: row.origin,
+    status: row.status,
+    message: row.message ?? null,
+    reviewedBy: row.reviewed_by ?? null,
+    reviewNotes: row.review_notes ?? null,
+    createdAt: (row.created_at as any as Date).toISOString(),
+    reviewedAt: row.reviewed_at ? (row.reviewed_at as any as Date).toISOString() : null,
+  }));
+}
+
+export async function listAppOriginRequestsAdmin(
+  opts: { status?: 'pending' | 'approved' | 'rejected'; limit?: number; appId?: string } = {}
+) {
+  let q = db.selectFrom('app_origin_requests').selectAll();
+  if (opts.status) q = q.where('status', '=', opts.status);
+  if (opts.appId) q = q.where('app_id', '=', opts.appId);
+  const limit = Math.max(1, Math.min(500, Number(opts.limit ?? 200)));
+  const rows = await q.orderBy('created_at', 'desc').limit(limit).execute();
+  return rows.map((row) => ({
+    id: row.id,
+    orgId: row.org_id,
+    appId: row.app_id,
+    origin: row.origin,
+    status: row.status,
+    message: row.message ?? null,
+    reviewedBy: row.reviewed_by ?? null,
+    reviewNotes: row.review_notes ?? null,
+    createdAt: (row.created_at as any as Date).toISOString(),
+    reviewedAt: row.reviewed_at ? (row.reviewed_at as any as Date).toISOString() : null,
+  }));
+}
+
+export async function reviewAppOriginRequestAdmin(
+  requestId: string,
+  action: 'approve' | 'reject',
+  opts: { reviewedBy?: string | null; reviewNotes?: string | null } = {}
+) {
+  const now = new Date();
+  return await db.transaction().execute(async (trx) => {
+    const existing = await trx
+      .selectFrom('app_origin_requests')
+      .selectAll()
+      .where('id', '=', requestId)
+      .executeTakeFirst();
+    if (!existing) throw new Error('not_found');
+
+    const status = action === 'approve' ? 'approved' : 'rejected';
+    const updated = await trx
+      .updateTable('app_origin_requests')
+      .set({
+        status,
+        reviewed_by: opts.reviewedBy ?? null,
+        review_notes: opts.reviewNotes ?? null,
+        reviewed_at: now,
+      })
+      .where('id', '=', requestId)
+      .returningAll()
+      .executeTakeFirst();
+    if (!updated) throw new Error('update_failed');
+
+    if (action === 'approve') {
+      await trx
+        .insertInto('app_supported_origins')
+        .values({
+          app_id: updated.app_id,
+          origin: updated.origin,
+          notes: `approved_from_request:${requestId}`,
+          created_at: now,
+        } satisfies Selectable<AppSupportedOriginsTable>)
+        .onConflict((oc) => oc.columns(['app_id', 'origin']).doNothing())
+        .execute();
+    }
+
+    return {
+      id: updated.id,
+      orgId: updated.org_id,
+      appId: updated.app_id,
+      origin: updated.origin,
+      status: updated.status,
+      message: updated.message ?? null,
+      reviewedBy: updated.reviewed_by ?? null,
+      reviewNotes: updated.review_notes ?? null,
+      createdAt: (updated.created_at as any as Date).toISOString(),
+      reviewedAt: updated.reviewed_at ? (updated.reviewed_at as any as Date).toISOString() : null,
+    };
+  });
 }
 
 export async function listBlockedDomainsAdmin(opts: { page?: number; limit?: number } = {}): Promise<{ rows: any[]; total: number }> {

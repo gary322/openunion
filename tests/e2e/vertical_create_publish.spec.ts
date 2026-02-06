@@ -1,8 +1,12 @@
 import { test, expect } from '@playwright/test';
 import http from 'http';
+import { fillRequiredAppForm, openDetails } from './helpers';
 
 test('create + publish via a vertical app page (github)', async ({ page }) => {
   test.setTimeout(90_000);
+
+  // Token-based connect is developer-oriented and hidden by default; enable it for deterministic E2E.
+  await page.addInitScript(() => localStorage.setItem('pw_dev_mode', '1'));
 
   // Stand up a deterministic origin that can be verified via http_file.
   let verifyToken = '';
@@ -37,8 +41,9 @@ test('create + publish via a vertical app page (github)', async ({ page }) => {
     expect(buyerToken).toMatch(/^pw_bu_/);
 
     // Add + verify the origin (real verification via http_file).
+    await openDetails(page, '#foldOrigins');
     await page.fill('#originUrl', origin);
-    await page.fill('#originMethod', 'http_file');
+    await page.selectOption('#originMethod', 'http_file');
 
     const addOriginRespPromise = page.waitForResponse((r) => r.url().includes('/api/origins') && r.request().method() === 'POST');
     await page.click('#btnAddOrigin');
@@ -48,29 +53,53 @@ test('create + publish via a vertical app page (github)', async ({ page }) => {
     verifyToken = String(addOriginJson?.origin?.token ?? '');
     expect(verifyToken).toMatch(/^pw_verify_/);
 
-    await page.click('#btnCheckOrigin');
+    const originRow = page.locator('#originsTbody tr').filter({ hasText: origin }).first();
+    await originRow.getByRole('button', { name: 'Check' }).click();
     await expect(page.locator('#originStatus')).toContainText('status=verified');
 
     // Use a vertical app page to create + publish the bounty with task_descriptor.
     await page.goto('/apps/app/github/');
     await expect(page.locator('#hdrTitle')).toContainText('GitHub Scan');
 
-    await page.fill('#buyerToken', buyerToken);
-    const originsLoadPromise = page.waitForResponse((r) => r.url().endsWith('/api/origins') && r.request().method() === 'GET');
-    await page.click('#btnSaveToken');
-    await originsLoadPromise;
+    // If we're already connected via the buyer portal session, no token is required.
+    // Otherwise, connect via token for deterministic E2E.
+    if (await page.locator('#connectRow').isVisible()) {
+      // Token-based connect is dev-only UI. `addInitScript` should have set `pw_dev_mode`,
+      // but occasionally CI ends up with the dev tab present-but-hidden. If that happens,
+      // force-enable dev mode and reload this page before proceeding.
+      if (!(await page.locator('#tabToken').isVisible().catch(() => false))) {
+        await page.evaluate(() => localStorage.setItem('pw_dev_mode', '1'));
+        await page.reload();
+        await expect(page.locator('#hdrTitle')).toContainText('GitHub Scan');
+      }
+      await page.click('#tabToken');
+      await page.fill('#buyerToken', buyerToken);
+      const originsLoadPromise = page.waitForResponse((r) => r.url().endsWith('/api/origins') && r.request().method() === 'GET');
+      await page.click('#btnSaveToken');
+      await originsLoadPromise;
+    } else {
+      await expect(page.locator('#connectedRow')).toBeVisible();
+    }
+
+    // The app page keeps advanced settings behind a fold by default.
+    await openDetails(page, '#settingsFold');
 
     await expect
       .poll(async () => {
         return await page.evaluate(() => Array.from((document.getElementById('originSelect') as HTMLSelectElement | null)?.options ?? []).map((o) => o.value));
       })
       .toContain(origin);
-    await page.selectOption('#originSelect', origin);
+    if (await page.locator('#originSelect').isVisible()) {
+      await page.selectOption('#originSelect', origin);
+    } else {
+      await expect(page.locator('#originSingleText')).toContainText(origin);
+    }
 
     const title = `GitHub E2E ${Date.now()}`;
     await page.fill('#payoutCents', '1200');
     await page.fill('#requiredProofs', '1');
     await page.fill('#title', title);
+    await fillRequiredAppForm(page);
 
     const createRespPromise = page.waitForResponse((r) => r.url().endsWith('/api/bounties') && r.request().method() === 'POST');
     const publishRespPromise = page.waitForResponse((r) => r.url().includes('/api/bounties/') && r.url().endsWith('/publish') && r.request().method() === 'POST');

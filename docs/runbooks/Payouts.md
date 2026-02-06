@@ -5,6 +5,22 @@
 - `proofwork_outbox_pending{topic="payout.confirm.requested"}` grows
 - Payout marked `failed` unexpectedly
 
+## Worker-side visibility (OpenClaw)
+
+If you run the OpenClaw Proofwork worker plugin, workers can check:
+- `/proofwork payouts pending|paid|failed|refunded`
+- `/proofwork earnings`
+- `/proofwork payout status` (to verify payout address)
+
+## Operator smoke checklist (payout pipeline)
+
+Before debugging individual payouts, confirm:
+- `workers/outbox-dispatcher.ts` is running
+- `workers/payout-runner.ts` is running
+- the payout signer is funded (Base ETH for gas + Base USDC for payouts)
+- splitter allowance exists (see “Approve USDC allowance for the splitter” below)
+- `PROOFWORK_FEE_WALLET_BASE` is configured
+
 ## Required config (crypto payouts)
 - `PAYMENTS_PROVIDER=crypto_base_usdc`
 - `BASE_RPC_URL`
@@ -12,6 +28,38 @@
 - `BASE_PAYOUT_SPLITTER_ADDRESS`
 - `PROOFWORK_FEE_BPS` (default 100 for 1%)
 - `PROOFWORK_FEE_WALLET_BASE`
+
+## Pinned rollout matrix (staging -> production)
+Use this exact matrix for Base USDC rollout. Any drift should block deployment.
+
+| Setting | Staging | Production |
+| --- | --- | --- |
+| `PAYMENTS_PROVIDER` | `crypto_base_usdc` | `crypto_base_usdc` |
+| `BASE_RPC_URL` | `https://mainnet.base.org` | `https://mainnet.base.org` |
+| `PROOFWORK_FEE_BPS` | `100` | `100` |
+| `PROOFWORK_FEE_WALLET_BASE` | `0xC9862D6326E93b818d7C735Dc8af6eBddD066bDF` | `0xC9862D6326E93b818d7C735Dc8af6eBddD066bDF` |
+| `KMS_PAYOUT_KEY_ID` | staging KMS key id | production KMS key id |
+| `BASE_PAYOUT_SPLITTER_ADDRESS` | staging splitter address | production splitter address |
+| signer EVM address | `0x574586869d9C3d2312e57728b36777597044CE92` | `0xeB2206f585BBb6Cf8723bca4f1430DDD6a2b4684` |
+
+## Release gates (must pass in order)
+1) **Stage preflight:** `npm run ops:payout:preflight` passes with no failures.
+2) **Stage smoke:** `npm run smoke:payout:remote` passes 3 consecutive times.
+3) **Stage burn-in:** monitor 24h with no growing payout backlog and no recurring failures.
+4) **Prod preflight:** `npm run ops:payout:preflight` passes against production config.
+5) **Prod canary:** one small payout smoke succeeds and confirms on-chain net + fee transfers.
+6) **Prod steady-state:** alerts/metrics are green for payout runner + outbox + confirmations.
+
+### Preflight command
+Run this before staging and production rollout:
+```bash
+npm run ops:payout:preflight -- --base-url https://<env-api-host>
+```
+
+If AWS credentials are not available in your current shell, use config-only mode:
+```bash
+SKIP_KMS_CHECK=1 npm run ops:payout:preflight -- --base-url https://<env-api-host>
+```
 
 Per-org platform fee (optional):
 - `orgs.platform_fee_bps` and `orgs.platform_fee_wallet_address` are configured by the buyer org (see Buyer portal “Platform fee” card or `PUT /api/org/platform-fee`).

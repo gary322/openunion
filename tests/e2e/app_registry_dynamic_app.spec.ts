@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import http from 'http';
+import { fillRequiredAppForm, openDetails } from './helpers';
 
 test('org can register an app and use the dynamic app page to create+publish', async ({ page }) => {
   test.setTimeout(90_000);
@@ -27,18 +28,19 @@ test('org can register an app and use the dynamic app page to create+publish', a
   try {
     // Buyer portal: login and mint a buyer API token.
     await page.goto('/buyer/index.html');
+    await openDetails(page, '#foldAccess');
     await page.click('#btnLogin');
     await expect(page.locator('#loginStatus')).toContainText('ok');
 
     await page.click('#btnCreateKey');
     await expect(page.locator('#keyStatus')).toContainText('token created');
 
-    const buyerToken = await page.locator('#buyerToken').inputValue();
-    expect(buyerToken).toMatch(/^pw_bu_/);
+    expect(await page.locator('#buyerToken').inputValue()).toMatch(/^pw_bu_/);
 
     // Add + verify origin via http_file.
+    await openDetails(page, '#foldOrigins');
     await page.fill('#originUrl', origin);
-    await page.fill('#originMethod', 'http_file');
+    await page.selectOption('#originMethod', 'http_file');
 
     const addOriginRespPromise = page.waitForResponse((r) => r.url().includes('/api/origins') && r.request().method() === 'POST');
     await page.click('#btnAddOrigin');
@@ -48,29 +50,17 @@ test('org can register an app and use the dynamic app page to create+publish', a
     verifyToken = String(addOriginJson?.origin?.token ?? '');
     expect(verifyToken).toMatch(/^pw_verify_/);
 
-    await page.click('#btnCheckOrigin');
+    const originRow = page.locator('#originsTbody tr').filter({ hasText: origin }).first();
+    await originRow.getByRole('button', { name: 'Check' }).click();
     await expect(page.locator('#originStatus')).toContainText('status=verified');
 
     // Create a registry app owned by this org.
-    const slug = `e2e-${Date.now()}`;
-    const taskType = `e2e_task_${Date.now()}`;
+    await openDetails(page, '#foldApps');
     const name = `E2E App ${Date.now()}`;
-    const defaultDescriptor = {
-      schema_version: 'v1',
-      type: taskType,
-      capability_tags: ['http', 'llm_summarize'],
-      input_spec: { query: 'hello' },
-      output_spec: { required_artifacts: [{ kind: 'log', label: 'report_summary' }] },
-      freshness_sla_sec: 3600,
-    };
-
-    await page.fill('#appSlug', slug);
-    await page.fill('#appTaskType', taskType);
     await page.fill('#appName', name);
-    await page.fill('#appDashboardUrl', ''); // force dynamic /apps/app/:slug
-    // Default descriptor is behind a progressive-disclosure <details>.
-    await page.locator('details:has(#appDefaultDescriptor)').evaluate((d: any) => (d.open = true));
-    await page.fill('#appDefaultDescriptor', JSON.stringify(defaultDescriptor, null, 2));
+    // Use a template to avoid requiring any JSON edits or identifier typing.
+    await page.selectOption('#appTemplate', 'generic_http');
+    await expect(page.locator('#appDashboardUrl')).toHaveValue(/\/apps\/app\//);
 
     const createAppRespPromise = page.waitForResponse((r) => r.url().endsWith('/api/org/apps') && r.request().method() === 'POST');
     await page.click('#btnCreateOrgApp');
@@ -84,14 +74,14 @@ test('org can register an app and use the dynamic app page to create+publish', a
 
     // Open the dynamic app page.
     const card = page.locator('.card').filter({ hasText: name });
-    await card.locator('a', { hasText: 'Open' }).click();
+    await card.locator('a', { hasText: 'Details' }).click();
     await expect(page.locator('#hdrTitle')).toContainText(name);
 
-    // Save buyer token for this app page (stored locally in browser storage).
-    await page.fill('#buyerToken', buyerToken);
-    const originsLoadPromise = page.waitForResponse((r) => r.url().endsWith('/api/origins') && r.request().method() === 'GET');
-    await page.click('#btnSaveToken');
-    await originsLoadPromise;
+    // Token should be auto-detected from localStorage and show the connected state.
+    await expect(page.locator('#connectedRow')).toBeVisible();
+
+    // The app page keeps advanced settings behind a fold by default.
+    await openDetails(page, '#settingsFold');
 
     // Select the verified origin we just proved via http_file.
     await expect
@@ -99,14 +89,19 @@ test('org can register an app and use the dynamic app page to create+publish', a
         return await page.evaluate(() => Array.from((document.getElementById('originSelect') as HTMLSelectElement | null)?.options ?? []).map((o) => o.value));
       })
       .toContain(origin);
-    await page.selectOption('#originSelect', origin);
-    await expect(page.locator('#originSelect')).toHaveValue(origin);
+    if (await page.locator('#originSelect').isVisible()) {
+      await page.selectOption('#originSelect', origin);
+      await expect(page.locator('#originSelect')).toHaveValue(origin);
+    } else {
+      await expect(page.locator('#originSingleText')).toContainText(origin);
+    }
 
     // Create + publish with a unique title.
     const title = `Dynamic app bounty ${Date.now()}`;
     await page.fill('#payoutCents', '1200');
     await page.fill('#requiredProofs', '1');
     await page.fill('#title', title);
+    await fillRequiredAppForm(page);
 
     const createRespPromise = page.waitForResponse((r) => r.url().endsWith('/api/bounties') && r.request().method() === 'POST');
     const publishRespPromise = page.waitForResponse(

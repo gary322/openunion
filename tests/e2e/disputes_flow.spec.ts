@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import http from 'http';
+import { openDetails } from './helpers.js';
 
 const VERIFIER_TOKEN = 'pw_vf_internal';
 const ADMIN_TOKEN = 'pw_adm_internal';
@@ -30,6 +31,7 @@ test('buyer can open a dispute and admin can resolve (refund) via UI', async ({ 
   try {
     // Buyer portal: login and mint a buyer API token.
     await page.goto('/buyer/index.html');
+    await openDetails(page, '#foldAccess');
     await page.click('#btnLogin');
     await expect(page.locator('#loginStatus')).toContainText('ok');
 
@@ -43,8 +45,9 @@ test('buyer can open a dispute and admin can resolve (refund) via UI', async ({ 
     expect(buyerToken).toMatch(/^pw_bu_/);
 
     // Add + verify origin via http_file.
+    await openDetails(page, '#foldOrigins');
     await page.fill('#originUrl', origin);
-    await page.fill('#originMethod', 'http_file');
+    await page.selectOption('#originMethod', 'http_file');
     const addOriginRespPromise = page.waitForResponse((r) => r.url().includes('/api/origins') && r.request().method() === 'POST');
     await page.click('#btnAddOrigin');
     const addOriginResp = await addOriginRespPromise;
@@ -53,7 +56,8 @@ test('buyer can open a dispute and admin can resolve (refund) via UI', async ({ 
     verifyToken = String(addOriginJson?.origin?.token ?? '');
     expect(verifyToken).toMatch(/^pw_verify_/);
 
-    await page.click('#btnCheckOrigin');
+    const originRow = page.locator('#originsTbody tr').filter({ hasText: origin }).first();
+    await originRow.getByRole('button', { name: 'Check' }).click();
     await expect(page.locator('#originStatus')).toContainText('status=verified');
 
     // Create + publish a bounty with a short dispute window so we can test dispute flows.
@@ -93,10 +97,7 @@ test('buyer can open a dispute and admin can resolve (refund) via UI', async ({ 
     const workerToken = await page.locator('#token').inputValue();
     expect(workerToken).toMatch(/^pw_wk_/);
 
-    await page.click('#btnNext');
-    await expect(page.locator('#jobStatus')).toContainText('state=claimable');
-
-    await page.click('#btnClaim');
+    await page.click('#btnClaimNext');
     await expect(page.locator('#jobStatus')).toContainText('claimed leaseNonce=');
 
     // Upload a minimal PNG (scanner is basic in E2E). Use the guided required-outputs flow.
@@ -165,7 +166,9 @@ test('buyer can open a dispute and admin can resolve (refund) via UI', async ({ 
 
     // Buyer UI: open dispute.
     await page.goto('/buyer/index.html');
+    await openDetails(page, '#foldAccess');
     await page.fill('#buyerToken', buyerToken);
+    await openDetails(page, '#foldDisputes');
     await page.fill('#disputePayoutId', payoutId);
     await page.fill('#disputeReason', 'Incorrect result');
 

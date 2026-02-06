@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { fillRequiredAppForm, openDetails } from './helpers';
 
 const APPS: Array<{ slug: string; titleIncludes: string }> = [
   { slug: 'clips', titleIncludes: 'Clips' },
@@ -21,15 +22,20 @@ test('apps pages: exercise create draft, create+publish, refresh, load jobs on e
   const buyerToken = String(apiKeyJson?.token ?? '');
   expect(buyerToken).toMatch(/^pw_bu_/);
 
+  // App pages read buyer token from localStorage; set it once for the whole test to avoid
+  // re-connecting on every app navigation.
+  await page.addInitScript(({ token }) => {
+    localStorage.setItem('pw_buyer_token', token);
+    // Create-draft is developer-oriented and intentionally hidden by default.
+    localStorage.setItem('pw_dev_mode', '1');
+  }, { token: buyerToken });
+
   for (const app of APPS) {
     await page.goto(`/apps/app/${app.slug}/`);
     await expect(page.locator('#hdrTitle')).toContainText(app.titleIncludes);
 
-    // Connect: save buyer token to localStorage to load verified origins.
-    await page.fill('#buyerToken', buyerToken);
-    const originsLoadPromise = page.waitForResponse((r) => r.url().endsWith('/api/origins') && r.request().method() === 'GET');
-    await page.click('#btnSaveToken');
-    await originsLoadPromise;
+    // Connected state should be visible (token is injected via initScript).
+    await expect(page.locator('#connectedRow')).toBeVisible();
 
     // Describe: (optional) apply the first template if available.
     const hasTemplates = (await page.locator('#template option').count()) > 1;
@@ -38,13 +44,23 @@ test('apps pages: exercise create draft, create+publish, refresh, load jobs on e
       await page.click('#btnApplyTemplate');
     }
 
+    // Fill any required friendly-form inputs that templates didn't populate.
+    await fillRequiredAppForm(page);
+
+    // Most config is intentionally tucked behind a fold so the default workflow stays simple.
+    await openDetails(page, '#settingsFold');
+
     // Publish: choose a verified origin and set payout.
     await expect
       .poll(async () => {
         return await page.evaluate(() => Array.from((document.getElementById('originSelect') as HTMLSelectElement | null)?.options ?? []).map((o) => o.value));
       })
       .toContain('https://example.com');
-    await page.selectOption('#originSelect', 'https://example.com');
+    if (await page.locator('#originSelect').isVisible()) {
+      await page.selectOption('#originSelect', 'https://example.com');
+    } else {
+      await expect(page.locator('#originSingleText')).toContainText('https://example.com');
+    }
 
     await page.fill('#payoutCents', '1200');
     await page.fill('#requiredProofs', '1');

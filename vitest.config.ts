@@ -4,12 +4,8 @@ export default defineConfig({
   test: {
     include: ['tests/**/*.test.ts'],
     exclude: ['tests/e2e/**', 'node_modules/**', 'dist/**', 'build/**', 'var/**'],
-    // Shared Postgres DB is used by integration tests; avoid file-level parallelism.
+    // Many tests share a single DB/store; keep execution single-worker to avoid cross-test races.
     fileParallelism: false,
-    poolOptions: {
-      threads: {
-        singleThread: true,
-      },
-    },
+    maxWorkers: 1,
   },
 });

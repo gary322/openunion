@@ -32,8 +32,21 @@ export async function runMigrations(migrationsDir = path.resolve(process.cwd(), 
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
+      // Concurrency-safe claim: multiple ECS services can start simultaneously and all call
+      // runMigrations(). Claim the migration filename *first* so only one process runs the SQL.
+      //
+      // Unique index semantics ensure other contenders will block here and then no-op.
+      const claimed = await client.query<{ filename: string }>(
+        'INSERT INTO schema_migrations(filename) VALUES ($1) ON CONFLICT DO NOTHING RETURNING filename',
+        [file]
+      );
+      if (claimed.rowCount === 0) {
+        await client.query('ROLLBACK');
+        skipped.push(file);
+        continue;
+      }
+
       await client.query(sql);
-      await client.query('INSERT INTO schema_migrations(filename) VALUES ($1)', [file]);
       await client.query('COMMIT');
       didApply.push(file);
     } catch (err) {
@@ -61,4 +74,3 @@ if (process.env.NODE_ENV !== 'test' && import.meta.url === `file://${process.arg
       await pool.end();
     });
 }
-

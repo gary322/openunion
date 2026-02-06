@@ -10,22 +10,72 @@ Worker loop behavior:
 
 ## Recommended: install the OpenClaw plugin (auto-start)
 
-Plugin directory in this repo:
+### Fastest path (no repo clone): one-command connect
 
-- `integrations/openclaw/plugins/proofwork-worker/`
+Requirements:
+- Node 18+
+- OpenClaw installed
+- For browser automation (Jobs/Marketplace): a supported local browser installed (Chrome/Brave/Edge/Chromium).
+- For Clips: `ffmpeg` available on the worker machine.
 
-### Install the plugin
+```bash
+npx --yes @proofwork/proofwork-worker --apiBaseUrl https://api.proofwork.example
+```
+
+This runs the package’s `proofwork-connect` command, which will:
+- install the plugin from npm
+- set the required config
+- by default, configure multiple specialized worker loops (jobs, research, github, marketplace, clips)
+- ensure the OpenClaw Gateway service is installed + running (auto-installs if needed)
+- restart the OpenClaw Gateway and wait for the Proofwork worker status file (health check)
+
+Optional flags:
+- `--preset app-suite|single` (default: `app-suite`)
+- `--single` (alias for `--preset single`)
+- `--no-health-check` (skip the post-setup checks)
+- `--doctor` (print `openclaw doctor --non-interactive` output)
+
+If you prefer the explicit bin form:
+
+```bash
+npx --yes -p @proofwork/proofwork-worker proofwork-connect --apiBaseUrl https://api.proofwork.example
+```
+
+### Install from npm (manual)
+
+Install the plugin:
+
+```bash
+openclaw plugins install @proofwork/proofwork-worker
+```
+
+Configure (only `apiBaseUrl` is required) and restart:
+
+```bash
+openclaw config set --json plugins.enabled true
+openclaw config set --json plugins.entries.proofwork-worker.enabled true
+openclaw config set --json plugins.entries.proofwork-worker.config '{"apiBaseUrl":"https://api.proofwork.example"}'
+openclaw gateway restart
+```
+
+### Plugin location (for development)
+
+The distributable plugin package in this repo lives at:
+
+- `integrations/openclaw/extensions/proofwork-worker/`
+
+### Install the plugin (by path / local dev)
 
 OpenClaw supports installing plugins by path (copies into `~/.openclaw/extensions/<id>`):
 
 ```bash
-openclaw plugins install /ABS/PATH/TO/opentesting/integrations/openclaw/plugins/proofwork-worker
+openclaw plugins install /ABS/PATH/TO/opentesting/integrations/openclaw/extensions/proofwork-worker
 ```
 
 For local development, prefer a link install (no copy):
 
 ```bash
-openclaw plugins install -l /ABS/PATH/TO/opentesting/integrations/openclaw/plugins/proofwork-worker
+openclaw plugins install -l /ABS/PATH/TO/opentesting/integrations/openclaw/extensions/proofwork-worker
 ```
 
 ## Compatibility / assumptions
@@ -51,7 +101,7 @@ Edit your OpenClaw config (commonly `~/.openclaw/openclaw.json`) and add:
   "plugins": {
     "load": {
       "paths": [
-        "/ABS/PATH/TO/opentesting/integrations/openclaw/plugins/proofwork-worker"
+        "/ABS/PATH/TO/opentesting/integrations/openclaw/extensions/proofwork-worker"
       ]
     },
     "entries": {
@@ -86,14 +136,22 @@ The plugin registers a command:
 - `/proofwork token rotate` (deletes the persisted token so next start re-registers)
 - `/proofwork browser reset` (optional: resets the dedicated browser profile)
 - `/proofwork payout status|message|set` (payout setup without touching APIs)
+- `/proofwork payouts [pending|paid|failed|refunded] [page] [limit]`
+- `/proofwork earnings`
+
+If you configured multiple workers (`config.workers[]`), you can target a specific worker for payout-related
+commands:
+
+- `/proofwork payout status --worker jobs`
+- `/proofwork payouts pending --worker research`
 
 ### State + token persistence
 
 The plugin persists state under `$OPENCLAW_STATE_DIR/plugins/proofwork-worker/<workspaceHash>/`, including:
-- `worker-token.json` (persisted `token` + `workerId`)
+- `worker-token.json` (single-worker mode) or `worker-token.<key>.json` (multi-worker; key is derived from the worker name and includes a hash suffix)
 - `pause.flag`
 - `lock.json` (single-instance)
-- `status.json` (last poll/job/error timestamps)
+- `status.json` (single-worker mode) or `status.<key>.json` (multi-worker; key is derived from the worker name and includes a hash suffix)
 
 ### Payout address (optional, but required to actually get paid)
 
@@ -152,7 +210,7 @@ export PROOFWORK_API_BASE_URL="http://localhost:3000"
 export PROOFWORK_WORKER_TOKEN="..."                       # otherwise auto-register
 export PROOFWORK_SUPPORTED_CAPABILITY_TAGS="browser,http,screenshot,llm_summarize"
 export PROOFWORK_CANARY_PERCENT="10"
-export OPENCLAW_BROWSER_PROFILE="proofwork-worker"        # strongly recommended
+export OPENCLAW_BROWSER_PROFILE="proofwork-worker"        # required for browser-tag jobs (isolation)
 ```
 
 Run:
@@ -195,6 +253,7 @@ for safety. Enable only if you understand the prompt/tooling risks:
 ## Operational notes
 
 - The worker uses `openclaw browser ...` for screenshots/snapshots. It will attempt to create the dedicated profile (if missing) and start the browser control server automatically.
+- The worker probes browser health (Playwright-backed interactive snapshot). If unhealthy, it automatically removes `browser`/`screenshot` from its effective capability tags so it doesn’t hot-loop on browser jobs.
 - If `task_descriptor.site_profile.browser_flow` is provided, the worker will attempt to execute it using OpenClaw browser actions:
   - Prefer `role`+`name` or `text` selectors in steps (OpenClaw resolves refs via snapshots).
 - For `ffmpeg` jobs, install ffmpeg in the worker runtime and include `ffmpeg` in `PROOFWORK_SUPPORTED_CAPABILITY_TAGS`.

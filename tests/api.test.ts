@@ -561,7 +561,7 @@ describe('Buyer bounty lifecycle', () => {
     const descriptor = {
       type: 'clips_highlights',
       capability_tags: ['ffmpeg', 'llm_summarize'],
-      input_spec: { vod_url: 'https://vod.example/test' },
+      input_spec: { vod_url: 'https://example.com/test.mp4' },
       output_spec: { mp4: true },
       freshness_sla_sec: 3600,
     };
@@ -1069,7 +1069,8 @@ describe('Lease reaper', () => {
     const j = await getJob(job.jobId);
     expect(j).toBeTruthy();
     if (j) {
-      j.leaseExpiresAt = Date.now() - 1;
+      // Ensure expiry is unambiguous even if system time jitter causes Date.now() granularity issues.
+      j.leaseExpiresAt = Date.now() - 60_000;
       await updateJob(j);
     }
     const reap = await request(app.server).post('/api/internal/reap-leases').send();

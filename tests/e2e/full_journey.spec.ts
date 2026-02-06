@@ -6,6 +6,7 @@ import { fileURLToPath } from 'url';
 import { readFile } from 'fs/promises';
 import { Contract, ContractFactory, HDNodeWallet, JsonRpcProvider, Wallet, getAddress } from 'ethers';
 import pg from 'pg';
+import { openDetails } from './helpers.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -149,10 +150,12 @@ test('buyer → bounty → worker → upload → verify (gateway) → payout (lo
 
     // --- Buyer portal: login → create key → add+verify origin → create+publish bounty.
     await page.goto('/buyer/index.html');
+    await openDetails(page, '#foldAccess');
     await page.click('#btnLogin');
     await expect(page.locator('#loginStatus')).toContainText('ok');
 
     // Configure org platform fee: 10% to platformWallet.
+    await openDetails(page, '#foldSettings');
     await page.fill('#pfBps', '1000');
     await page.fill('#pfWallet', platformWallet.address);
     await page.click('#btnSetPlatformFee');
@@ -173,8 +176,9 @@ test('buyer → bounty → worker → upload → verify (gateway) → payout (lo
     baseProofworkFeeCents = Number(e0?.totals?.proofworkFeeCents ?? 0);
     basePaidCount = Number(e0?.totals?.paidCount ?? 0);
 
+    await openDetails(page, '#foldOrigins');
     await page.fill('#originUrl', targetOrigin);
-    await page.fill('#originMethod', 'http_file');
+    await page.selectOption('#originMethod', 'http_file');
     const addOriginRespPromise = page.waitForResponse(
       (r) => r.url().includes('/api/origins') && r.request().method() === 'POST'
     );
@@ -187,8 +191,15 @@ test('buyer → bounty → worker → upload → verify (gateway) → payout (lo
     await expect(page.locator('#originStatus')).toContainText('added origin');
 
     // Auto-verifies pending origins.
-    await page.click('#btnCheckOrigin');
+    const originRow = page.locator('#originsTbody tr').filter({ hasText: targetOrigin }).first();
+    await originRow.getByRole('button', { name: 'Check' }).click();
     await expect(page.locator('#originStatus')).toContainText('status=verified');
+
+    // Advanced bounty form is Dev-only and collapsed by default; enable Dev mode and open it.
+    await page.waitForSelector('#pwDevToggle');
+    await page.click('#pwDevToggle');
+    await openDetails(page, '#foldWork');
+    await page.locator('#workAdvanced').evaluate((d: any) => (d.open = true));
 
     // Create a bounty with a payout higher than the seeded demo bounty so the worker selects it.
     await page.fill('#bTitle', `E2E bounty ${Date.now()}`);
@@ -231,10 +242,7 @@ test('buyer → bounty → worker → upload → verify (gateway) → payout (lo
     await page.click('#btnSetPayoutAddress');
     await expect(page.locator('#payoutAddrStatus')).toContainText('verified');
 
-    await page.click('#btnNext');
-    await expect(page.locator('#jobStatus')).toContainText('state=claimable');
-
-    await page.click('#btnClaim');
+    await page.click('#btnClaimNext');
     await expect(page.locator('#jobStatus')).toContainText('claimed leaseNonce=');
 
     // Upload a minimal PNG (scanner checks signature only).
