@@ -27,6 +27,7 @@
     "load:upload-burst": "node scripts/load/upload-burst.js",
     "load:backlog-verifier": "node scripts/load/backlog-verifier.js",
     "smoke:remote": "tsx scripts/smoke_remote.ts",
+    "smoke:apps:remote": "tsx scripts/smoke_apps_remote.ts",
     "smoke:payout:remote": "tsx scripts/smoke_payout_base_remote.ts",
     "smoke:stripe:remote": "tsx scripts/smoke_stripe_remote.ts",
     "smoke:stripe:real:remote": "tsx scripts/smoke_stripe_real_checkout_remote.ts",
