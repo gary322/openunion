@@ -106,7 +106,8 @@
 
               <div class="pw-tabs" role="tablist" aria-label="Connect options">
                 <button class="pw-tab" id="tabSignIn" type="button" role="tab" aria-selected="true" aria-controls="panelSignIn">Sign in</button>
-                <button class="pw-tab" id="tabToken" type="button" role="tab" aria-selected="false" aria-controls="panelToken">API token</button>
+                <!-- Token mode is developer-oriented; keep it out of the happy-path UX. -->
+                <button class="pw-tab pw-dev" id="tabToken" type="button" role="tab" aria-selected="false" aria-controls="panelToken">API token</button>
               </div>
 
               <div class="pw-tabpanels">
@@ -128,7 +129,7 @@
                   <div id="loginStatus" class="pw-status" role="status"></div>
                 </div>
 
-                <div class="pw-tabpanel" id="panelToken" role="tabpanel" aria-labelledby="tabToken" hidden>
+                <div class="pw-tabpanel pw-dev" id="panelToken" role="tabpanel" aria-labelledby="tabToken" hidden>
                   <div class="pw-row">
                     <div class="pw-field">
                       <label for="buyerToken">Buyer token</label>
@@ -297,7 +298,7 @@
             <div class="pw-actionbar-sub" id="actionbarSub">Connect, pick an origin, and fill required fields.</div>
           </div>
           <div class="pw-actions">
-            <button class="pw-btn" id="btnCreateDraft" type="button">Create draft</button>
+            <button class="pw-btn pw-dev" id="btnCreateDraft" type="button">Create draft</button>
             <button class="pw-btn primary" id="btnCreatePublish" type="button">Create + publish</button>
           </div>
         </div>
