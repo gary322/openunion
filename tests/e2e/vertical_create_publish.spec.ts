@@ -5,9 +5,6 @@ import { fillRequiredAppForm, openDetails } from './helpers';
 test('create + publish via a vertical app page (github)', async ({ page }) => {
   test.setTimeout(90_000);
 
-  // Token-based connect is developer-oriented and hidden by default; enable it for deterministic E2E.
-  await page.addInitScript(() => localStorage.setItem('pw_dev_mode', '1'));
-
   // Stand up a deterministic origin that can be verified via http_file.
   let verifyToken = '';
   const originServer = http.createServer((req, res) => {
@@ -39,6 +36,8 @@ test('create + publish via a vertical app page (github)', async ({ page }) => {
 
     const buyerToken = await page.locator('#buyerToken').inputValue();
     expect(buyerToken).toMatch(/^pw_bu_/);
+    // Ensure the app page can connect without relying on Dev-only token UI.
+    await page.evaluate((t) => localStorage.setItem('pw_buyer_token', String(t || '')), buyerToken);
 
     // Add + verify the origin (real verification via http_file).
     await openDetails(page, '#foldOrigins');
@@ -61,25 +60,8 @@ test('create + publish via a vertical app page (github)', async ({ page }) => {
     await page.goto('/apps/app/github/');
     await expect(page.locator('#hdrTitle')).toContainText('GitHub Scan');
 
-    // If we're already connected via the buyer portal session, no token is required.
-    // Otherwise, connect via token for deterministic E2E.
-    if (await page.locator('#connectRow').isVisible()) {
-      // Token-based connect is dev-only UI. `addInitScript` should have set `pw_dev_mode`,
-      // but occasionally CI ends up with the dev tab present-but-hidden. If that happens,
-      // force-enable dev mode and reload this page before proceeding.
-      if (!(await page.locator('#tabToken').isVisible().catch(() => false))) {
-        await page.evaluate(() => localStorage.setItem('pw_dev_mode', '1'));
-        await page.reload();
-        await expect(page.locator('#hdrTitle')).toContainText('GitHub Scan');
-      }
-      await page.click('#tabToken');
-      await page.fill('#buyerToken', buyerToken);
-      const originsLoadPromise = page.waitForResponse((r) => r.url().endsWith('/api/origins') && r.request().method() === 'GET');
-      await page.click('#btnSaveToken');
-      await originsLoadPromise;
-    } else {
-      await expect(page.locator('#connectedRow')).toBeVisible();
-    }
+    // Connect should be already satisfied via localStorage token.
+    await expect(page.locator('#connectedRow')).toBeVisible();
 
     // The app page keeps advanced settings behind a fold by default.
     await openDetails(page, '#settingsFold');
