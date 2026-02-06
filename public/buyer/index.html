@@ -152,11 +152,11 @@
 
               <div class="pw-row">
                 <div class="pw-field">
-                  <label>Email</label>
+                  <label for="email">Email</label>
                   <input class="pw-input" id="email" value="buyer@example.com" />
                 </div>
                 <div class="pw-field">
-                  <label>Password</label>
+                  <label for="password">Password</label>
                   <input class="pw-input" id="password" type="password" value="password" />
                 </div>
               </div>
@@ -184,22 +184,22 @@
 
               <div class="pw-row">
                 <div class="pw-field">
-                  <label>Org name</label>
+                  <label for="regOrgName">Org name</label>
                   <input class="pw-input" id="regOrgName" value="My Platform" />
                 </div>
                 <div class="pw-field">
-                  <label>API key name</label>
+                  <label for="regApiKeyName">API key name</label>
                   <input class="pw-input" id="regApiKeyName" value="default" />
                 </div>
               </div>
 
               <div class="pw-row">
                 <div class="pw-field">
-                  <label>Email</label>
+                  <label for="regEmail">Email</label>
                   <input class="pw-input" id="regEmail" placeholder="you@company.com" />
                 </div>
                 <div class="pw-field">
-                  <label>Password</label>
+                  <label for="regPassword">Password</label>
                   <input class="pw-input" id="regPassword" type="password" placeholder="min 8 chars" />
                 </div>
               </div>
@@ -225,7 +225,7 @@
 
               <div class="pw-row">
                 <div class="pw-field">
-                  <label>API key name</label>
+                  <label for="keyName">API key name</label>
                   <input class="pw-input" id="keyName" value="default" />
                 </div>
                 <div class="pw-field">
@@ -235,7 +235,7 @@
               </div>
 
               <div class="pw-field">
-                <label>Buyer token</label>
+                <label for="buyerToken">Buyer token</label>
                 <input class="pw-input" id="buyerToken" placeholder="pw_bu_..." />
               </div>
 
@@ -247,7 +247,7 @@
 
               <div class="pw-row">
                 <div class="pw-field">
-                  <label>Revoke API key (id)</label>
+                  <label for="revokeKeyId">Revoke API key (id)</label>
                   <input class="pw-input" id="revokeKeyId" placeholder="apiKeyId" />
                 </div>
                 <div class="pw-field">
@@ -304,11 +304,11 @@
 
               <div class="pw-row">
                 <div class="pw-field">
-                  <label>Origin URL</label>
+                  <label for="originUrl">Origin URL</label>
                   <input class="pw-input" id="originUrl" value="https://example.com" />
                 </div>
                 <div class="pw-field">
-                  <label>Method</label>
+                  <label for="originMethod">Method</label>
                   <select class="pw-select" id="originMethod">
                     <option value="dns_txt" selected>dns_txt (DNS TXT record)</option>
                     <option value="http_file">http_file (serve a file)</option>
@@ -327,7 +327,7 @@
                 <div class="pw-details-body">
                   <div class="pw-row">
                     <div class="pw-field">
-                      <label>Origin ID</label>
+                      <label for="originId">Origin ID</label>
                       <input class="pw-input" id="originId" placeholder="originId" />
                     </div>
                     <div class="pw-field">
@@ -402,7 +402,7 @@
               <p class="pw-muted">If your platform UI runs in the browser, add its origin here. One origin per line.</p>
 
               <div class="pw-field">
-                <label>Allowed origins</label>
+                <label for="corsOrigins">Allowed origins</label>
                 <textarea class="pw-textarea" id="corsOrigins" placeholder="https://app.yourdomain.com"></textarea>
               </div>
 
@@ -444,11 +444,11 @@
 
               <div class="pw-row">
                 <div class="pw-field">
-                  <label>App name</label>
+                  <label for="appName">App name</label>
                   <input class="pw-input" id="appName" placeholder="e.g. Flight deals monitor" />
                 </div>
                 <div class="pw-field">
-                  <label>Template</label>
+                  <label for="appTemplate">Template</label>
                   <select class="pw-select" id="appTemplate">
                     <option value="github_scan">GitHub scan (http + summarize + screenshot)</option>
                     <option value="research_arxiv">Research plan (arXiv, http + summarize)</option>
@@ -461,7 +461,7 @@
 
               <div class="pw-row">
                 <div class="pw-field">
-                  <label>Dashboard URL (optional)</label>
+                  <label for="appDashboardUrl">Dashboard URL (optional)</label>
                   <input class="pw-input" id="appDashboardUrl" placeholder="Auto: /apps/app/<slug>/" />
                 </div>
               </div>
@@ -471,12 +471,12 @@
                 <div class="pw-details-body">
                   <div class="pw-row">
                     <div class="pw-field">
-                      <label>Slug</label>
+                      <label for="appSlug">Slug</label>
                       <input class="pw-input" id="appSlug" placeholder="my-app" />
                       <div class="pw-muted">Used in URLs. Auto-generated from name.</div>
                     </div>
                     <div class="pw-field">
-                      <label>Task type</label>
+                      <label for="appTaskType">Task type</label>
                       <input class="pw-input" id="appTaskType" placeholder="my_task_type" />
                       <div class="pw-muted">Must match <span class="pw-mono">task_descriptor.type</span>. Auto-generated from name.</div>
                     </div>
@@ -497,6 +497,7 @@
               <details class="pw-details pw-dev" id="appAdvancedDescriptor">
                 <summary>Developer: defaultDescriptor JSON (task_descriptor)</summary>
                 <div class="pw-details-body">
+                  <label class="pw-offscreen" for="appDefaultDescriptor">defaultDescriptor JSON</label>
                   <textarea class="pw-textarea" id="appDefaultDescriptor" placeholder="{\"schema_version\":\"v1\",\"type\":\"...\",...}"></textarea>
                 </div>
               </details>
@@ -504,6 +505,7 @@
               <details class="pw-details pw-dev" id="appAdvancedUiSchema">
                 <summary>Developer: uiSchema JSON (friendly form)</summary>
                 <div class="pw-details-body">
+                  <label class="pw-offscreen" for="appUiSchema">uiSchema JSON</label>
                   <textarea class="pw-textarea" id="appUiSchema" placeholder="{\"sections\":[...]}"></textarea>
                 </div>
               </details>
@@ -629,11 +631,11 @@
 
               <div class="pw-row">
                 <div class="pw-field">
-                  <label>Payout status</label>
+                  <label for="payoutStatusFilter">Payout status</label>
                   <input class="pw-input" id="payoutStatusFilter" placeholder="pending|paid|failed|refunded" />
                 </div>
                 <div class="pw-field">
-                  <label>Task type</label>
+                  <label for="payoutTaskTypeFilter">Task type</label>
                   <input class="pw-input" id="payoutTaskTypeFilter" placeholder="github_scan" />
                 </div>
               </div>
@@ -676,16 +678,16 @@
 
               <div class="pw-row">
                 <div class="pw-field">
-                  <label>Payout ID</label>
+                  <label for="disputePayoutId">Payout ID</label>
                   <input class="pw-input" id="disputePayoutId" placeholder="payoutId" />
                 </div>
                 <div class="pw-field">
-                  <label>Submission ID (optional)</label>
+                  <label for="disputeSubmissionId">Submission ID (optional)</label>
                   <input class="pw-input" id="disputeSubmissionId" placeholder="submissionId" />
                 </div>
               </div>
               <div class="pw-field">
-                <label>Reason</label>
+                <label for="disputeReason">Reason</label>
                 <textarea class="pw-textarea" id="disputeReason">Incorrect result</textarea>
               </div>
 
@@ -696,7 +698,7 @@
 
               <div class="pw-row">
                 <div class="pw-field">
-                  <label>Cancel dispute (id)</label>
+                  <label for="cancelDisputeId">Cancel dispute (id)</label>
                   <input class="pw-input" id="cancelDisputeId" placeholder="disputeId" />
                 </div>
                 <div class="pw-field">
@@ -736,11 +738,11 @@
 
               <div class="pw-row">
                 <div class="pw-field">
-                  <label>Platform fee bps</label>
+                  <label for="pfBps">Platform fee bps</label>
                   <input class="pw-input" id="pfBps" value="0" />
                 </div>
                 <div class="pw-field">
-                  <label>Wallet (Base / EVM address)</label>
+                  <label for="pfWallet">Wallet (Base / EVM address)</label>
                   <input class="pw-input" id="pfWallet" placeholder="0x..." />
                 </div>
               </div>
@@ -768,17 +770,17 @@
 
               <div class="pw-row">
                 <div class="pw-field">
-                  <label>Daily spend limit (cents)</label>
+                  <label for="quotaDailySpend">Daily spend limit (cents)</label>
                   <input class="pw-input" id="quotaDailySpend" placeholder="e.g. 100000 (=$1000)" />
                 </div>
                 <div class="pw-field">
-                  <label>Monthly spend limit (cents)</label>
+                  <label for="quotaMonthlySpend">Monthly spend limit (cents)</label>
                   <input class="pw-input" id="quotaMonthlySpend" placeholder="e.g. 1000000 (=$10k)" />
                 </div>
               </div>
               <div class="pw-row">
                 <div class="pw-field">
-                  <label>Max open jobs</label>
+                  <label for="quotaMaxOpenJobs">Max open jobs</label>
                   <input class="pw-input" id="quotaMaxOpenJobs" placeholder="e.g. 100" />
                 </div>
                 <div class="pw-field">
