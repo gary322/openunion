@@ -94,7 +94,7 @@ To verify “real Stripe delivers webhooks”:
 
 ### Automated real Checkout smoke (Playwright)
 
-You can automate the real Stripe Checkout with Playwright (recommended for staging when `PUBLIC_BASE_URL` is HTTPS):
+You can run a real Stripe Checkout smoke (recommended for staging when `PUBLIC_BASE_URL` is HTTPS):
 
 ```bash
 BASE_URL=https://<PUBLIC_BASE_URL> npm run smoke:stripe:real:remote
@@ -103,9 +103,16 @@ BASE_URL=https://<PUBLIC_BASE_URL> npm run smoke:stripe:real:remote
 This will:
 - create a buyer (or reuse `SMOKE_BUYER_EMAIL` / `SMOKE_BUYER_PASSWORD`)
 - create a Checkout Session
-- complete the Checkout using Stripe test card `4242 4242 4242 4242`
-- poll `/api/billing/account` until the webhook credits the balance
 
+By default, the script prints the `checkout_url` and waits for you to complete it in a real browser (Stripe may show bot mitigation that makes headless automation unreliable).
+
+If you want to *attempt* automation via Playwright:
+
+```bash
+BASE_URL=https://<PUBLIC_BASE_URL> SMOKE_AUTOMATE_CHECKOUT=true npm run smoke:stripe:real:remote
+```
+
+The smoke passes when `/api/billing/account` shows the expected balance increase from the real Stripe webhook.
 ## Troubleshooting
 
 - `STRIPE_SECRET_KEY not configured`:
