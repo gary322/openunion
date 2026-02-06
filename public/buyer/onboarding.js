@@ -166,12 +166,12 @@ function renderOriginGuide(rec) {
     items.push(el('div', { class: 'pw-muted', text: 'Create a TXT record that contains the token.' }));
     items.push(
       el('div', { class: 'pw-card soft' }, [
-        el('div', { class: 'pw-row' }, [
+        el('div', { class: 'pw-kv' }, [
           el('div', { class: 'pw-muted', text: 'Name' }),
           el('code', { class: 'pw-mono', text: name || '—' }),
           el('button', { class: 'pw-btn', type: 'button', text: 'Copy', 'data-copy': name || '' }),
         ]),
-        el('div', { class: 'pw-row pw-mt-2' }, [
+        el('div', { class: 'pw-kv pw-mt-6' }, [
           el('div', { class: 'pw-muted', text: 'Value' }),
           el('code', { class: 'pw-mono', text: token }),
           el('button', { class: 'pw-btn', type: 'button', text: 'Copy', 'data-copy': token }),
@@ -184,12 +184,12 @@ function renderOriginGuide(rec) {
     items.push(el('div', { class: 'pw-muted', text: 'Serve a file at the URL below, containing the token.' }));
     items.push(
       el('div', { class: 'pw-card soft' }, [
-        el('div', { class: 'pw-row' }, [
+        el('div', { class: 'pw-kv' }, [
           el('div', { class: 'pw-muted', text: 'URL' }),
           el('code', { class: 'pw-mono', text: url || '—' }),
           el('button', { class: 'pw-btn', type: 'button', text: 'Copy', 'data-copy': url || '' }),
         ]),
-        el('div', { class: 'pw-row pw-mt-2' }, [
+        el('div', { class: 'pw-kv pw-mt-6' }, [
           el('div', { class: 'pw-muted', text: 'Body must contain' }),
           el('code', { class: 'pw-mono', text: token }),
           el('button', { class: 'pw-btn', type: 'button', text: 'Copy', 'data-copy': token }),
@@ -201,12 +201,12 @@ function renderOriginGuide(rec) {
     items.push(el('div', { class: 'pw-muted', text: 'Respond to a HEAD request with a header that contains the token.' }));
     items.push(
       el('div', { class: 'pw-card soft' }, [
-        el('div', { class: 'pw-row' }, [
+        el('div', { class: 'pw-kv' }, [
           el('div', { class: 'pw-muted', text: 'Header' }),
           el('code', { class: 'pw-mono', text: 'X-Proofwork-Verify' }),
           el('button', { class: 'pw-btn', type: 'button', text: 'Copy', 'data-copy': 'X-Proofwork-Verify' }),
         ]),
-        el('div', { class: 'pw-row pw-mt-2' }, [
+        el('div', { class: 'pw-kv pw-mt-6' }, [
           el('div', { class: 'pw-muted', text: 'Value must contain' }),
           el('code', { class: 'pw-mono', text: token }),
           el('button', { class: 'pw-btn', type: 'button', text: 'Copy', 'data-copy': token }),
