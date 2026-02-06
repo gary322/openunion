@@ -29,6 +29,7 @@
     "smoke:remote": "tsx scripts/smoke_remote.ts",
     "smoke:payout:remote": "tsx scripts/smoke_payout_base_remote.ts",
     "smoke:stripe:remote": "tsx scripts/smoke_stripe_remote.ts",
+    "smoke:stripe:real:remote": "tsx scripts/smoke_stripe_real_checkout_remote.ts",
     "smoke:remote:ui": "tsx scripts/smoke_ui_remote.ts",
     "ops:payout:preflight": "tsx scripts/ops/payout_base_preflight.ts",
     "ops:stripe:enable": "tsx scripts/ops/stripe_enable_env.ts",
