@@ -5,6 +5,9 @@ import { fillRequiredAppForm, openDetails } from './helpers';
 test('create + publish via a vertical app page (github)', async ({ page }) => {
   test.setTimeout(90_000);
 
+  // Token-based connect is developer-oriented and hidden by default; enable it for deterministic E2E.
+  await page.addInitScript(() => localStorage.setItem('pw_dev_mode', '1'));
+
   // Stand up a deterministic origin that can be verified via http_file.
   let verifyToken = '';
   const originServer = http.createServer((req, res) => {
