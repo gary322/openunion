@@ -916,47 +916,46 @@ export function buildServer(opts: { taskDescriptorBrowserFlowValidationGate?: bo
   });
 
   app.decorate('authenticateBuyer', async (request: any, reply: any) => {
-    // Prefer cookie session if present.
+    // Prefer cookie session if present, but fall back to bearer API key if the
+    // cookie is missing/invalid/expired. This keeps the UI resilient when a
+    // stale cookie exists alongside a valid bearer token.
     const cookies = parseCookies(request.headers['cookie'] as string | undefined);
     const sessCookie = cookies['pw_sess'];
     if (sessCookie) {
       const sessId = verifySessionCookie(sessCookie);
-      if (!sessId) {
-        reply.code(401).send({ error: { code: 'unauthorized', message: 'Invalid session' } });
-        return;
-      }
-      const sess = await getSession(sessId);
-      if (!sess) {
-        reply.code(401).send({ error: { code: 'unauthorized', message: 'Session expired' } });
-        return;
-      }
+      if (sessId) {
+        const sess = await getSession(sessId);
+        if (sess) {
+          request.orgId = sess.orgId;
+          request.userId = sess.userId;
+          request.role = sess.role;
+          request.sessionId = sess.id;
+          request.csrfSecret = sess.csrfSecret;
 
-      request.orgId = sess.orgId;
-      request.userId = sess.userId;
-      request.role = sess.role;
-      request.sessionId = sess.id;
-      request.csrfSecret = sess.csrfSecret;
+          const routeKey = (request as any).routeOptions?.url ?? request.url;
+          if (!(await rateLimit(`buyer_sess:${sess.id}:global`, 240))) {
+            reply.code(429).send({ error: { code: 'rate_limited', message: 'Rate limited' } });
+            return;
+          }
+          if (!(await rateLimit(`buyer_sess:${sess.id}:route:${routeKey}`, 120))) {
+            reply.code(429).send({ error: { code: 'rate_limited', message: 'Rate limited' } });
+            return;
+          }
 
-      const routeKey = (request as any).routeOptions?.url ?? request.url;
-      if (!(await rateLimit(`buyer_sess:${sess.id}:global`, 240))) {
-        reply.code(429).send({ error: { code: 'rate_limited', message: 'Rate limited' } });
-        return;
-      }
-      if (!(await rateLimit(`buyer_sess:${sess.id}:route:${routeKey}`, 120))) {
-        reply.code(429).send({ error: { code: 'rate_limited', message: 'Rate limited' } });
-        return;
-      }
+          const unsafe = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(String(request.method).toUpperCase());
+          if (unsafe) {
+            const token = String(request.headers['x-csrf-token'] ?? '');
+            if (!token || token !== csrfToken(sess.csrfSecret)) {
+              reply.code(403).send({ error: { code: 'csrf', message: 'Missing/invalid CSRF token' } });
+              return;
+            }
+          }
 
-      const unsafe = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(String(request.method).toUpperCase());
-      if (unsafe) {
-        const token = String(request.headers['x-csrf-token'] ?? '');
-        if (!token || token !== csrfToken(sess.csrfSecret)) {
-          reply.code(403).send({ error: { code: 'csrf', message: 'Missing/invalid CSRF token' } });
           return;
         }
       }
-
-      return;
+      // Cookie existed but didn't validate or session record was missing. Fall through
+      // to bearer auth below so programmatic calls can still succeed.
     }
 
     // Fallback: bearer API key (programmatic usage).
