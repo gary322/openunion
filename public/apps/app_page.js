@@ -101,14 +101,17 @@ function apiBase() {
   return String(window.location.origin || '').replace(/\/$/, '');
 }
 
-async function buyerApi(path, { method = 'GET', token, body } = {}) {
-  return await fetchJson(`${apiBase()}${path}`, {
-    method,
-    headers: { ...authHeader(token) },
-    body,
-    // Token-authenticated app pages should not depend on cookie sessions.
-    credentials: 'omit',
-  });
+async function buyerApi(path, { method = 'GET', token, csrf, body } = {}) {
+  const unsafe = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(String(method).toUpperCase());
+  const headers = { ...authHeader(token) };
+  // Session-authenticated calls require CSRF for unsafe methods (browser interactive UX).
+  // Token-authenticated calls ignore CSRF (programmatic UX).
+  if (unsafe && !token) {
+    const t = String(csrf ?? '').trim();
+    if (t) headers['X-CSRF-Token'] = t;
+  }
+  const credentials = token ? 'omit' : 'include';
+  return await fetchJson(`${apiBase()}${path}`, { method, headers, body, credentials });
 }
 
 function moneyDefaultsFromUiSchema(uiSchema) {
@@ -126,8 +129,17 @@ export async function initAppPage(cfg) {
   const connectRow = qs('#connectRow');
   const connectedRow = qs('#connectedRow');
   const connectedTokenPrefix = qs('#connectedTokenPrefix');
+  const btnDisconnect = qs('#btnDisconnect');
   const btnSaveToken = qs('#btnSaveToken');
   const btnChangeToken = qs('#btnChangeToken');
+  const tabSignIn = qs('#tabSignIn');
+  const tabToken = qs('#tabToken');
+  const panelSignIn = qs('#panelSignIn');
+  const panelToken = qs('#panelToken');
+  const loginEmail = qs('#loginEmail');
+  const loginPassword = qs('#loginPassword');
+  const btnLogin = qs('#btnLogin');
+  const loginStatus = qs('#loginStatus');
   const templateSelect = qs('#template');
   const btnApplyTemplate = qs('#btnApplyTemplate');
   const formRoot = qs('#form');
@@ -135,6 +147,8 @@ export async function initAppPage(cfg) {
   const btnRefreshOrigins = qs('#btnRefreshOrigins');
   const payoutInput = qs('#payoutCents');
   const proofsInput = qs('#requiredProofs');
+  const payoutPill = qs('#payoutPill');
+  const payoutBreakdown = qs('#payoutBreakdown');
   const titleInput = qs('#title');
   const btnCreateDraft = qs('#btnCreateDraft');
   const btnCreatePublish = qs('#btnCreatePublish');
@@ -162,14 +176,62 @@ export async function initAppPage(cfg) {
   const savedToken = storageGet(LS.buyerToken, '');
   if (tokenInput) tokenInput.value = savedToken;
 
+  // Session connect: app pages can also use the buyer cookie session (no token copy/paste).
+  // We keep token mode as the programmatic/advanced option.
+  let sessionOk = false;
+  let sessionProbeReqNo = 0;
+
+  function csrfToken() {
+    return String(storageGet(LS.csrfToken, '') || '').trim();
+  }
+
+  async function probeSession() {
+    const myReq = ++sessionProbeReqNo;
+    // If we don't have a CSRF token saved, assume no session UX is intended.
+    // (GETs would work without it, but unsafe calls would fail.)
+    if (!csrfToken()) {
+      sessionOk = false;
+      return false;
+    }
+    const res = await buyerApi('/api/org/platform-fee', { method: 'GET' });
+    if (myReq !== sessionProbeReqNo) return sessionOk;
+    sessionOk = Boolean(res.ok);
+    return sessionOk;
+  }
+
+  function setLoginStatus(text, kind = '') {
+    if (!loginStatus) return;
+    loginStatus.textContent = String(text || '');
+    loginStatus.classList.remove('good', 'bad');
+    if (kind) loginStatus.classList.add(kind);
+  }
+
+  function setConnectTab(which) {
+    const w = which === 'token' ? 'token' : 'signin';
+    const signInOn = w === 'signin';
+    if (tabSignIn) {
+      tabSignIn.setAttribute('aria-selected', signInOn ? 'true' : 'false');
+      tabSignIn.classList.toggle('active', signInOn);
+    }
+    if (tabToken) {
+      tabToken.setAttribute('aria-selected', signInOn ? 'false' : 'true');
+      tabToken.classList.toggle('active', !signInOn);
+    }
+    if (panelSignIn) panelSignIn.hidden = !signInOn;
+    if (panelToken) panelToken.hidden = signInOn;
+  }
+
+  tabSignIn?.addEventListener('click', () => setConnectTab('signin'));
+  tabToken?.addEventListener('click', () => setConnectTab('token'));
+
   function renderConnectState() {
     const t = String(storageGet(LS.buyerToken, '') || '').trim();
-    const connected = Boolean(t);
+    const connected = Boolean(t) || sessionOk;
     if (connectRow) connectRow.hidden = connected;
     if (connectedRow) connectedRow.hidden = !connected;
     if (connectedTokenPrefix) {
-      const prefix = t ? `${t.slice(0, 10)}…` : 'pw_bu_…';
-      connectedTokenPrefix.textContent = prefix;
+      if (t) connectedTokenPrefix.textContent = `${t.slice(0, 10)}…`;
+      else connectedTokenPrefix.textContent = 'session';
     }
   }
 
@@ -179,7 +241,51 @@ export async function initAppPage(cfg) {
   btnChangeToken?.addEventListener('click', () => {
     if (connectRow) connectRow.hidden = false;
     if (connectedRow) connectedRow.hidden = true;
-    tokenInput?.focus?.();
+    // If they previously used token mode, default them back to the token tab.
+    setConnectTab(storageGet(LS.buyerToken, '') ? 'token' : 'signin');
+    (storageGet(LS.buyerToken, '') ? tokenInput : loginEmail)?.focus?.();
+  });
+
+  btnDisconnect?.addEventListener('click', async () => {
+    // Best-effort logout; even if it fails, clear local state so UI is consistent.
+    try {
+      await fetchJson(`${apiBase()}/api/auth/logout`, { method: 'POST', credentials: 'include' });
+    } catch {
+      // ignore
+    }
+    storageSet(LS.buyerToken, '');
+    storageSet(LS.csrfToken, '');
+    sessionOk = false;
+    if (tokenInput) tokenInput.value = '';
+    setLoginStatus('');
+    toast('Disconnected');
+    renderConnectState();
+    await refreshOrigins();
+    await refreshBounties();
+  });
+
+  btnLogin?.addEventListener('click', async () => {
+    setLoginStatus('');
+    const email = String(loginEmail?.value ?? '').trim();
+    const password = String(loginPassword?.value ?? '');
+    if (!email || !password) {
+      setLoginStatus('Email and password required', 'bad');
+      return;
+    }
+    setLoginStatus('Signing in…');
+    const res = await fetchJson(`${apiBase()}/api/auth/login`, { method: 'POST', body: { email, password }, credentials: 'include' });
+    if (!res.ok) {
+      setLoginStatus(`Sign in failed (${res.status})`, 'bad');
+      return;
+    }
+    if (res.json?.csrfToken) storageSet(LS.csrfToken, String(res.json.csrfToken));
+    sessionOk = true;
+    toast('Signed in', 'good');
+    renderConnectState();
+    setStatus('createStatus', 'Loading verified origins…');
+    await refreshOrigins();
+    setStatus('createStatus', '');
+    await refreshBounties();
   });
 
   btnSaveToken?.addEventListener('click', async () => {
@@ -254,11 +360,15 @@ export async function initAppPage(cfg) {
     if (first && typeof first.focus === 'function') first.focus();
   }
 
-  function effectiveBuyerToken() {
-    // Prefer the locally-saved token (Connect saves it), but allow typed tokens too.
+  function effectiveBuyerAuth() {
+    // Token mode (programmatic) takes priority over session mode (interactive).
     const saved = String(storageGet(LS.buyerToken, '') || '').trim();
     const typed = String(tokenInput?.value ?? '').trim();
-    return saved || typed;
+    const token = saved || typed;
+    if (token) return { mode: 'token', token, csrf: '' };
+    const csrf = csrfToken();
+    if (csrf && sessionOk) return { mode: 'session', token: '', csrf };
+    return { mode: 'none', token: '', csrf: csrf || '' };
   }
 
   function renderField(field) {
@@ -452,7 +562,6 @@ export async function initAppPage(cfg) {
   }
 
   function buildBountyPayload(descriptor) {
-    const token = String(tokenInput?.value ?? '').trim();
     const origin = String(originSelect?.value ?? '').trim();
     const payoutCents = Math.max(0, Math.floor(Number(payoutInput?.value ?? 0)));
     const requiredProofs = Math.max(1, Math.floor(Number(proofsInput?.value ?? 1)));
@@ -460,38 +569,35 @@ export async function initAppPage(cfg) {
     const description = String(cfg?.description || '').trim() || `${appName} work`;
 
     return {
-      token,
-      payload: {
-        title,
-        description,
-        allowedOrigins: origin ? [origin] : [],
-        payoutCents,
-        requiredProofs,
-        fingerprintClassesRequired: ['desktop_us'],
-        taskDescriptor: descriptor,
-      },
+      title,
+      description,
+      allowedOrigins: origin ? [origin] : [],
+      payoutCents,
+      requiredProofs,
+      fingerprintClassesRequired: ['desktop_us'],
+      taskDescriptor: descriptor,
     };
   }
 
   function refreshPreview() {
     const d = buildDescriptorFromForm();
-    const p = buildBountyPayload(d).payload;
+    const p = buildBountyPayload(d);
     if (descriptorOut) descriptorOut.textContent = JSON.stringify(d, null, 2);
     if (payloadOut) payloadOut.textContent = JSON.stringify(p, null, 2);
 
     const missing = validateRequiredFields(d);
-    const token = effectiveBuyerToken();
+    const auth = effectiveBuyerAuth();
     const origin = String(originSelect?.value ?? '').trim();
     const descErrs = validateDescriptorShallow(schema, d);
-    const ready = Boolean(token) && Boolean(origin) && missing.length === 0 && descErrs.length === 0;
+    const ready = auth.mode !== 'none' && Boolean(origin) && missing.length === 0 && descErrs.length === 0;
 
     if (btnCreateDraft) btnCreateDraft.disabled = !ready;
     if (btnCreatePublish) btnCreatePublish.disabled = !ready;
 
     let msg = '';
     let kind = '';
-    if (!token) {
-      msg = 'Next: paste your buyer token and click Connect to load origins.';
+    if (auth.mode === 'none') {
+      msg = 'Next: sign in or paste an API token to load verified origins.';
     } else if (verifiedOriginsCount <= 0) {
       msg = 'Next: verify an origin in the Platform console, then click Refresh origins.';
     } else if (!origin) {
@@ -508,17 +614,26 @@ export async function initAppPage(cfg) {
     }
     setStatus('preflightStatus', msg, kind);
 
+    // Payout pill + breakdown (always visible even if the fold is closed).
+    const payoutCents = Math.max(0, Math.floor(Number(payoutInput?.value ?? 0)));
+    const requiredProofs = Math.max(1, Math.floor(Number(proofsInput?.value ?? 1)));
+    const platformCutCents = Math.round((payoutCents * Number(platformFeeBps || 0)) / 10000);
+    const workerPortionCents = Math.max(0, payoutCents - platformCutCents);
+    const proofworkFeeCents = Math.round(workerPortionCents * 0.01);
+    const workerNetCents = Math.max(0, workerPortionCents - proofworkFeeCents);
+
+    if (payoutPill) payoutPill.textContent = `${formatCents(payoutCents)} • ${requiredProofs} proof${requiredProofs === 1 ? '' : 's'}`;
+    if (payoutBreakdown) {
+      const pf = Number.isFinite(Number(platformFeeBps)) && Number(platformFeeBps) > 0 ? `platform ${platformFeeBps}bps` : 'platform 0bps';
+      payoutBreakdown.textContent = `Net to worker ${formatCents(workerNetCents)} (${pf} then Proofwork 1%)`;
+    }
+
     // Action bar: keep the primary CTA visible without scrolling.
     if (actionbarTitle) {
       actionbarTitle.textContent = kind === 'good' ? `Ready: ${formatCents(Number(payoutInput?.value ?? 0))} payout` : 'Create and publish';
     }
     if (actionbarSub) {
       if (kind === 'good') {
-        const payoutCents = Math.max(0, Math.floor(Number(payoutInput?.value ?? 0)));
-        const platformCutCents = Math.round((payoutCents * Number(platformFeeBps || 0)) / 10000);
-        const workerPortionCents = Math.max(0, payoutCents - platformCutCents);
-        const proofworkFeeCents = Math.round(workerPortionCents * 0.01);
-        const workerNetCents = Math.max(0, workerPortionCents - proofworkFeeCents);
         const originHost = origin ? String(origin).replace(/^https?:\/\//, '') : '—';
         actionbarSub.textContent = `Origin: ${originHost} • Net to worker ${formatCents(workerNetCents)} (platform ${platformFeeBps}bps then Proofwork 1%)`;
       } else {
@@ -531,9 +646,9 @@ export async function initAppPage(cfg) {
   let platformFeeReqNo = 0;
   async function refreshPlatformFee() {
     const myReq = ++platformFeeReqNo;
-    const token = effectiveBuyerToken();
-    if (!token) return;
-    const res = await buyerApi('/api/org/platform-fee', { token });
+    const auth = effectiveBuyerAuth();
+    if (auth.mode === 'none') return;
+    const res = await buyerApi('/api/org/platform-fee', { token: auth.token, csrf: auth.csrf });
     if (myReq !== platformFeeReqNo) return;
     if (!res.ok) return;
     const bps = Number(res.json?.platformFeeBps ?? 0);
@@ -545,16 +660,16 @@ export async function initAppPage(cfg) {
   let originsReqNo = 0;
   async function refreshOrigins() {
     const myReq = ++originsReqNo;
-    const token = effectiveBuyerToken();
     if (!originSelect) return;
-    if (!token) {
+    const auth = effectiveBuyerAuth();
+    if (auth.mode === 'none') {
       verifiedOriginsCount = 0;
-      originSelect.replaceChildren(el('option', { value: '' }, ['— paste token to load origins —']));
+      originSelect.replaceChildren(el('option', { value: '' }, ['— connect to load origins —']));
       refreshPreview();
       return;
     }
     refreshPlatformFee().catch(() => {});
-    const res = await buyerApi('/api/origins', { token });
+    const res = await buyerApi('/api/origins', { token: auth.token, csrf: auth.csrf });
     if (myReq !== originsReqNo) return; // stale response; user changed token and reloaded.
     if (!res.ok) {
       verifiedOriginsCount = 0;
@@ -593,12 +708,14 @@ export async function initAppPage(cfg) {
       setStatus('createStatus', `Descriptor invalid: ${errs.join('; ')}`, 'bad');
       return;
     }
-    const b = buildBountyPayload(descriptor);
-    if (!b.token) return setStatus('createStatus', 'Missing buyer token', 'bad');
-    if (!b.payload.allowedOrigins.length) return setStatus('createStatus', 'Pick a verified origin (or verify one first)', 'bad');
+    const auth = effectiveBuyerAuth();
+    if (auth.mode === 'none') return setStatus('createStatus', 'Connect first (sign in or token)', 'bad');
+
+    const payload = buildBountyPayload(descriptor);
+    if (!payload.allowedOrigins.length) return setStatus('createStatus', 'Pick a verified origin (or verify one first)', 'bad');
 
     setStatus('createStatus', `Creating… (descriptor ${bytesOf(descriptor)} B)`);
-    const res = await buyerApi('/api/bounties', { method: 'POST', token: b.token, body: b.payload });
+    const res = await buyerApi('/api/bounties', { method: 'POST', token: auth.token, csrf: auth.csrf, body: payload });
     if (!res.ok) {
       setStatus('createStatus', `Create failed (${res.status}): ${res.json?.error?.message || ''}`, 'bad');
       return;
@@ -608,7 +725,7 @@ export async function initAppPage(cfg) {
     toast('Draft created', 'good');
 
     if (publish) {
-      const pub = await buyerApi(`/api/bounties/${encodeURIComponent(bountyId)}/publish`, { method: 'POST', token: b.token });
+      const pub = await buyerApi(`/api/bounties/${encodeURIComponent(bountyId)}/publish`, { method: 'POST', token: auth.token, csrf: auth.csrf });
       if (!pub.ok) {
         setStatus('createStatus', `Publish failed (${pub.status})`, 'bad');
         return;
@@ -663,14 +780,14 @@ export async function initAppPage(cfg) {
   }
 
   async function refreshBounties() {
-    const token = String(tokenInput?.value ?? '').trim();
-    if (!token) {
-      setStatus('monitorStatus', 'Paste a buyer token to load bounties.');
+    const auth = effectiveBuyerAuth();
+    if (auth.mode === 'none') {
+      setStatus('monitorStatus', 'Connect to load bounties.');
       bountiesTbody?.replaceChildren();
       jobsTbody?.replaceChildren();
       return;
     }
-    const res = await buyerApi(`/api/bounties?task_type=${encodeURIComponent(taskType)}&page=1&limit=50`, { token });
+    const res = await buyerApi(`/api/bounties?task_type=${encodeURIComponent(taskType)}&page=1&limit=50`, { token: auth.token, csrf: auth.csrf });
     if (!res.ok) {
       setStatus('monitorStatus', `Failed to load bounties (${res.status})`, 'bad');
       return;
@@ -686,9 +803,9 @@ export async function initAppPage(cfg) {
   }
 
   async function refreshJobs() {
-    const token = String(tokenInput?.value ?? '').trim();
-    if (!token || !selectedBountyId) return;
-    const res = await buyerApi(`/api/bounties/${encodeURIComponent(selectedBountyId)}/jobs?page=1&limit=50`, { token });
+    const auth = effectiveBuyerAuth();
+    if (auth.mode === 'none' || !selectedBountyId) return;
+    const res = await buyerApi(`/api/bounties/${encodeURIComponent(selectedBountyId)}/jobs?page=1&limit=50`, { token: auth.token, csrf: auth.csrf });
     if (!res.ok) {
       toast(`Failed to load jobs (${res.status})`, 'bad');
       return;
@@ -724,6 +841,8 @@ export async function initAppPage(cfg) {
   // Initial render
   renderForm();
   refreshPreview();
+  await probeSession();
+  renderConnectState();
   await refreshOrigins();
   await refreshBounties();
   enableAuto(true);

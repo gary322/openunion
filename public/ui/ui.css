@@ -645,6 +645,46 @@ details.pw-fold .pw-fold-body {
   color: rgba(11, 15, 25, 0.7);
 }
 
+/* Tabs: small, high-signal choices (used in "Connect" flows). */
+.pw-tabs {
+  display: inline-flex;
+  gap: 6px;
+  padding: 6px;
+  border-radius: 999px;
+  border: 1px solid rgba(11, 15, 25, 0.12);
+  background: rgba(255, 255, 255, 0.65);
+  box-shadow: var(--shadow-soft);
+}
+.pw-tab {
+  appearance: none;
+  border: 1px solid transparent;
+  background: transparent;
+  color: rgba(11, 15, 25, 0.78);
+  padding: 8px 12px;
+  border-radius: 999px;
+  font-weight: 750;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  transition: background 140ms ease, border-color 140ms ease, transform 140ms ease;
+}
+.pw-tab:hover {
+  transform: translateY(-1px);
+  border-color: rgba(11, 15, 25, 0.12);
+  background: rgba(255, 255, 255, 0.55);
+}
+.pw-tab.active,
+.pw-tab[aria-selected="true"] {
+  border-color: rgba(11, 15, 25, 0.16);
+  background: linear-gradient(135deg, var(--accent-soft), rgba(255, 255, 255, 0.88));
+  color: rgba(11, 15, 25, 0.9);
+}
+.pw-tabpanels {
+  margin-top: 12px;
+}
+.pw-tabpanel[hidden] {
+  display: none;
+}
+
 /* Sticky/fixed action bar for primary CTAs (e.g., publish). */
 .pw-actionbar {
   position: fixed;

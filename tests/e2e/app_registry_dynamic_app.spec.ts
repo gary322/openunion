@@ -91,6 +91,7 @@ test('org can register an app and use the dynamic app page to create+publish', a
 
     // Create + publish with a unique title.
     const title = `Dynamic app bounty ${Date.now()}`;
+    await openDetails(page, '#payoutFold');
     await page.fill('#payoutCents', '1200');
     await page.fill('#requiredProofs', '1');
     await page.fill('#title', title);

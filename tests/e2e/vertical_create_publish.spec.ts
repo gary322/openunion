@@ -58,10 +58,17 @@ test('create + publish via a vertical app page (github)', async ({ page }) => {
     await page.goto('/apps/app/github/');
     await expect(page.locator('#hdrTitle')).toContainText('GitHub Scan');
 
-    await page.fill('#buyerToken', buyerToken);
-    const originsLoadPromise = page.waitForResponse((r) => r.url().endsWith('/api/origins') && r.request().method() === 'GET');
-    await page.click('#btnSaveToken');
-    await originsLoadPromise;
+    // If we're already connected via the buyer portal session, no token is required.
+    // Otherwise, connect via token for deterministic E2E.
+    if (await page.locator('#connectRow').isVisible()) {
+      await page.click('#tabToken');
+      await page.fill('#buyerToken', buyerToken);
+      const originsLoadPromise = page.waitForResponse((r) => r.url().endsWith('/api/origins') && r.request().method() === 'GET');
+      await page.click('#btnSaveToken');
+      await originsLoadPromise;
+    } else {
+      await expect(page.locator('#connectedRow')).toBeVisible();
+    }
 
     await expect
       .poll(async () => {
@@ -71,6 +78,7 @@ test('create + publish via a vertical app page (github)', async ({ page }) => {
     await page.selectOption('#originSelect', origin);
 
     const title = `GitHub E2E ${Date.now()}`;
+    await openDetails(page, '#payoutFold');
     await page.fill('#payoutCents', '1200');
     await page.fill('#requiredProofs', '1');
     await page.fill('#title', title);
