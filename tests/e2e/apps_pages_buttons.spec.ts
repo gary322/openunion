@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { fillRequiredAppForm } from './helpers';
+import { fillRequiredAppForm, openDetails } from './helpers';
 
 const APPS: Array<{ slug: string; titleIncludes: string }> = [
   { slug: 'clips', titleIncludes: 'Clips' },
@@ -51,6 +51,7 @@ test('apps pages: exercise create draft, create+publish, refresh, load jobs on e
       .toContain('https://example.com');
     await page.selectOption('#originSelect', 'https://example.com');
 
+    await openDetails(page, '#payoutFold');
     await page.fill('#payoutCents', '1200');
     await page.fill('#requiredProofs', '1');
 
