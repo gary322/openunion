@@ -22,9 +22,10 @@ export async function runVerifierGateway(input: {
   submission: any;
 }): Promise<VerifierGatewayResult> {
   const url = requireGatewayUrl();
-  const timeoutMs = Number(process.env.VERIFIER_GATEWAY_TIMEOUT_MS ?? 30_000);
+  // Default is intentionally conservative but should tolerate cold-start Playwright launches.
+  const timeoutMs = Number(process.env.VERIFIER_GATEWAY_TIMEOUT_MS ?? 60_000);
   const controller = new AbortController();
-  const t = setTimeout(() => controller.abort(), Number.isFinite(timeoutMs) ? timeoutMs : 30_000);
+  const t = setTimeout(() => controller.abort(), Number.isFinite(timeoutMs) ? timeoutMs : 60_000);
 
   let resp: Response;
   try {

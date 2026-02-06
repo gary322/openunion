@@ -496,6 +496,19 @@ export function buildServer(opts: { taskDescriptorBrowserFlowValidationGate?: bo
     return payload;
   });
 
+  // Better debuggability in non-production: surface unhandled errors and log stack traces.
+  // In production we keep responses generic to avoid leaking internals.
+  app.setErrorHandler((err: any, _request: any, reply: any) => {
+    const status = Number(err?.statusCode ?? 500);
+    const code = Number.isFinite(status) ? status : 500;
+    const msg = process.env.NODE_ENV === 'production' ? 'Internal error' : String(err?.message ?? err);
+    if (process.env.NODE_ENV !== 'production') {
+      // eslint-disable-next-line no-console
+      console.error(err);
+    }
+    reply.code(code).send({ error: { code: 'internal', message: msg } });
+  });
+
   // Static portals
   app.register(fastifyStatic, {
     root: path.resolve(process.cwd(), 'public'),

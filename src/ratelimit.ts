@@ -8,21 +8,22 @@ export async function rateLimit(key: string, ratePerMin: number): Promise<boolea
   try {
     await client.query('BEGIN');
 
+    // Ensure the bucket row exists before attempting SELECT ... FOR UPDATE.
+    // Without this, concurrent first-use requests can race and both attempt INSERT,
+    // causing a unique violation (23505) and returning 500 to callers.
+    await client.query(
+      'INSERT INTO rate_limit_buckets(key, tokens, updated_at) VALUES ($1, $2, $3) ON CONFLICT (key) DO NOTHING',
+      [key, ratePerMin, now]
+    );
+
     const rowRes = await client.query<{ tokens: number; updated_at: Date }>(
       'SELECT tokens, updated_at FROM rate_limit_buckets WHERE key = $1 FOR UPDATE',
       [key]
     );
 
-    let tokens = ratePerMin;
-    let updatedAt = now;
-    if (rowRes.rowCount === 0) {
-      await client.query('INSERT INTO rate_limit_buckets(key, tokens, updated_at) VALUES ($1, $2, $3)', [key, ratePerMin, now]);
-      tokens = ratePerMin;
-      updatedAt = now;
-    } else {
-      tokens = Number(rowRes.rows[0].tokens);
-      updatedAt = rowRes.rows[0].updated_at;
-    }
+    if (rowRes.rowCount === 0) throw new Error('rate_limit_bucket_missing');
+    let tokens = Number(rowRes.rows[0].tokens);
+    let updatedAt = rowRes.rows[0].updated_at;
 
     const elapsedMs = now.getTime() - updatedAt.getTime();
     tokens = Math.min(ratePerMin, tokens + elapsedMs * fillPerMs);
