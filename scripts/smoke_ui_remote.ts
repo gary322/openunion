@@ -23,7 +23,9 @@ async function main() {
   const baseUrl = normalizeBaseUrl(argValue('--base-url') ?? process.env.BASE_URL ?? 'http://localhost:3000');
 
   const checks: Array<{ path: string; titleIncludes: string }> = [
-    { path: '/buyer/', titleIncludes: 'Platform Console' },
+    // /buyer/ is now the low-effort entrypoint (onboarding). Keep the full console as /buyer/index.html.
+    { path: '/buyer/', titleIncludes: 'Platform Onboarding' },
+    { path: '/buyer/index.html', titleIncludes: 'Platform Console' },
     { path: '/worker/', titleIncludes: 'Worker Console' },
     { path: '/admin/', titleIncludes: 'Admin Console' },
     { path: '/admin/apps.html', titleIncludes: 'Apps Dashboard' },
