@@ -373,6 +373,13 @@ a:hover {
   box-shadow: 0 0 0 5px var(--accent-soft);
 }
 
+.pw-input[aria-invalid="true"],
+.pw-textarea[aria-invalid="true"],
+.pw-select[aria-invalid="true"] {
+  border-color: rgba(220, 38, 38, 0.38);
+  box-shadow: 0 0 0 5px rgba(220, 38, 38, 0.12);
+}
+
 .pw-actions {
   margin-top: 12px;
   display: flex;

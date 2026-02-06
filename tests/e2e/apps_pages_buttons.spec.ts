@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { fillRequiredAppForm } from './helpers';
 
 const APPS: Array<{ slug: string; titleIncludes: string }> = [
   { slug: 'clips', titleIncludes: 'Clips' },
@@ -38,6 +39,9 @@ test('apps pages: exercise create draft, create+publish, refresh, load jobs on e
       await page.selectOption('#template', { index: 1 });
       await page.click('#btnApplyTemplate');
     }
+
+    // Fill any required friendly-form inputs that templates didn't populate.
+    await fillRequiredAppForm(page);
 
     // Publish: choose a verified origin and set payout.
     await expect

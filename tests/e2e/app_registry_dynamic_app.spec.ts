@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import http from 'http';
+import { fillRequiredAppForm } from './helpers';
 
 test('org can register an app and use the dynamic app page to create+publish', async ({ page }) => {
   test.setTimeout(90_000);
@@ -93,6 +94,7 @@ test('org can register an app and use the dynamic app page to create+publish', a
     await page.fill('#payoutCents', '1200');
     await page.fill('#requiredProofs', '1');
     await page.fill('#title', title);
+    await fillRequiredAppForm(page);
 
     const createRespPromise = page.waitForResponse((r) => r.url().endsWith('/api/bounties') && r.request().method() === 'POST');
     const publishRespPromise = page.waitForResponse(

@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import http from 'http';
+import { fillRequiredAppForm } from './helpers';
 
 test('create + publish via a vertical app page (github)', async ({ page }) => {
   test.setTimeout(90_000);
@@ -71,6 +72,7 @@ test('create + publish via a vertical app page (github)', async ({ page }) => {
     await page.fill('#payoutCents', '1200');
     await page.fill('#requiredProofs', '1');
     await page.fill('#title', title);
+    await fillRequiredAppForm(page);
 
     const createRespPromise = page.waitForResponse((r) => r.url().endsWith('/api/bounties') && r.request().method() === 'POST');
     const publishRespPromise = page.waitForResponse((r) => r.url().includes('/api/bounties/') && r.url().endsWith('/publish') && r.request().method() === 'POST');

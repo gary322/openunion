@@ -92,6 +92,20 @@ To verify “real Stripe delivers webhooks”:
 4. Redeploy API tasks (the ops script above does this).
 5. Run a real checkout in a browser (Stripe test mode: `4242 4242 4242 4242`) and confirm the buyer’s balance increased.
 
+### Automated real Checkout smoke (Playwright)
+
+You can automate the real Stripe Checkout with Playwright (recommended for staging when `PUBLIC_BASE_URL` is HTTPS):
+
+```bash
+BASE_URL=https://<PUBLIC_BASE_URL> npm run smoke:stripe:real:remote
+```
+
+This will:
+- create a buyer (or reuse `SMOKE_BUYER_EMAIL` / `SMOKE_BUYER_PASSWORD`)
+- create a Checkout Session
+- complete the Checkout using Stripe test card `4242 4242 4242 4242`
+- poll `/api/billing/account` until the webhook credits the balance
+
 ## Troubleshooting
 
 - `STRIPE_SECRET_KEY not configured`:
@@ -103,4 +117,3 @@ To verify “real Stripe delivers webhooks”:
 - Checkout works but balance never increases (real flow):
   - Stripe webhook is not delivering (wrong URL, not HTTPS, blocked) or failing signature verification.
   - Check Stripe dashboard webhook deliveries and API logs for `/api/webhooks/stripe`.
-
