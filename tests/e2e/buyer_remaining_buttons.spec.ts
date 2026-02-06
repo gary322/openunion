@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { Wallet } from 'ethers';
-import { startHttpFileOriginServer } from './helpers.js';
+import { openDetails, startHttpFileOriginServer } from './helpers.js';
 
 test('buyer portal: exercise remaining buttons (fee get, quotas, origins list/revoke, bounties list, org apps list, register)', async ({ page, request }) => {
   test.setTimeout(120_000);
@@ -14,15 +14,12 @@ test('buyer portal: exercise remaining buttons (fee get, quotas, origins list/re
 
     // Mint a buyer token via session (CSRF-protected).
     await page.click('#btnCreateKey');
-    await expect(page.locator('#keyStatus')).toContainText('token created');
-    const buyerToken = await page.locator('#buyerToken').inputValue();
+    await expect(page.locator('#keyStatus')).toContainText('token created and saved');
+    const buyerToken = await page.evaluate(() => localStorage.getItem('pw_buyer_token') || '');
     expect(buyerToken).toMatch(/^pw_bu_/);
 
-    // Save token button should persist token in localStorage.
-    await page.click('#btnSaveToken');
-    await expect(page.locator('#keyStatus')).toContainText('token saved');
-    await page.reload();
-    await expect(page.locator('#buyerToken')).toHaveValue(buyerToken);
+    // Platform fee fold is guided; ensure it is open before interacting.
+    await openDetails(page, '#foldSettings');
 
     // Platform fee: get → set → get; then reset to 0 to avoid cross-test drift.
     await page.click('#btnGetPlatformFee');
@@ -73,6 +70,7 @@ test('buyer portal: exercise remaining buttons (fee get, quotas, origins list/re
     await expect(page.locator('#quotaMaxOpenJobs')).toHaveValue('');
 
     // Origins: add → check → list → revoke → list.
+    await openDetails(page, '#foldOrigins');
     await page.fill('#originUrl', originSrv.origin);
     await page.selectOption('#originMethod', 'http_file');
 
@@ -87,8 +85,8 @@ test('buyer portal: exercise remaining buttons (fee get, quotas, origins list/re
     expect(verifyToken).toMatch(/^pw_verify_/);
     originSrv.setVerifyToken(verifyToken);
 
-    await page.fill('#originId', originId);
-    await page.click('#btnCheckOrigin');
+    const originRow = page.locator('#originsTbody tr').filter({ hasText: originSrv.origin }).first();
+    await originRow.getByRole('button', { name: 'Check' }).click();
     await expect(page.locator('#originStatus')).toContainText('status=verified');
 
     await page.click('#btnListOrigins');
@@ -98,6 +96,7 @@ test('buyer portal: exercise remaining buttons (fee get, quotas, origins list/re
     // Advanced bounty form is Dev-only and collapsed by default; enable Dev mode and open it.
     await page.waitForSelector('#pwDevToggle');
     await page.click('#pwDevToggle');
+    await openDetails(page, '#foldWork');
     await page.locator('#workAdvanced').evaluate((d: any) => (d.open = true));
 
     // Bounties: create → list → publish (publish requires a verified origin).
@@ -119,13 +118,14 @@ test('buyer portal: exercise remaining buttons (fee get, quotas, origins list/re
     await expect(page.locator('#bountyStatus')).toContainText('published');
 
     // Revoke origin after publish (still must work and show revoked in list).
-    await page.click('#btnRevokeOrigin');
+    await originRow.getByRole('button', { name: 'Revoke' }).click();
     await expect(page.locator('#originStatus')).toContainText('status=revoked');
 
     await page.click('#btnListOrigins');
     await expect(page.locator('#originOut')).toContainText(originId);
 
     // Org apps: create → list.
+    await openDetails(page, '#foldApps');
     const appName = `Buyer Buttons App ${Date.now()}`;
     await page.fill('#appName', appName);
     // Normal UX path: pick a template and let slug/taskType/defaultDescriptor be generated.
@@ -146,6 +146,7 @@ test('buyer portal: exercise remaining buttons (fee get, quotas, origins list/re
     await expect(page.locator('#appsOut')).toContainText(expectedSlug);
 
     // Finally, ensure the "Register" flow works (unique email).
+    await openDetails(page, '#foldAccess');
     const email = `e2e+${Date.now()}@example.com`;
     await page.fill('#regOrgName', `E2E Org ${Date.now()}`);
     await page.fill('#regApiKeyName', 'default');

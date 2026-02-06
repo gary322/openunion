@@ -6,7 +6,7 @@
     <title></title>
     <link rel="stylesheet" href="/ui/ui.css" />
   </head>
-  <body class="theme-apps" data-portal="apps">
+  <body class="theme-apps pw-has-actionbar" data-portal="apps">
     <header class="pw-topbar">
       <div class="pw-topbar-inner">
         <a class="pw-brand" href="/apps/" aria-label="Proofwork home">
@@ -154,13 +154,7 @@
               <div class="pw-field">
                 <label>Title</label>
                 <input class="pw-input" id="title" placeholder="Auto-filled" />
-              </div>
-              <div class="pw-field">
-                <label>&nbsp;</label>
-                <div class="pw-actions">
-                  <button class="pw-btn" id="btnCreateDraft" type="button">Create draft</button>
-                  <button class="pw-btn primary" id="btnCreatePublish" type="button">Create + publish</button>
-                </div>
+                <div class="pw-help">Tip: titles help you find bounties later. Everything else is generated from the form.</div>
               </div>
             </div>
 
@@ -240,6 +234,21 @@
         </section>
       </div>
     </main>
+
+    <div class="pw-actionbar" id="publishActionbar" aria-label="Publish bar">
+      <div class="pw-actionbar-inner">
+        <div class="pw-actionbar-card">
+          <div class="pw-actionbar-meta">
+            <div class="pw-actionbar-title" id="actionbarTitle">Create and publish</div>
+            <div class="pw-actionbar-sub" id="actionbarSub">Connect, pick an origin, and fill required fields.</div>
+          </div>
+          <div class="pw-actions">
+            <button class="pw-btn" id="btnCreateDraft" type="button">Create draft</button>
+            <button class="pw-btn primary" id="btnCreatePublish" type="button">Create + publish</button>
+          </div>
+        </div>
+      </div>
+    </div>
 
     <script id="appConfig" type="application/json">{}</script>
     <script type="module" src="/apps/app_page_bootstrap.js"></script>

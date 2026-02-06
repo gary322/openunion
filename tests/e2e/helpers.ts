@@ -91,3 +91,18 @@ export async function fillRequiredAppForm(page: Page, opts: { rootSelector?: str
     }
   }
 }
+
+// Expand a <details> block so its contents become interactable. Many UIs use folds to keep the
+// default surface area small.
+export async function openDetails(page: Page, selector: string) {
+  const loc = page.locator(selector);
+  await loc.evaluate((d: any) => {
+    // Mark as "manually opened" so guided UI logic doesn't immediately auto-collapse it.
+    try {
+      d.dataset.userToggled = '1';
+    } catch {
+      // ignore
+    }
+    d.open = true;
+  });
+}

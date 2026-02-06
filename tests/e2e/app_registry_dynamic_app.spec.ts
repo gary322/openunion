@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import http from 'http';
-import { fillRequiredAppForm } from './helpers';
+import { fillRequiredAppForm, openDetails } from './helpers';
 
 test('org can register an app and use the dynamic app page to create+publish', async ({ page }) => {
   test.setTimeout(90_000);
@@ -28,6 +28,7 @@ test('org can register an app and use the dynamic app page to create+publish', a
   try {
     // Buyer portal: login and mint a buyer API token.
     await page.goto('/buyer/index.html');
+    await openDetails(page, '#foldAccess');
     await page.click('#btnLogin');
     await expect(page.locator('#loginStatus')).toContainText('ok');
 
@@ -36,11 +37,8 @@ test('org can register an app and use the dynamic app page to create+publish', a
 
     expect(await page.locator('#buyerToken').inputValue()).toMatch(/^pw_bu_/);
 
-    // Save token once so app pages can read it from localStorage automatically.
-    await page.click('#btnSaveToken');
-    await expect(page.locator('#keyStatus')).toContainText('token saved');
-
     // Add + verify origin via http_file.
+    await openDetails(page, '#foldOrigins');
     await page.fill('#originUrl', origin);
     await page.selectOption('#originMethod', 'http_file');
 
@@ -52,10 +50,12 @@ test('org can register an app and use the dynamic app page to create+publish', a
     verifyToken = String(addOriginJson?.origin?.token ?? '');
     expect(verifyToken).toMatch(/^pw_verify_/);
 
-    await page.click('#btnCheckOrigin');
+    const originRow = page.locator('#originsTbody tr').filter({ hasText: origin }).first();
+    await originRow.getByRole('button', { name: 'Check' }).click();
     await expect(page.locator('#originStatus')).toContainText('status=verified');
 
     // Create a registry app owned by this org.
+    await openDetails(page, '#foldApps');
     const name = `E2E App ${Date.now()}`;
     await page.fill('#appName', name);
     // Use a template to avoid requiring any JSON edits or identifier typing.

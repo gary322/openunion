@@ -57,6 +57,29 @@ function setStepDone(id, done) {
   el.classList.toggle('done', Boolean(done));
 }
 
+function setFoldOpen(id, open, opts = {}) {
+  const el = $(id);
+  if (!el) return;
+  const force = Boolean(opts && opts.force);
+  // Don't fight the user: once a fold has been manually toggled, guided mode should stop
+  // auto-opening/closing it. This keeps the UI predictable and prevents async refreshes from
+  // hiding controls mid-action.
+  if (!force && String(el.dataset?.userToggled ?? '') === '1') return;
+  try {
+    el.open = Boolean(open);
+  } catch {
+    // ignore
+  }
+}
+
+function setPill(id, text, kind) {
+  const el = $(id);
+  if (!el) return;
+  el.textContent = String(text ?? '');
+  el.classList.remove('good', 'warn', 'faint');
+  if (kind) el.classList.add(kind);
+}
+
 function setText(id, text) {
   const el = $(id);
   if (!el) return;
@@ -71,6 +94,7 @@ async function refreshOnboardingStatus() {
   const hasToken = Boolean(token);
 
   setStepDone('stepToken', hasToken);
+  setPill('pillAccess', hasToken ? 'Connected' : 'Not connected', hasToken ? 'good' : 'warn');
   if (!hasToken) {
     setStepDone('stepOrigin', false);
     setStepDone('stepFees', false);
@@ -83,6 +107,22 @@ async function refreshOnboardingStatus() {
     setBadge('navBadgeWork', '-');
     setBadge('navBadgeMoney', '-');
     setBadge('navBadgeDisputes', '-');
+
+    setPill('pillOrigins', 'No verified origins', 'warn');
+    setPill('pillApps', 'No apps', 'warn');
+    setPill('pillWork', 'No published bounties', 'warn');
+    setPill('pillMoney', 'No payouts yet', 'faint');
+    setPill('pillDisputes', '0 open', 'faint');
+
+    // Guided mode: open only the next fold.
+    setFoldOpen('foldAccess', true);
+    setFoldOpen('foldOrigins', false);
+    setFoldOpen('foldCors', false);
+    setFoldOpen('foldApps', false);
+    setFoldOpen('foldWork', false);
+    setFoldOpen('foldMoney', false);
+    setFoldOpen('foldDisputes', false);
+    setFoldOpen('foldSettings', false);
     return;
   }
 
@@ -158,6 +198,12 @@ async function refreshOnboardingStatus() {
   setStepDone('stepPublish', publishedBounties > 0);
   setStepDone('stepPaid', paidCount > 0);
 
+  setPill('pillOrigins', verifiedOrigins > 0 ? `${verifiedOrigins} verified` : 'No verified origins', verifiedOrigins > 0 ? 'good' : 'warn');
+  setPill('pillApps', appsCount > 0 ? `${appsCount} apps` : 'No apps', appsCount > 0 ? 'good' : 'warn');
+  setPill('pillWork', publishedBounties > 0 ? `${publishedBounties} published` : 'No published bounties', publishedBounties > 0 ? 'good' : 'warn');
+  setPill('pillMoney', paidCount > 0 ? `${paidCount} paid` : 'No payouts yet', paidCount > 0 ? 'good' : 'faint');
+  setPill('pillDisputes', `${openDisputes} open`, openDisputes > 0 ? 'warn' : 'faint');
+
   const remaining =
     (hasToken ? 0 : 1) +
     (verifiedOrigins > 0 ? 0 : 1) +
@@ -179,28 +225,47 @@ async function refreshOnboardingStatus() {
   if (nextLabel && nextBtn) {
     let href = '#integrations';
     let label = 'Connect your platform';
+    let foldId = 'foldAccess';
     if (!hasToken) {
       href = '#integrations';
       label = 'Connect your platform';
+      foldId = 'foldAccess';
     } else if (verifiedOrigins <= 0) {
       href = '#integrations';
       label = 'Verify your domain';
+      foldId = 'foldOrigins';
     } else if (!feeOk) {
       href = '#settings';
       label = 'Set your platform fee';
+      foldId = 'foldSettings';
     } else if (appsCount <= 0) {
       href = '#apps';
       label = 'Create your first app';
+      foldId = 'foldApps';
     } else if (publishedBounties <= 0) {
       href = '/apps/';
       label = 'Publish work via an app';
+      foldId = 'foldWork';
     } else {
       href = '#money';
       label = 'View earnings';
+      foldId = 'foldMoney';
     }
     nextLabel.textContent = label;
     nextBtn.setAttribute('href', href);
+    nextBtn.dataset.nextFold = foldId;
   }
+
+  // Guided mode: open only the next fold (and keep Disputes open if urgent).
+  const nextFold = nextBtn?.dataset?.nextFold || '';
+  setFoldOpen('foldAccess', nextFold === 'foldAccess');
+  setFoldOpen('foldOrigins', nextFold === 'foldOrigins');
+  setFoldOpen('foldCors', false);
+  setFoldOpen('foldApps', nextFold === 'foldApps');
+  setFoldOpen('foldWork', nextFold === 'foldWork');
+  setFoldOpen('foldMoney', nextFold === 'foldMoney');
+  setFoldOpen('foldDisputes', openDisputes > 0);
+  setFoldOpen('foldSettings', nextFold === 'foldSettings');
 }
 
 function originRecordName(originUrl) {
@@ -814,12 +879,32 @@ function renderOriginsTable(origins) {
     actions.appendChild(btnUse);
 
     if (status !== 'revoked') {
+      const btnCheck = document.createElement('button');
+      btnCheck.type = 'button';
+      btnCheck.className = 'pw-btn primary';
+      btnCheck.textContent = 'Check';
+      btnCheck.addEventListener('click', () => {
+        $('originId').value = String(o?.id ?? '');
+        onCheckOrigin().catch((e) => setStatus('originStatus', String(e), 'bad'));
+      });
+      actions.appendChild(btnCheck);
+
       const btnCopy = document.createElement('button');
       btnCopy.type = 'button';
       btnCopy.className = 'pw-btn';
       btnCopy.textContent = 'Copy token';
       btnCopy.addEventListener('click', () => copyToClipboard(String(o?.token ?? '')));
       actions.appendChild(btnCopy);
+
+      const btnRevoke = document.createElement('button');
+      btnRevoke.type = 'button';
+      btnRevoke.className = 'pw-btn danger';
+      btnRevoke.textContent = 'Revoke';
+      btnRevoke.addEventListener('click', () => {
+        $('originId').value = String(o?.id ?? '');
+        onRevokeOrigin().catch((e) => setStatus('originStatus', String(e), 'bad'));
+      });
+      actions.appendChild(btnRevoke);
     }
 
     tdAction.appendChild(actions);
@@ -1358,6 +1443,25 @@ if (btnCopyBuyerToken) {
   btnCopyBuyerToken.addEventListener('click', () => copyToClipboard(($('buyerToken')?.value ?? '').trim()));
 }
 
+const btnOnboardingNext = $('btnOnboardingNext');
+if (btnOnboardingNext) {
+  btnOnboardingNext.addEventListener('click', (ev) => {
+    const href = String(btnOnboardingNext.getAttribute('href') ?? '');
+    // If the next action is a real navigation (e.g., /apps/), let it happen.
+    if (href && !href.startsWith('#')) return;
+
+    ev.preventDefault();
+    const foldId = String(btnOnboardingNext.dataset?.nextFold ?? '').trim();
+    if (foldId) setFoldOpen(foldId, true, { force: true });
+
+    const targetId = href.replace(/^#/, '').trim();
+    const target = targetId ? $(targetId) : null;
+    if (target && typeof target.scrollIntoView === 'function') {
+      target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  });
+}
+
 $('btnGetPlatformFee').addEventListener('click', () => onGetPlatformFee().catch((e) => setStatus('pfStatus', String(e), 'bad')));
 $('btnSetPlatformFee').addEventListener('click', () => onSetPlatformFee().catch((e) => setStatus('pfStatus', String(e), 'bad')));
 
@@ -1401,6 +1505,21 @@ if (appTaskTypeEl) appTaskTypeEl.addEventListener('input', () => applySelectedAp
 setBuyerToken(getBuyerToken());
 setCsrfToken(getCsrfToken());
 renderOriginGuide(null);
+
+// Mark folds as "user-toggled" when a human clicks them so guided refreshes stop overriding.
+for (const summary of Array.from(document.querySelectorAll('details.pw-fold > summary'))) {
+  summary.addEventListener('click', (ev) => {
+    const d = ev.currentTarget?.parentElement;
+    if (d && d.tagName?.toLowerCase?.() === 'details') {
+      try {
+        d.dataset.userToggled = '1';
+      } catch {
+        // ignore
+      }
+    }
+  });
+}
+
 refreshOnboardingStatus().catch(() => {});
 
 autoFillAppIds();

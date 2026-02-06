@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import http from 'http';
-import { fillRequiredAppForm } from './helpers';
+import { fillRequiredAppForm, openDetails } from './helpers';
 
 test('create + publish via a vertical app page (github)', async ({ page }) => {
   test.setTimeout(90_000);
@@ -38,6 +38,7 @@ test('create + publish via a vertical app page (github)', async ({ page }) => {
     expect(buyerToken).toMatch(/^pw_bu_/);
 
     // Add + verify the origin (real verification via http_file).
+    await openDetails(page, '#foldOrigins');
     await page.fill('#originUrl', origin);
     await page.selectOption('#originMethod', 'http_file');
 
@@ -49,7 +50,8 @@ test('create + publish via a vertical app page (github)', async ({ page }) => {
     verifyToken = String(addOriginJson?.origin?.token ?? '');
     expect(verifyToken).toMatch(/^pw_verify_/);
 
-    await page.click('#btnCheckOrigin');
+    const originRow = page.locator('#originsTbody tr').filter({ hasText: origin }).first();
+    await originRow.getByRole('button', { name: 'Check' }).click();
     await expect(page.locator('#originStatus')).toContainText('status=verified');
 
     // Use a vertical app page to create + publish the bounty with task_descriptor.
