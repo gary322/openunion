@@ -159,6 +159,9 @@ export async function initAppPage(cfg) {
   const payoutPill = qs('#payoutPill');
   const payoutPresets = qs('#payoutPresets');
   const payoutBreakdown = qs('#payoutBreakdown');
+  const deliverablesList = qs('#deliverablesList');
+  const deliverablesSub = qs('#deliverablesSub');
+  const deliverablesHelp = qs('#deliverablesHelp');
   const titleInput = qs('#title');
   const btnCreateDraft = qs('#btnCreateDraft');
   const btnCreatePublish = qs('#btnCreatePublish');
@@ -202,7 +205,7 @@ export async function initAppPage(cfg) {
   // If the user needs to verify an origin, keep the return path tight.
   if (linkVerifyOrigins) {
     const next = String(window.location.pathname || '').startsWith('/') ? String(window.location.pathname || '') : '/apps/';
-    linkVerifyOrigins.setAttribute('href', `/buyer/onboarding.html?next=${encodeURIComponent(next)}`);
+    linkVerifyOrigins.setAttribute('href', `/buyer/onboarding.html?next=${encodeURIComponent(next)}#origin`);
   }
 
   // Session connect: app pages can also use the buyer cookie session (no token copy/paste).
@@ -727,6 +730,30 @@ export async function initAppPage(cfg) {
     updatePayoutPresetsUi();
   }
 
+  function renderDeliverables(descriptor) {
+    if (!deliverablesList) return;
+    const req = descriptor?.output_spec?.required_artifacts;
+    const items = Array.isArray(req) ? req : [];
+    if (!items.length) {
+      deliverablesList.replaceChildren(el('span', { class: 'pw-chip faint' }, ['No required artifacts']));
+      if (deliverablesSub) deliverablesSub.textContent = 'Workers can submit any artifacts. Consider requiring at least one screenshot or log.';
+      if (deliverablesHelp) deliverablesHelp.textContent = 'Set required artifacts in task_descriptor.output_spec.required_artifacts.';
+      return;
+    }
+
+    deliverablesList.replaceChildren(
+      ...items.map((a) => {
+        const kind = String(a?.kind || 'artifact');
+        const label = String(a?.label || '').trim();
+        const parts = [el('span', { class: 'pw-mono', text: kind })];
+        if (label && label !== kind) parts.push(el('span', { text: label }));
+        return el('span', { class: 'pw-chip' }, parts);
+      })
+    );
+    if (deliverablesSub) deliverablesSub.textContent = 'What workers must submit for this app.';
+    if (deliverablesHelp) deliverablesHelp.textContent = 'Tip: keep required artifacts minimal. Proofs are enforced separately.';
+  }
+
   // Preview
   function buildDescriptorFromForm() {
     const base = defaultDescriptor && typeof defaultDescriptor === 'object' ? safeClone(defaultDescriptor) : {};
@@ -782,6 +809,7 @@ export async function initAppPage(cfg) {
     const p = buildBountyPayload(d);
     if (descriptorOut) descriptorOut.textContent = JSON.stringify(d, null, 2);
     if (payloadOut) payloadOut.textContent = JSON.stringify(p, null, 2);
+    renderDeliverables(d);
 
     const missing = validateRequiredFields(d);
     const auth = effectiveBuyerAuth();
@@ -898,7 +926,7 @@ export async function initAppPage(cfg) {
     const single = verified.length === 1 && Boolean(chosen);
     if (originSelectWrap) originSelectWrap.hidden = single;
     if (originSingle) originSingle.hidden = !single;
-    if (originSingleText) originSingleText.textContent = single ? chosen : '—';
+    if (originSingleText) originSingleText.textContent = single ? chosen.replace(/^https?:\/\//, '') : '—';
     toast(`Loaded ${verified.length} verified origin(s)`, verified.length ? 'good' : '');
     refreshPreview();
   }

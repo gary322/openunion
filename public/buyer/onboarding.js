@@ -796,6 +796,56 @@ function wire() {
 
   // Apps
   $('appName')?.addEventListener('input', autoFillAppIds);
+
+  function renderAppTemplateGrid() {
+    const grid = $('appTemplateGrid');
+    const sel = $('appTemplate');
+    if (!grid || !sel) return;
+
+    const cards = [
+      { id: 'generic_http', title: 'HTTP fetch', sub: 'Call an endpoint and return a structured summary.' },
+      { id: 'marketplace_watch', title: 'Watch a page', sub: 'Open a page, capture a screenshot, and extract signals.' },
+      { id: 'research_arxiv', title: 'ArXiv research', sub: 'Turn an idea into a research plan with cited papers.' },
+      { id: 'github_scan', title: 'GitHub scan', sub: 'Find similar repos and report licensing + links.' },
+    ];
+
+    function setSelected(id) {
+      const v = String(id || '').trim();
+      if (v) sel.value = v;
+      for (const btn of Array.from(grid.querySelectorAll('button[data-template-id]'))) {
+        const tid = String(btn.getAttribute('data-template-id') || '');
+        btn.setAttribute('aria-pressed', tid === sel.value ? 'true' : 'false');
+      }
+    }
+
+    const nodes = [];
+    for (const c of cards) {
+      const { defaultDescriptor, uiSchema } = buildAppTemplate(c.id, { taskType: 'example_task' });
+      const caps = Array.isArray(defaultDescriptor?.capability_tags) ? defaultDescriptor.capability_tags : [];
+      const category = String(uiSchema?.category || '').trim();
+
+      const btn = el('button', { type: 'button', class: 'pw-choice', 'data-template-id': c.id, 'aria-pressed': 'false' }, [
+        el('div', { class: 'pw-choice-title' }, [
+          el('span', { text: c.title }),
+          el('span', { class: 'pw-pill faint', text: category || 'Template' }),
+        ]),
+        el('div', { class: 'pw-choice-sub', text: c.sub }),
+        el('div', { class: 'pw-chips' }, caps.map((t) => el('span', { class: 'pw-chip faint' }, [t]))),
+      ]);
+      btn.addEventListener('click', () => {
+        setSelected(c.id);
+        toast(`Template: ${c.title}`, 'good');
+      });
+      nodes.push(btn);
+    }
+
+    grid.replaceChildren(...nodes);
+    setSelected(String(sel.value || 'generic_http'));
+    sel.addEventListener('change', () => setSelected(sel.value));
+  }
+
+  renderAppTemplateGrid();
+
   $('btnCreateOrgApp')?.addEventListener('click', async () => {
     setStatus('appsStatus', 'Creating app…');
     const name = String($('appName')?.value ?? '').trim();

@@ -269,13 +269,19 @@
                 <input class="pw-input" id="appName" placeholder="e.g. Flight deals monitor" />
               </div>
               <div class="pw-field">
-                <label for="appTemplate">Template</label>
-                <select class="pw-select" id="appTemplate">
-                  <option value="generic_http" selected>Generic HTTP + summarize</option>
-                  <option value="github_scan">GitHub scan</option>
-                  <option value="research_arxiv">Research plan (arXiv)</option>
-                  <option value="marketplace_watch">Marketplace watch</option>
-                </select>
+                <label>Template</label>
+                <div class="pw-template-grid" id="appTemplateGrid" role="list" aria-label="App templates"></div>
+                <div class="pw-help">Pick a starting point. You can edit fields later.</div>
+
+                <div class="pw-dev pw-mt-10">
+                  <label for="appTemplate">Developer: template id</label>
+                  <select class="pw-select" id="appTemplate">
+                    <option value="generic_http" selected>generic_http</option>
+                    <option value="github_scan">github_scan</option>
+                    <option value="research_arxiv">research_arxiv</option>
+                    <option value="marketplace_watch">marketplace_watch</option>
+                  </select>
+                </div>
               </div>
             </div>
 

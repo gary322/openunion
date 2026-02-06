@@ -576,8 +576,10 @@ export function buildServer(opts: { taskDescriptorBrowserFlowValidationGate?: bo
   app.get('/apps/app/:slug', renderRegistryAppPage);
   app.get('/apps/app/:slug/', renderRegistryAppPage);
 
+  // Entry points: prefer guided onboarding for platforms.
   app.get('/worker', async (_req, reply) => reply.redirect('/worker/index.html'));
-  app.get('/buyer', async (_req, reply) => reply.redirect('/buyer/index.html'));
+  app.get('/buyer', async (_req, reply) => reply.redirect('/buyer/onboarding.html'));
+  app.get('/buyer/', async (_req, reply) => reply.redirect('/buyer/onboarding.html'));
   app.get('/admin', async (_req, reply) => reply.redirect('/admin/index.html'));
 
   // Raw upload bodies (local storage backend)
