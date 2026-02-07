@@ -339,7 +339,16 @@ function buildRequiredOutputsFromJob() {
   const spec = currentJobSpec();
   const td = spec?.taskDescriptor;
   const required = td?.output_spec?.required_artifacts;
-  const slots = expandRequiredArtifactSpecs(required);
+  let slots = expandRequiredArtifactSpecs(required);
+  // Backward-compat: legacy bounties/jobs may not carry a task_descriptor.output_spec.
+  // Still guide the worker to upload the required number of proofs so "Submit" can be deterministic.
+  if (!slots.length) {
+    const proofs = Number(spec?.requiredProofs ?? 0);
+    if (Number.isFinite(proofs) && proofs > 0) {
+      // Use a valid artifact kind for server-side validation; keep "repro" in the label for clarity.
+      slots = expandRequiredArtifactSpecs([{ kind: 'screenshot', label_prefix: 'repro', count: Math.floor(proofs) }]);
+    }
+  }
   requiredSlots = slots;
   renderRequiredOutputs();
   updateActionbar();

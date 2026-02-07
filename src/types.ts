@@ -116,6 +116,7 @@ export interface JourneySpec {
 export interface JobSpecResponse {
   jobId: string;
   bountyId: string;
+  requiredProofs: number;
   title: string;
   description?: string;
   taskDescriptor?: Record<string, unknown>;

@@ -339,6 +339,8 @@ test('buyer → bounty → worker → upload → verify (gateway) → payout (lo
     expect(paid.proofwork_fee_cents).toBe(18);
 
     // Worker UI: payout history should show the paid payout (no DB access required).
+    await gotoWorkerView(page, 'payouts');
+    await openDetails(page, '#payouts');
     await page.click('#btnListPayouts');
     await expect(page.locator('#payoutOut')).toContainText(payoutId);
     await expect(page.locator('#payoutOut')).toContainText(/"status"\s*:\s*"paid"/);
