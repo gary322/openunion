@@ -1532,6 +1532,19 @@ function applySelectedAppTemplate() {
     appLastTemplateId = templateId;
   }
 
+  // Low-effort default: templates don't require customization. For custom apps, keep the
+  // "Customize" block open so builders don't have to hunt for it.
+  if (templateChanged) {
+    const d = $('appCustomizeDetails');
+    if (d && String(d.tagName || '').toLowerCase() === 'details') {
+      try {
+        d.open = templateId === 'custom';
+      } catch {
+        // ignore
+      }
+    }
+  }
+
   const dd = $('appDefaultDescriptor');
   const us = $('appUiSchema');
   if (dd) dd.value = pretty(generatedAppDefaultDescriptor);

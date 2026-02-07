@@ -1002,7 +1002,19 @@ function refreshPublishPreview() {
   const pill = $('publishPayoutPill');
   const breakdown = $('publishPayoutBreakdown');
   const { platformCutCents, proofworkFeeCents, workerNetCents } = computeWorkerNetCents(payoutCents, publishUi.platformFeeBps);
-  if (pill) pill.textContent = `${formatCents(payoutCents)} • ${requiredProofs} proof${requiredProofs === 1 ? '' : 's'}`;
+  if (pill) {
+    let originLabel = '';
+    if (originSelected) originLabel = String(originSelected).replace(/^https?:\/\//, '');
+    else if (hasPublicOrigins) {
+      if (publishUi.publicOrigins.length === 1) originLabel = String(publishUi.publicOrigins[0]).replace(/^https?:\/\//, '');
+      else originLabel = 'supported origins';
+    }
+    const parts = [];
+    if (originLabel) parts.push(originLabel);
+    parts.push(formatCents(payoutCents));
+    parts.push(`${requiredProofs} proof${requiredProofs === 1 ? '' : 's'}`);
+    pill.textContent = parts.join(' • ');
+  }
   if (breakdown) breakdown.textContent = `Net to worker ${formatCents(workerNetCents)} (platform ${formatBps(publishUi.platformFeeBps)} then Proofwork 1%)`;
   updatePublishPayoutPresetsUi();
 

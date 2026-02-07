@@ -1246,7 +1246,19 @@ export async function initAppPage(cfg) {
     const proofworkFeeCents = Math.round(workerPortionCents * 0.01);
     const workerNetCents = Math.max(0, workerPortionCents - proofworkFeeCents);
 
-    if (payoutPill) payoutPill.textContent = `${formatCents(payoutCents)} • ${requiredProofs} proof${requiredProofs === 1 ? '' : 's'}`;
+    if (payoutPill) {
+      let originLabel = '';
+      if (origin) originLabel = String(origin).replace(/^https?:\/\//, '');
+      else if (hasSupportedOrigins) {
+        if (publicAllowedOrigins.length === 1) originLabel = String(publicAllowedOrigins[0]).replace(/^https?:\/\//, '');
+        else originLabel = 'supported origins';
+      }
+      const parts = [];
+      if (originLabel) parts.push(originLabel);
+      parts.push(formatCents(payoutCents));
+      parts.push(`${requiredProofs} proof${requiredProofs === 1 ? '' : 's'}`);
+      payoutPill.textContent = parts.join(' • ');
+    }
     if (payoutBreakdown) {
       const pf = Number.isFinite(Number(platformFeeBps)) && Number(platformFeeBps) > 0 ? `platform ${formatBps(platformFeeBps)}` : 'platform 0%';
       payoutBreakdown.textContent = `Net to worker ${formatCents(workerNetCents)} (${pf} then Proofwork 1%)`;
