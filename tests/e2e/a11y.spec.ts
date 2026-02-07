@@ -3,7 +3,8 @@ import AxeBuilder from '@axe-core/playwright';
 
 // Axe injects scripts into the page. Our production CSP disallows inline scripts, so we
 // intentionally bypass CSP only for these accessibility checks.
-test.use({ bypassCSP: true });
+// We also force reduced motion so we don't measure contrast mid-animation.
+test.use({ bypassCSP: true, reducedMotion: 'reduce' });
 
 async function expectNoSeriousViolations(page: any, urlPath: string) {
   await page.goto(urlPath, { waitUntil: 'domcontentloaded' });
@@ -36,4 +37,3 @@ test('a11y: buyer portal', async ({ page }) => {
 test('a11y: worker portal', async ({ page }) => {
   await expectNoSeriousViolations(page, '/worker/');
 });
-

@@ -768,6 +768,12 @@ details.pw-fold .pw-fold-body {
   /* Keep AA contrast on the soft orange pill background (12px text). */
   color: #7a2a00;
 }
+.pw-pill.bad {
+  border-color: rgba(220, 38, 38, 0.26);
+  background: rgba(220, 38, 38, 0.1);
+  /* Darker than the accent red so small text meets WCAG AA contrast on the soft background. */
+  color: rgba(127, 29, 29, 0.95);
+}
 .pw-pill.faint {
   background: rgba(255, 255, 255, 0.62);
   color: rgba(11, 15, 25, 0.7);
@@ -1203,6 +1209,25 @@ body.pw-dev-on .pw-not-dev {
   font-size: 12px;
   font-weight: 750;
   color: rgba(11, 15, 25, 0.75);
+}
+.pw-sidenav-badge.good {
+  border-color: rgba(21, 128, 61, 0.28);
+  background: rgba(21, 128, 61, 0.12);
+  color: #0b3d1c;
+}
+.pw-sidenav-badge.warn {
+  border-color: rgba(234, 88, 12, 0.26);
+  background: rgba(234, 88, 12, 0.12);
+  color: #7a2a00;
+}
+.pw-sidenav-badge.faint {
+  background: rgba(255, 255, 255, 0.62);
+  color: rgba(11, 15, 25, 0.7);
+}
+.pw-sidenav-badge.bad {
+  border-color: rgba(220, 38, 38, 0.26);
+  background: rgba(220, 38, 38, 0.1);
+  color: rgba(127, 29, 29, 0.95);
 }
 
 /* Topbar tools: search + toggles. */

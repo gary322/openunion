@@ -18,8 +18,11 @@
 // - This does not print secrets. It prints only non-sensitive IDs/URLs.
 // - This smoke expects the remote environment to have verifiers running so jobs transition to done/pass.
 
+import { randomBytes } from 'node:crypto';
 import { spawn } from 'node:child_process';
+import fs from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -47,6 +50,30 @@ function tsSuffix() {
   return new Date().toISOString().replace(/[:.]/g, '');
 }
 
+function parseBoolEnv(name: string, fallback: boolean): boolean {
+  const raw = String(process.env[name] ?? '').trim().toLowerCase();
+  if (!raw) return fallback;
+  if (['1', 'true', 'yes', 'y', 'on'].includes(raw)) return true;
+  if (['0', 'false', 'no', 'n', 'off'].includes(raw)) return false;
+  return fallback;
+}
+
+async function pickFreePort(): Promise<number> {
+  return await new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.unref?.();
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      const addr = server.address();
+      const port = typeof addr === 'object' && addr ? addr.port : null;
+      server.close(() => {
+        if (!port) return reject(new Error('failed_to_pick_port'));
+        resolve(Number(port));
+      });
+    });
+  });
+}
+
 async function fetchJson(input: {
   baseUrl: string;
   path: string;
@@ -70,10 +97,15 @@ async function fetchJson(input: {
   return { status: resp.status, ok: resp.ok, headers: resp.headers, json, text };
 }
 
-async function runBinaryChecked(cmd: string, args: string[], opts: { timeoutMs?: number } = {}) {
+async function runBinaryChecked(
+  cmd: string,
+  args: string[],
+  opts: { timeoutMs?: number; env?: Record<string, string> } = {}
+) {
   const timeoutMs = opts.timeoutMs ?? 30_000;
+  const env = opts.env ?? (process.env as Record<string, string>);
   await new Promise<void>((resolve, reject) => {
-    const child = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(cmd, args, { env, stdio: ['ignore', 'pipe', 'pipe'] });
     let stderr = '';
     const t = setTimeout(() => {
       try {
@@ -91,6 +123,37 @@ async function runBinaryChecked(cmd: string, args: string[], opts: { timeoutMs?:
       resolve();
     });
   });
+}
+
+async function resolveBrowserExecutablePath(): Promise<string | null> {
+  const explicit = String(process.env.SMOKE_BROWSER_EXECUTABLE_PATH ?? '').trim();
+  if (explicit) return explicit;
+
+  // Prefer Playwright's pinned Chromium binary if available (avoids requiring a system-installed browser).
+  try {
+    const mod: any = await import('playwright');
+    const p = typeof mod?.chromium?.executablePath === 'function' ? String(mod.chromium.executablePath() ?? '').trim() : '';
+    if (p && fs.existsSync(p)) return p;
+  } catch {
+    // ignore
+  }
+
+  // Fall back to common macOS locations if present.
+  const candidates = [
+    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+    '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser',
+    '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
+    '/Applications/Chromium.app/Contents/MacOS/Chromium',
+  ];
+  for (const c of candidates) {
+    try {
+      if (fs.existsSync(c)) return c;
+    } catch {
+      // ignore
+    }
+  }
+
+  return null;
 }
 
 async function ensureBuyerAuth(input: {
@@ -219,7 +282,7 @@ async function firstJobIdForBounty(input: { baseUrl: string; buyerToken: string;
   return jobId;
 }
 
-async function waitJobDonePass(input: { baseUrl: string; buyerToken: string; bountyId: string; jobId: string; timeoutMs: number }) {
+async function waitBountyDonePass(input: { baseUrl: string; buyerToken: string; bountyId: string; timeoutMs: number }) {
   const authHeader = { authorization: `Bearer ${input.buyerToken}` };
   const deadline = Date.now() + input.timeoutMs;
   for (;;) {
@@ -229,11 +292,18 @@ async function waitJobDonePass(input: { baseUrl: string; buyerToken: string; bou
       headers: authHeader,
     });
     if (!jobs.ok) throw new Error(`bounty_jobs_poll_failed:${jobs.status}`);
-    const job = (jobs.json?.jobs ?? []).find((j: any) => String(j?.id ?? '') === input.jobId) ?? null;
-    const status = String(job?.status ?? '');
-    const verdict = String(job?.finalVerdict ?? job?.final_verdict ?? '');
-    if (status === 'done' && verdict === 'pass') return;
-    if (Date.now() > deadline) throw new Error(`timeout_waiting_done_pass:${status}:${verdict}`);
+    const rows: any[] = Array.isArray(jobs.json?.jobs) ? jobs.json.jobs : [];
+    const passed = rows.find((j) => String(j?.status ?? '') === 'done' && String(j?.finalVerdict ?? j?.final_verdict ?? '') === 'pass');
+    if (passed) return;
+
+    if (Date.now() > deadline) {
+      const statuses = rows
+        .slice(0, 5)
+        .map((j) => `${String(j?.id ?? '')}:${String(j?.status ?? '')}:${String(j?.finalVerdict ?? j?.final_verdict ?? '')}`)
+        .filter(Boolean)
+        .join(',');
+      throw new Error(`timeout_waiting_done_pass:${statuses || 'no_jobs'}`);
+    }
     await sleep(1000);
   }
 }
@@ -242,6 +312,7 @@ async function runOpenClawWorkerOnce(input: {
   baseUrl: string;
   workerTokenFile: string;
   openclawBin: string;
+  openclawStateDir: string;
   browserProfile: string;
   supportedCapabilityTags: string[];
   requireTaskType: string;
@@ -262,6 +333,7 @@ async function runOpenClawWorkerOnce(input: {
     PROOFWORK_ORIGIN_ENFORCEMENT: 'strict',
     OPENCLAW_BIN: input.openclawBin,
     OPENCLAW_BROWSER_PROFILE: input.browserProfile,
+    OPENCLAW_STATE_DIR: input.openclawStateDir,
     ...(input.extraEnv ?? {}),
   };
 
@@ -439,19 +511,92 @@ async function main() {
     },
   ];
 
-  // Preflight local prerequisites so failures are actionable.
-  await runBinaryChecked(openclawBin, ['--version'], { timeoutMs: 15_000 });
-  const needsFfmpeg = smokes.some((s) => s.requiresFfmpeg);
-  if (needsFfmpeg) await runBinaryChecked('ffmpeg', ['-version'], { timeoutMs: 10_000 });
-
-  // Best-effort: ensure buyer has funds for publish. If insufficient, the publish call will fail loudly.
-  if (adminToken && auth.orgId) await adminTopupBestEffort({ baseUrl, orgId: auth.orgId, adminToken, amountCents: 50_000 });
-
   const tmp = await mkdtemp(path.join(os.tmpdir(), 'proofwork-smoke-apps-'));
+  const openclawStateDir = String(process.env.SMOKE_OPENCLAW_STATE_DIR ?? '').trim() || path.join(tmp, 'openclaw-state');
+  try {
+    fs.mkdirSync(openclawStateDir, { recursive: true });
+  } catch {
+    // ignore
+  }
+  const ocEnv = { ...process.env, OPENCLAW_STATE_DIR: openclawStateDir } as Record<string, string>;
+  let gateway: ReturnType<typeof spawn> | null = null;
   try {
     console.log(`[smoke_apps] base_url=${baseUrl}`);
     console.log(`[smoke_apps] smoke_origin=${smokeOrigin}`);
     console.log(`[smoke_apps] tmp_dir=${tmp}`);
+
+    // Preflight local prerequisites so failures are actionable.
+    await runBinaryChecked(openclawBin, ['--version'], { timeoutMs: 15_000, env: ocEnv });
+
+    // Configure OpenClaw browser execution to avoid requiring a system-installed browser and to avoid opening windows.
+    const headless = parseBoolEnv('SMOKE_BROWSER_HEADLESS', true);
+    const exePath = await resolveBrowserExecutablePath();
+    if (exePath) {
+      console.log(`[smoke_apps] openclaw_browser_executable_path=${exePath}`);
+      await runBinaryChecked(openclawBin, ['config', 'set', '--json', 'browser.executablePath', JSON.stringify(exePath)], { timeoutMs: 15_000, env: ocEnv });
+    } else {
+      console.log('[smoke_apps] openclaw_browser_executable_path not set (auto-detect). If browser jobs fail, set SMOKE_BROWSER_EXECUTABLE_PATH.');
+    }
+    await runBinaryChecked(openclawBin, ['config', 'set', '--json', 'browser.headless', JSON.stringify(headless)], { timeoutMs: 15_000, env: ocEnv });
+
+    // Start an isolated OpenClaw Gateway in the foreground so this smoke does not depend on a system service.
+    const port = process.env.SMOKE_GATEWAY_PORT ? Number(process.env.SMOKE_GATEWAY_PORT) : await pickFreePort();
+    if (!Number.isFinite(port) || port <= 0) throw new Error('invalid_SMOKE_GATEWAY_PORT');
+    const gwToken = String(process.env.SMOKE_GATEWAY_TOKEN ?? `gw_${randomBytes(16).toString('hex')}`);
+    const gwUrl = `ws://127.0.0.1:${port}`;
+
+    await runBinaryChecked(openclawBin, ['config', 'set', '--json', 'gateway.mode', JSON.stringify('local')], { timeoutMs: 15_000, env: ocEnv });
+    await runBinaryChecked(openclawBin, ['config', 'set', '--json', 'gateway.auth.mode', JSON.stringify('token')], { timeoutMs: 15_000, env: ocEnv });
+    await runBinaryChecked(openclawBin, ['config', 'set', '--json', 'gateway.auth.token', JSON.stringify(gwToken)], { timeoutMs: 15_000, env: ocEnv });
+    await runBinaryChecked(openclawBin, ['config', 'set', '--json', 'gateway.remote.url', JSON.stringify(gwUrl)], { timeoutMs: 15_000, env: ocEnv });
+    await runBinaryChecked(openclawBin, ['config', 'set', '--json', 'gateway.remote.token', JSON.stringify(gwToken)], { timeoutMs: 15_000, env: ocEnv });
+    await runBinaryChecked(openclawBin, ['config', 'set', '--json', 'gateway.port', String(port)], { timeoutMs: 15_000, env: ocEnv });
+
+    const gwLogs: string[] = [];
+    const onGwLine = (s: string) => {
+      const line = s.trimEnd();
+      if (!line) return;
+      gwLogs.push(line);
+      if (gwLogs.length > 400) gwLogs.shift();
+    };
+
+    gateway = spawn(
+      openclawBin,
+      ['gateway', 'run', '--port', String(port), '--token', gwToken, '--bind', 'loopback', '--allow-unconfigured', '--force', '--compact'],
+      { env: ocEnv, stdio: ['ignore', 'pipe', 'pipe'] }
+    );
+    gateway.stdout.on('data', (d) => onGwLine(String(d)));
+    gateway.stderr.on('data', (d) => onGwLine(String(d)));
+
+    const waitHealthDeadline = Date.now() + 25_000;
+    let lastHealthErr: any = null;
+    while (Date.now() < waitHealthDeadline) {
+      if (gateway.exitCode !== null) {
+        throw new Error(`openclaw_gateway_exited:${gateway.exitCode}\n${gwLogs.slice(-40).join('\n')}`);
+      }
+      try {
+        await runBinaryChecked(openclawBin, ['health', '--json'], { timeoutMs: 10_000, env: ocEnv });
+        lastHealthErr = null;
+        break;
+      } catch (err) {
+        lastHealthErr = err;
+        await sleep(500);
+      }
+    }
+    if (lastHealthErr) {
+      throw new Error(`openclaw_gateway_unhealthy:${String(lastHealthErr?.message ?? lastHealthErr)}\n${gwLogs.slice(-80).join('\n')}`);
+    }
+
+    const needsFfmpeg = smokes.some((s) => s.requiresFfmpeg);
+    if (needsFfmpeg) await runBinaryChecked('ffmpeg', ['-version'], { timeoutMs: 10_000 });
+
+    // Fail fast if browser automation isn't available for the chosen profile.
+    if (smokes.some((s) => s.requiresBrowser)) {
+      await runBinaryChecked(openclawBin, ['browser', '--browser-profile', browserProfile, 'start', '--json'], { timeoutMs: 30_000, env: ocEnv });
+    }
+
+    // Best-effort: ensure buyer has funds for publish. If insufficient, the publish call will fail loudly.
+    if (adminToken && auth.orgId) await adminTopupBestEffort({ baseUrl, orgId: auth.orgId, adminToken, amountCents: 50_000 });
 
     for (const s of smokes) {
       console.log(`[smoke_apps] create+publish ${s.id} (${s.taskType})`);
@@ -472,6 +617,7 @@ async function main() {
         baseUrl,
         workerTokenFile: tokenFile,
         openclawBin,
+        openclawStateDir,
         browserProfile,
         supportedCapabilityTags: s.supportedCapabilityTags,
         requireTaskType: s.taskType,
@@ -484,6 +630,19 @@ async function main() {
       console.log(`[smoke_apps] OK ${s.id}`);
     }
   } finally {
+    if (gateway && gateway.exitCode === null && !gateway.killed) {
+      try {
+        gateway.kill('SIGTERM');
+      } catch {
+        // ignore
+      }
+      await sleep(500);
+      try {
+        if (gateway.exitCode === null && !gateway.killed) gateway.kill('SIGKILL');
+      } catch {
+        // ignore
+      }
+    }
     await rm(tmp, { recursive: true, force: true }).catch(() => undefined);
   }
 }
@@ -492,4 +651,3 @@ main().catch((err) => {
   console.error(String(err?.message ?? err));
   process.exitCode = 1;
 });
-

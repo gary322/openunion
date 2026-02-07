@@ -227,6 +227,12 @@ function badge(id, text, kind = '') {
   if (kind) n.classList.add(kind);
 }
 
+function setStepDone(navId, done) {
+  const n = $(navId);
+  if (!n) return;
+  n.classList.toggle('done', !!done);
+}
+
 function clearNode(node) {
   if (!node) return;
   while (node.firstChild) node.removeChild(node.firstChild);
@@ -1145,12 +1151,19 @@ async function refreshAllImpl() {
     badge('badgeFees', '-', 'faint');
     badge('badgeApp', '-', 'faint');
     badge('badgePublish', '-', 'faint');
+    setStepDone('navConnect', false);
+    setStepDone('navOrigin', false);
+    setStepDone('navFees', false);
+    setStepDone('navCors', false);
+    setStepDone('navApp', false);
+    setStepDone('navPublish', false);
     if (top) top.textContent = 'Next: connect (sign in or create org)';
     showStep('connect');
     return;
   }
 
   badge('badgeConnect', 'Done', 'good');
+  setStepDone('navConnect', true);
   if (!publishUi.schema) publishUi.schema = await loadDescriptorSchema();
 
   // Parallel fetches for the remaining status.
@@ -1169,12 +1182,14 @@ async function refreshAllImpl() {
     .filter(Boolean);
   const verifiedOrigins = verifiedOriginsList.length;
   badge('badgeOrigin', verifiedOrigins > 0 ? 'Done' : '!', verifiedOrigins > 0 ? 'good' : 'warn');
+  setStepDone('navOrigin', verifiedOrigins > 0);
   publishUi.verifiedOriginsCount = verifiedOrigins;
 
   const feeBps = Number(feeRes.json?.platformFeeBps ?? 0);
   const feeWallet = String(feeRes.json?.platformFeeWalletAddress ?? '').trim();
   const feeOk = Number.isFinite(feeBps) && (feeBps <= 0 || feeWallet.length > 0);
   badge('badgeFees', feeOk ? 'Done' : '!', feeOk ? 'good' : 'warn');
+  setStepDone('navFees', feeOk);
   publishUi.platformFeeBps = Number.isFinite(feeBps) && feeBps >= 0 ? Math.floor(feeBps) : 0;
 
   const apps = Array.isArray(appsRes.json?.apps) ? appsRes.json.apps : [];
@@ -1183,6 +1198,7 @@ async function refreshAllImpl() {
   if (apps.length > 0) badge('badgeApp', 'Done', 'good');
   else if (nextPath) badge('badgeApp', 'Optional', 'faint');
   else badge('badgeApp', '!', 'warn');
+  setStepDone('navApp', apps.length > 0);
 
   // Render origins/apps tables when their steps are visible (and useful even if not active).
   renderOriginsTable(origins, {
@@ -1303,6 +1319,7 @@ async function refreshAllImpl() {
     }
     const count = Array.isArray(corsRes.json?.origins) ? corsRes.json.origins.length : 0;
     badge('badgeCors', count > 0 ? `${count}` : 'Optional', count > 0 ? 'good' : 'faint');
+    setStepDone('navCors', count > 0);
   }
 
   // Determine next required step.
@@ -1341,6 +1358,7 @@ async function refreshAllImpl() {
     if (res.ok) publishedCount = Number(res.json?.total ?? 0) || 0;
   }
   badge('badgePublish', publishedCount > 0 ? 'Done' : '!', publishedCount > 0 ? 'good' : 'warn');
+  setStepDone('navPublish', publishedCount > 0);
   const pubStatus = $('publishStatus');
   if (pubStatus) pubStatus.textContent = publishedCount > 0 ? `Published bounties: ${publishedCount}` : 'No published bounties yet.';
 
