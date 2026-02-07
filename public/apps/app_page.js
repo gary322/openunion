@@ -152,9 +152,13 @@ export async function initAppPage(cfg) {
   const foldConnect = qs('#foldConnect');
   const foldDescribe = qs('#foldDescribe');
   const foldPublish = qs('#foldPublish');
+  const settingsFold = qs('#settingsFold');
   const pillConnect = qs('#pillConnect');
   const pillDescribe = qs('#pillDescribe');
   const pillPublish = qs('#pillPublish');
+  const stepConnect = qs('#stepConnect');
+  const stepDescribe = qs('#stepDescribe');
+  const stepPublish = qs('#stepPublish');
   const tabSignIn = qs('#tabSignIn');
   const tabToken = qs('#tabToken');
   const panelSignIn = qs('#panelSignIn');
@@ -163,6 +167,12 @@ export async function initAppPage(cfg) {
   const loginPassword = qs('#loginPassword');
   const btnLogin = qs('#btnLogin');
   const loginStatus = qs('#loginStatus');
+  const registerFold = qs('#registerFold');
+  const regOrgName = qs('#regOrgName');
+  const regApiKeyName = qs('#regApiKeyName');
+  const btnRegisterOrg = qs('#btnRegisterOrg');
+  const regStatus = qs('#regStatus');
+  const regOut = qs('#regOut');
   const templateSelect = qs('#template');
   const btnApplyTemplate = qs('#btnApplyTemplate');
   const templateCard = qs('#templateCard');
@@ -183,6 +193,7 @@ export async function initAppPage(cfg) {
   const deliverablesSub = qs('#deliverablesSub');
   const deliverablesHelp = qs('#deliverablesHelp');
   const titleInput = qs('#title');
+  const preflightActions = qs('#preflightActions');
   const btnActionbarConnect = qs('#btnActionbarConnect');
   const btnCreateDraft = qs('#btnCreateDraft');
   const btnCreatePublish = qs('#btnCreatePublish');
@@ -223,6 +234,7 @@ export async function initAppPage(cfg) {
   // we can jump users to Monitor after publish (low-effort default).
   let viewRouter = null;
   let currentView = 'create';
+  let didPublish = false;
 
   function setPill(elPill, text, kind = '') {
     if (!elPill) return;
@@ -239,6 +251,12 @@ export async function initAppPage(cfg) {
     } catch {
       // ignore
     }
+  }
+
+  function setStepState(elStep, { done = false, active = false } = {}) {
+    if (!elStep) return;
+    elStep.classList.toggle('done', Boolean(done));
+    elStep.classList.toggle('active', Boolean(active));
   }
 
   // Mark folds as "user toggled" so async refreshes don't fight manual intent.
@@ -284,6 +302,7 @@ export async function initAppPage(cfg) {
   let sessionOk = false;
   let sessionEmail = '';
   let sessionProbeReqNo = 0;
+  let forceShowConnect = false;
 
   function csrfToken() {
     return String(storageGet(LS.csrfToken, '') || '').trim();
@@ -319,6 +338,13 @@ export async function initAppPage(cfg) {
     if (kind) loginStatus.classList.add(kind);
   }
 
+  function setRegStatus(text, kind = '') {
+    if (!regStatus) return;
+    regStatus.textContent = String(text || '');
+    regStatus.classList.remove('good', 'bad');
+    if (kind) regStatus.classList.add(kind);
+  }
+
   function setConnectTab(which) {
     const w = which === 'token' ? 'token' : 'signin';
     const signInOn = w === 'signin';
@@ -340,6 +366,7 @@ export async function initAppPage(cfg) {
   function renderConnectState() {
     const t = String(storageGet(LS.buyerToken, '') || '').trim();
     const connected = Boolean(t) || sessionOk;
+    const showConnectFold = !connected || forceShowConnect;
     if (connectRow) connectRow.hidden = connected;
     if (connectedRow) connectedRow.hidden = !connected;
     if (createAfterConnect) createAfterConnect.hidden = !connected;
@@ -355,14 +382,17 @@ export async function initAppPage(cfg) {
       else connectedTokenPrefix.textContent = sessionEmail ? `${sessionEmail}` : 'session';
     }
     setPill(pillConnect, connected ? 'Connected' : 'Required', connected ? 'good' : 'warn');
-    // Workflow-first: show only the next needed block unless the user chooses otherwise.
-    setFoldOpen(foldConnect, !connected);
+    // Workflow-first: once connected, hide the connect block unless the user explicitly opens it.
+    if (foldConnect) foldConnect.hidden = !showConnectFold;
+    if (showConnectFold) setFoldOpen(foldConnect, !connected);
   }
 
   // Render connect state early to avoid UI flicker on navigation.
   renderConnectState();
 
   btnActionbarConnect?.addEventListener('click', () => {
+    forceShowConnect = true;
+    if (foldConnect) foldConnect.hidden = false;
     setFoldOpen(foldConnect, true, { force: true });
     // Prefer sign-in for interactive UX, but keep token mode accessible in Dev.
     setConnectTab('signin');
@@ -371,6 +401,8 @@ export async function initAppPage(cfg) {
   });
 
   btnChangeToken?.addEventListener('click', () => {
+    forceShowConnect = true;
+    if (foldConnect) foldConnect.hidden = false;
     if (connectRow) connectRow.hidden = false;
     if (connectedRow) connectedRow.hidden = true;
     // If they previously used token mode, default them back to the token tab.
@@ -390,8 +422,10 @@ export async function initAppPage(cfg) {
     storageSet(LS.csrfToken, '');
     sessionOk = false;
     sessionEmail = '';
+    forceShowConnect = false;
     if (tokenInput) tokenInput.value = '';
     setLoginStatus('');
+    setRegStatus('');
     toast('Disconnected');
     renderConnectState();
     setFoldOpen(foldConnect, true, { force: true });
@@ -417,6 +451,7 @@ export async function initAppPage(cfg) {
     if (res.json?.csrfToken) storageSet(LS.csrfToken, String(res.json.csrfToken));
     sessionOk = true;
     sessionEmail = email;
+    forceShowConnect = false;
     toast('Signed in', 'good');
     renderConnectState();
     setFoldOpen(foldConnect, false);
@@ -440,11 +475,94 @@ export async function initAppPage(cfg) {
     enableAuto(true);
   });
 
+  btnRegisterOrg?.addEventListener('click', async () => {
+    setRegStatus('');
+    if (regOut) regOut.textContent = '{}';
+
+    const orgName = String(regOrgName?.value ?? '').trim();
+    const apiKeyName = String(regApiKeyName?.value ?? 'default').trim() || 'default';
+    const email = String(loginEmail?.value ?? '').trim();
+    const password = String(loginPassword?.value ?? '');
+
+    if (!orgName) {
+      setRegStatus('Org name required', 'bad');
+      regOrgName?.focus?.();
+      return;
+    }
+    if (!email || !password) {
+      setRegStatus('Email and password required (use the fields above)', 'bad');
+      (email ? loginPassword : loginEmail)?.focus?.();
+      return;
+    }
+
+    setRegStatus('Creating org…');
+    const reg = await fetchJson(`${apiBase()}/api/org/register`, {
+      method: 'POST',
+      body: { orgName, apiKeyName, email, password },
+      credentials: 'omit',
+    });
+    if (!reg.ok) {
+      setRegStatus(`Create org failed (${reg.status})`, 'bad');
+      if (regOut) regOut.textContent = String(reg.json?.error?.message || reg.text || '');
+      return;
+    }
+
+    // Keep secrets out of the UI (even in Dev): only show prefixes.
+    const token = String(reg.json?.token ?? '').trim();
+    const apiKey = reg.json?.apiKey ?? null;
+    const safe = {
+      ok: true,
+      orgId: reg.json?.orgId ?? null,
+      userId: reg.json?.userId ?? null,
+      email: reg.json?.email ?? null,
+      role: reg.json?.role ?? null,
+      apiKey: apiKey
+        ? {
+            id: apiKey.id ?? null,
+            name: apiKey.name ?? null,
+            prefix: apiKey.prefix ?? null,
+            createdAt: apiKey.createdAt ?? null,
+          }
+        : null,
+      tokenPrefix: token ? `${token.slice(0, 10)}…` : null,
+    };
+    if (regOut) regOut.textContent = JSON.stringify(safe, null, 2);
+
+    // Immediately sign in so the user lands in the low-effort session-auth mode.
+    setRegStatus('Signing in…');
+    const login = await fetchJson(`${apiBase()}/api/auth/login`, { method: 'POST', body: { email, password }, credentials: 'include' });
+    if (!login.ok) {
+      setRegStatus(`Sign in failed (${login.status})`, 'bad');
+      return;
+    }
+
+    if (login.json?.csrfToken) storageSet(LS.csrfToken, String(login.json.csrfToken));
+    sessionOk = true;
+    sessionEmail = email;
+    forceShowConnect = false;
+    try {
+      if (registerFold) registerFold.open = false;
+    } catch {
+      // ignore
+    }
+    toast('Org created', 'good');
+    setRegStatus('Done. You are signed in.', 'good');
+    renderConnectState();
+    setFoldOpen(foldConnect, false, { force: true });
+    setStatus('createStatus', 'Loading verified origins…');
+    await refreshOrigins();
+    setFoldOpen(foldDescribe, true, { force: true });
+    setStatus('createStatus', '');
+    await refreshBounties();
+    enableAuto(true);
+  });
+
   btnSaveToken?.addEventListener('click', async () => {
     const t = String(tokenInput?.value ?? '').trim();
     if (!t) return toast('Missing buyer token', 'bad');
     storageSet(LS.buyerToken, t);
     toast('Connected', 'good');
+    forceShowConnect = false;
     renderConnectState();
     setFoldOpen(foldConnect, false);
     setStatus('createStatus', 'Loading verified origins…');
@@ -1006,12 +1124,18 @@ export async function initAppPage(cfg) {
     const connected = auth.mode !== 'none';
     const describeDone = connected && missing.length === 0 && descErrs.length === 0;
     const publishReady = connected && describeDone && (Boolean(origin) || hasSupportedOrigins);
+    const needsOriginPick = connected && describeDone && !publishReady && !origin && !hasSupportedOrigins && availableOriginsCount > 0;
 
     if (foldDescribe) foldDescribe.hidden = !connected;
     if (foldPublish) foldPublish.hidden = !connected;
 
     setPill(pillDescribe, !connected ? 'Waiting' : describeDone ? 'Done' : missing.length ? `${missing.length} required` : 'Next', !connected ? 'faint' : describeDone ? 'good' : 'warn');
     setPill(pillPublish, !connected ? 'Waiting' : !describeDone ? 'Waiting' : publishReady ? 'Ready' : !origin && !hasSupportedOrigins ? 'Pick origin' : 'Review', !connected || !describeDone ? 'faint' : publishReady ? 'good' : !origin && !hasSupportedOrigins ? 'warn' : 'faint');
+
+    // Stepper state: highlights the one next action without requiring the user to read.
+    setStepState(stepConnect, { done: connected, active: !connected });
+    setStepState(stepDescribe, { done: describeDone, active: connected && !describeDone });
+    setStepState(stepPublish, { done: didPublish, active: connected && describeDone });
 
     if (!connected) {
       setFoldOpen(foldDescribe, false);
@@ -1046,6 +1170,73 @@ export async function initAppPage(cfg) {
       kind = 'good';
     }
     setStatus('preflightStatus', msg, kind);
+
+    // If publishing is blocked on origin selection, force-open the settings fold so the user
+    // doesn't have to "hunt" for the control.
+    if (needsOriginPick) {
+      setFoldOpen(settingsFold, true, { force: true });
+    }
+
+    // Next-action buttons: small, contextual, and always safe. Rebuilt on every preview refresh.
+    if (preflightActions) {
+      const nodes = [];
+      preflightActions.replaceChildren();
+
+      if (auth.mode === 'none') {
+        const btn = el('button', { type: 'button', class: 'pw-btn primary' }, ['Connect']);
+        btn.addEventListener('click', () => btnActionbarConnect?.click());
+        nodes.push(btn);
+      } else if (!origin && !hasSupportedOrigins && verifiedOriginsCount <= 0) {
+        // No verified origins yet: guide to onboarding origin step.
+        const href = String(linkVerifyOrigins?.getAttribute?.('href') || '/buyer/onboarding.html').trim() || '/buyer/onboarding.html';
+        nodes.push(el('a', { class: 'pw-btn primary', href }, ['Verify origin']));
+      } else if (!origin && !hasSupportedOrigins && verifiedOriginsCount > 0) {
+        const btn = el('button', { type: 'button', class: 'pw-btn primary' }, ['Pick origin']);
+        btn.addEventListener('click', () => {
+          setFoldOpen(settingsFold, true, { force: true });
+          try {
+            originSelect?.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+          } catch {
+            // ignore
+          }
+          originSelect?.focus?.();
+        });
+        nodes.push(btn);
+        const href = String(linkVerifyOrigins?.getAttribute?.('href') || '').trim();
+        if (href) nodes.push(el('a', { class: 'pw-btn', href }, ['Verify origin']));
+      } else if (missing.length) {
+        const btn = el('button', { type: 'button', class: 'pw-btn primary' }, ['Fix required field']);
+        btn.addEventListener('click', () => {
+          setFoldOpen(foldDescribe, true, { force: true });
+          focusFirstMissing(missing);
+        });
+        nodes.push(btn);
+      } else if (descErrs.length) {
+        const btn = el('button', { type: 'button', class: 'pw-btn' }, ['Open preview']);
+        btn.addEventListener('click', () => {
+          const d = document.getElementById('advanced');
+          if (d && d.tagName?.toLowerCase?.() === 'details') {
+            try {
+              d.open = true;
+            } catch {
+              // ignore
+            }
+          }
+          try {
+            d?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
+          } catch {
+            // ignore
+          }
+        });
+        nodes.push(btn);
+      } else if (publishReady) {
+        const btn = el('button', { type: 'button', class: 'pw-btn primary' }, ['Publish']);
+        btn.addEventListener('click', () => btnCreatePublish?.click());
+        nodes.push(btn);
+      }
+
+      preflightActions.replaceChildren(...nodes);
+    }
 
     // Payout pill + breakdown (always visible even if the fold is closed).
     const payoutCents = Math.max(0, Math.floor(Number(payoutInput?.value ?? 0)));
@@ -1192,6 +1383,8 @@ export async function initAppPage(cfg) {
       return;
     }
     const bountyId = String(res.json?.id ?? '');
+    // Reduce effort: keep Monitor focused on the thing we just created.
+    selectedBountyId = bountyId || selectedBountyId;
     setStatus('createStatus', `Created draft ${bountyId}`, 'good');
     toast('Draft created', 'good');
 
@@ -1203,9 +1396,11 @@ export async function initAppPage(cfg) {
       }
       setStatus('createStatus', `Published ${bountyId}`, 'good');
       toast('Published', 'good');
+      didPublish = true;
     }
 
     await refreshBounties();
+    await refreshJobs();
 
     // Reduce "did it work?" moments: after creating a bounty, jump straight to Monitor so the
     // user immediately sees the new row (draft or published).
@@ -1242,6 +1437,7 @@ export async function initAppPage(cfg) {
   function renderBountyRow(b) {
     const tr = document.createElement('tr');
     const id = String(b.id || '');
+    if (selectedBountyId && id === selectedBountyId) tr.classList.add('pw-row-selected');
     tr.appendChild(el('td', {}, [String(b.title || id)]));
     tr.appendChild(el('td', { class: 'pw-mono' }, [String(b.status || '')]));
     tr.appendChild(el('td', { class: 'pw-mono' }, [formatCents(b.payoutCents || 0)]));
@@ -1292,6 +1488,11 @@ export async function initAppPage(cfg) {
     bountiesTbody?.replaceChildren(...bounties.map(renderBountyRow));
     setStatus('monitorStatus', bounties.length ? `Loaded ${bounties.length} bounties` : 'No bounties yet.', bounties.length ? 'good' : '');
 
+    // If there's exactly one bounty, auto-select it so the Jobs table is useful immediately.
+    if (!selectedBountyId && bounties.length === 1) {
+      selectedBountyId = String(bounties[0]?.id ?? '') || null;
+    }
+
     if (selectedBountyId && !bounties.some((b) => String(b.id) === selectedBountyId)) {
       selectedBountyId = null;
       jobsTbody?.replaceChildren();
@@ -1300,17 +1501,28 @@ export async function initAppPage(cfg) {
 
   async function refreshJobs() {
     const auth = effectiveBuyerAuth();
-    if (auth.mode === 'none' || !selectedBountyId) return;
+    if (auth.mode === 'none') return;
+    if (!selectedBountyId) {
+      jobsTbody?.replaceChildren(el('tr', {}, [el('td', { colspan: 5, class: 'pw-muted' }, ['Pick a bounty to load its jobs.'])]));
+      return;
+    }
     const res = await buyerApi(`/api/bounties/${encodeURIComponent(selectedBountyId)}/jobs?page=1&limit=50`, { token: auth.token, csrf: auth.csrf });
     if (!res.ok) {
       toast(`Failed to load jobs (${res.status})`, 'bad');
       return;
     }
     const jobs = Array.isArray(res.json?.jobs) ? res.json.jobs : [];
+    if (!jobs.length) {
+      jobsTbody?.replaceChildren(el('tr', {}, [el('td', { colspan: 5, class: 'pw-muted' }, ['No jobs yet for this bounty.'])]));
+      return;
+    }
     jobsTbody?.replaceChildren(...jobs.map(renderJobRow));
   }
 
-  btnRefreshBounties?.addEventListener('click', refreshBounties);
+  btnRefreshBounties?.addEventListener('click', async () => {
+    await refreshBounties();
+    await refreshJobs();
+  });
 
   // Auto-refresh toggle
   let stopAuto = null;
