@@ -1,4 +1,4 @@
-import { copyToClipboard, formatAgo, toast } from '/ui/pw.js';
+import { copyToClipboard, formatAgo, toast, initHashViews } from '/ui/pw.js';
 
 const apiBase = window.location.origin;
 
@@ -1428,16 +1428,30 @@ async function onCreateBounty() {
     .map((s) => s.trim())
     .filter(Boolean);
   const payoutCents = Number($('bPayout').value);
+  const requiredProofs = Number($('bProofs')?.value ?? 1);
+  if (!Number.isFinite(requiredProofs) || requiredProofs < 1 || requiredProofs > 10) {
+    return setStatus('bountyStatus', 'requiredProofs must be 1..10', 'bad');
+  }
   const fingerprintClassesRequired = $('bFps')
     .value.split(',')
     .map((s) => s.trim())
     .filter(Boolean);
 
+  let disputeWindowSec = undefined;
+  const disputeRaw = String($('bDisputeWindowSec')?.value ?? '').trim();
+  if (disputeRaw) {
+    const v = Number(disputeRaw);
+    if (!Number.isFinite(v) || v < 0 || v > 60 * 60 * 24 * 30) {
+      return setStatus('bountyStatus', 'disputeWindowSec must be 0..2592000', 'bad');
+    }
+    disputeWindowSec = Math.floor(v);
+  }
+
   const { res, json } = await api('/api/bounties', {
     method: 'POST',
     token: token || undefined,
     csrf,
-    body: { title, description, allowedOrigins, payoutCents, requiredProofs: 1, fingerprintClassesRequired },
+    body: { title, description, allowedOrigins, payoutCents, requiredProofs, disputeWindowSec, fingerprintClassesRequired },
   });
   $('bountyOut').textContent = pretty(json);
   if (!res.ok) return setStatus('bountyStatus', `create bounty failed (${res.status})`, 'bad');
@@ -1696,6 +1710,7 @@ for (const summary of Array.from(document.querySelectorAll('details.pw-fold > su
 }
 
 initAccessTabs();
+initHashViews({ defaultViewId: 'onboarding' });
 refreshOnboardingStatus().catch(() => {});
 
 autoFillAppIds();

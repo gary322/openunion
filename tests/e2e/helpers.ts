@@ -107,20 +107,38 @@ export async function openDetails(page: Page, selector: string) {
   });
 }
 
+export async function gotoBuyerView(page: Page, viewId: string) {
+  const id = String(viewId || '').replace(/^#/, '');
+  if (!id) return;
+  // Buyer console now uses hash-based views; click the side-nav so the correct section is visible.
+  const link = page.locator(`.pw-sidenav a[href="#${id}"]`).first();
+  if (await link.count()) await link.click();
+}
+
+export async function gotoWorkerView(page: Page, viewId: string) {
+  const id = String(viewId || '').replace(/^#/, '');
+  if (!id) return;
+  const link = page.locator(`.pw-sidenav a[href="#${id}"]`).first();
+  if (await link.count()) await link.click();
+}
+
 // The buyer console no longer pre-fills demo credentials; tests should explicitly fill them.
 export async function fillBuyerDemoLogin(page: Page, opts: { email?: string; password?: string } = {}) {
+  await gotoBuyerView(page, 'integrations');
   await openDetails(page, '#foldAccess');
   await page.fill('#email', String(opts.email ?? 'buyer@example.com'));
   await page.fill('#password', String(opts.password ?? 'password'));
 }
 
 export async function openBuyerApiKeysTab(page: Page) {
+  await gotoBuyerView(page, 'integrations');
   await openDetails(page, '#foldAccess');
   // Access is now tabbed to reduce scroll + cognitive load.
   await page.click('#tabAccessKeys');
 }
 
 export async function openBuyerCreateOrgTab(page: Page) {
+  await gotoBuyerView(page, 'integrations');
   await openDetails(page, '#foldAccess');
   await page.click('#tabAccessRegister');
 }

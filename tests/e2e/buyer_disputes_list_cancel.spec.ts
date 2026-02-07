@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { fillBuyerDemoLogin, openBuyerApiKeysTab } from './helpers.js';
+import { fillBuyerDemoLogin, openBuyerApiKeysTab, openDetails } from './helpers.js';
 
 const VERIFIER_TOKEN = 'pw_vf_internal';
 
@@ -153,8 +153,9 @@ test('buyer disputes: create → list → cancel via UI (during hold window)', a
   expect(payoutId).toBeTruthy();
 
   // Buyer UI: open dispute, then list, then cancel.
-  await page.goto('/buyer/index.html');
-  await page.fill('#buyerToken', buyerToken);
+  await page.addInitScript((t) => localStorage.setItem('pw_buyer_token', String(t || '')), buyerToken);
+  await page.goto('/buyer/index.html#disputes');
+  await openDetails(page, '#foldDisputes');
   await page.fill('#disputePayoutId', payoutId);
   await page.fill('#disputeReason', 'Incorrect result');
 

@@ -1,7 +1,9 @@
-import { LS, copyToClipboard, formatAgo, formatCents, startPolling, storageGet, storageSet, toast } from '/ui/pw.js';
+import { LS, copyToClipboard, formatAgo, formatCents, initHashViews, startPolling, storageGet, storageSet, toast } from '/ui/pw.js';
 
 const apiBase = window.location.origin;
 document.getElementById('apiBase').textContent = apiBase;
+
+const viewRouter = initHashViews({ defaultViewId: 'ready' });
 
 function $(id) {
   return document.getElementById(id);
@@ -45,13 +47,18 @@ function setFoldOpen(id, open, opts = {}) {
 }
 
 function openOnlyFold(focusId) {
+  // Reduce cognitive load by focusing the UI on the current step.
+  // Do NOT auto-navigate between hash-views; that feels jumpy. Actionbar clicks and side-nav
+  // clicks drive navigation, while guided auto-open keeps the recommended fold ready.
   // "Only" is aspirational: we avoid auto-closing other sections because it can hide controls
   // mid-flow (low trust UX). Instead, always open the recommended fold.
   setFoldOpen(focusId, true);
 }
 
 function scrollToAnchor(id) {
-  const el = document.getElementById(String(id || '').replace(/^#/, ''));
+  const anchor = String(id || '').replace(/^#/, '');
+  if (viewRouter) viewRouter.setView(anchor, { push: true });
+  const el = document.getElementById(anchor);
   if (!el) return;
   if (String(el.tagName || '').toLowerCase() === 'details') {
     // If the anchor is a fold, open it so the user doesn't scroll to hidden content.

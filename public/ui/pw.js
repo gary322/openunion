@@ -182,3 +182,90 @@ export function startPolling(fn, { intervalMs = 2500, immediate = true } = {}) {
     stopped = true;
   };
 }
+
+// Hash-based view router for static portals.
+// Turns "one long page" into low-effort sections without introducing a framework.
+//
+// Usage:
+// 1) Mark top-level sections with `data-view` and an `id`.
+// 2) Ensure side-nav links use `href="#<id>"`.
+// 3) Call `initHashViews({ defaultViewId: "..." })` from the page's JS.
+export function initHashViews({
+  navSelector = '.pw-sidenav a[href^="#"]',
+  viewSelector = '[data-view]',
+  defaultViewId = '',
+  onChange = null,
+} = {}) {
+  const views = new Map();
+  for (const node of qsa(viewSelector)) {
+    const id = String(node.id || '').trim();
+    if (id) views.set(id, node);
+  }
+  if (!views.size) return null;
+
+  const links = qsa(navSelector);
+
+  function normalizeId(v) {
+    const raw = String(v || '').trim();
+    const id = raw.startsWith('#') ? raw.slice(1) : raw;
+    if (id && views.has(id)) return id;
+    if (defaultViewId && views.has(defaultViewId)) return defaultViewId;
+    return Array.from(views.keys())[0];
+  }
+
+  function setView(id, { push = false } = {}) {
+    const next = normalizeId(id);
+    for (const [vid, el] of views.entries()) el.hidden = vid !== next;
+
+    for (const a of links) {
+      const href = String(a.getAttribute('href') || '').trim();
+      if (!href.startsWith('#')) continue;
+      const hid = href.slice(1);
+      if (hid === next) a.setAttribute('aria-current', 'page');
+      else a.removeAttribute('aria-current');
+    }
+
+    if (push) {
+      try {
+        window.location.hash = `#${next}`;
+      } catch {
+        // ignore
+      }
+    }
+
+    if (typeof onChange === 'function') {
+      try {
+        onChange(next);
+      } catch {
+        // ignore
+      }
+    }
+
+    return next;
+  }
+
+  function applyFromHash() {
+    return setView(window.location.hash || '', { push: false });
+  }
+
+  for (const a of links) {
+    a.addEventListener('click', (ev) => {
+      const href = String(a.getAttribute('href') || '').trim();
+      if (!href.startsWith('#')) return;
+      ev.preventDefault();
+      setView(href, { push: true });
+    });
+  }
+
+  window.addEventListener('hashchange', applyFromHash);
+
+  // Useful for actionbars and scripted flows.
+  try {
+    window.pwSetView = (id) => setView(String(id || ''), { push: true });
+  } catch {
+    // ignore
+  }
+
+  applyFromHash();
+  return { setView, views };
+}
