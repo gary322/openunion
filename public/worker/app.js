@@ -7,6 +7,88 @@ function $(id) {
   return document.getElementById(id);
 }
 
+let actionbarHandler = null;
+let cachedPayoutOk = false;
+
+function scrollToAnchor(id) {
+  const el = document.getElementById(String(id || '').replace(/^#/, ''));
+  if (!el) return;
+  try {
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  } catch {
+    el.scrollIntoView();
+  }
+}
+
+function setActionbar({ title, sub, label, onClick }) {
+  const t = $('workerActionbarTitle');
+  const s = $('workerActionbarSub');
+  const b = $('btnWorkerActionbar');
+  if (t) t.textContent = String(title || '');
+  if (s) s.textContent = String(sub || '');
+  if (b) b.textContent = String(label || 'Go');
+  actionbarHandler = typeof onClick === 'function' ? onClick : null;
+}
+
+function updateActionbar() {
+  const btn = $('btnWorkerActionbar');
+  if (!btn) return;
+
+  const token = $('token')?.value?.trim?.() || getToken();
+  const hasToken = Boolean(String(token || '').trim());
+  const hasJob = Boolean(lastClaim?.data?.job?.jobId || lastNext?.data?.job?.jobId);
+
+  if (!hasToken) {
+    setActionbar({
+      title: 'Next: get a worker token',
+      sub: 'Register once or paste a token. We store it locally in your browser.',
+      label: 'Set up',
+      onClick: () => scrollToAnchor('auth'),
+    });
+    return;
+  }
+
+  if (!cachedPayoutOk) {
+    setActionbar({
+      title: 'Next: verify payout address',
+      sub: 'Set a payout address on Base once so you can be paid automatically.',
+      label: 'Verify',
+      onClick: () => scrollToAnchor('payouts'),
+    });
+    return;
+  }
+
+  if (!hasJob) {
+    setActionbar({
+      title: 'Next: claim a job',
+      sub: 'We will pick the next compatible job based on your capabilities and filters.',
+      label: 'Claim next',
+      onClick: () => {
+        scrollToAnchor('find');
+        onClaimNext().catch((e) => setStatus('jobStatus', String(e), 'bad'));
+      },
+    });
+    return;
+  }
+
+  if (!canSubmitNow()) {
+    setActionbar({
+      title: 'Next: upload required outputs',
+      sub: 'Drop files to upload, or upload one output at a time. Submit unlocks when scans pass.',
+      label: 'Upload',
+      onClick: () => scrollToAnchor('outputs'),
+    });
+    return;
+  }
+
+  setActionbar({
+    title: 'Ready: submit',
+    sub: 'All required outputs are uploaded and scanned. Submit to get paid after the hold window.',
+    label: 'Submit',
+    onClick: () => scrollToAnchor('submit'),
+  });
+}
+
 function setStatus(id, text, kind) {
   const el = $(id);
   el.textContent = text || '';
@@ -85,9 +167,11 @@ async function refreshReadyStatus() {
     }
   }
 
+  cachedPayoutOk = payoutOk;
   setStepDone('stepWorkerPayout', payoutOk);
   const remaining = (hasToken ? 0 : 1) + (payoutOk ? 0 : 1);
   setBadge('navBadgeReady', String(remaining));
+  updateActionbar();
 }
 
 function currentJobEnvelope() {
@@ -174,6 +258,7 @@ function buildRequiredOutputsFromJob() {
   const slots = expandRequiredArtifactSpecs(required);
   requiredSlots = slots;
   renderRequiredOutputs();
+  updateActionbar();
 }
 
 function renderRequiredOutputs() {
@@ -290,6 +375,7 @@ function updateSubmitEnabled() {
   const btn = $('btnSubmit');
   if (!btn) return;
   btn.disabled = !canSubmitNow();
+  updateActionbar();
 }
 
 function nextUploadableSlotIndex(startIdx) {
@@ -786,6 +872,13 @@ async function onSetPayoutAddress() {
 $('btnRegister').addEventListener('click', () => onRegister().catch((e) => setStatus('authStatus', String(e), 'bad')));
 $('btnSaveToken').addEventListener('click', () => onSaveToken());
 $('btnMe').addEventListener('click', () => onMe().catch((e) => setStatus('authStatus', String(e), 'bad')));
+$('btnWorkerActionbar')?.addEventListener('click', () => {
+  try {
+    actionbarHandler?.();
+  } catch {
+    // ignore
+  }
+});
 $('btnCopyWorkerToken').addEventListener('click', async () => {
   const token = $('token').value.trim() || getToken();
   if (!token) {
