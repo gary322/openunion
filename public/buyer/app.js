@@ -363,6 +363,105 @@ function renderAppPreview(uiSchema) {
   }
 }
 
+function appPageHrefFor(app) {
+  const slug = String(app?.slug ?? '').trim();
+  if (!slug) return '/apps/';
+  return `/apps/app/${encodeURIComponent(slug)}/`;
+}
+
+function renderOrgAppsTable(apps) {
+  const tbody = $('orgAppsTbody');
+  if (!tbody) return;
+  tbody.innerHTML = '';
+
+  const rows = Array.isArray(apps) ? apps : [];
+  for (const a of rows) {
+    const tr = document.createElement('tr');
+    const status = String(a?.status ?? 'active');
+    const isDisabled = status === 'disabled';
+    if (isDisabled) tr.classList.add('pw-row-muted');
+
+    const tdName = document.createElement('td');
+    tdName.textContent = String(a?.name ?? a?.slug ?? 'app');
+
+    const tdTask = document.createElement('td');
+    tdTask.className = 'pw-mono';
+    tdTask.textContent = String(a?.taskType ?? '');
+
+    const tdStatus = document.createElement('td');
+    tdStatus.className = 'pw-mono';
+    tdStatus.textContent = status;
+
+    const tdPublic = document.createElement('td');
+    tdPublic.className = 'pw-mono';
+    tdPublic.textContent = a?.public ? 'yes' : 'no';
+
+    const tdActions = document.createElement('td');
+    const actions = document.createElement('div');
+    actions.className = 'pw-actions';
+
+    const open = document.createElement('a');
+    open.className = 'pw-btn';
+    open.href = appPageHrefFor(a);
+    open.textContent = 'Open';
+    actions.appendChild(open);
+
+    const copy = document.createElement('button');
+    copy.type = 'button';
+    copy.className = 'pw-btn';
+    copy.textContent = 'Copy task type';
+    copy.addEventListener('click', () => copyToClipboard(String(a?.taskType ?? '')));
+    actions.appendChild(copy);
+
+    const disable = document.createElement('button');
+    disable.type = 'button';
+    disable.className = 'pw-btn danger';
+    disable.textContent = isDisabled ? 'Disabled' : 'Disable';
+    disable.disabled = isDisabled;
+    disable.addEventListener('click', async () => {
+      const token = $('buyerToken')?.value?.trim?.() || getBuyerToken();
+      const csrf = getCsrfToken();
+      const appId = String(a?.id ?? '').trim();
+      if (!appId) return toast('Missing app id', 'bad');
+      if (!confirm('Disable this app? New bounties/jobs for this task type will be blocked.')) return;
+
+      setStatus('appsStatus', 'Disabling…');
+      const { res } = await api(`/api/org/apps/${encodeURIComponent(appId)}`, {
+        method: 'PATCH',
+        token: token || undefined,
+        csrf,
+        body: { status: 'disabled' },
+      });
+      if (!res.ok) {
+        setStatus('appsStatus', `disable failed (${res.status})`, 'bad');
+        return;
+      }
+      toast('App disabled', 'good');
+      onListOrgApps().catch(() => {});
+    });
+    actions.appendChild(disable);
+
+    tdActions.appendChild(actions);
+
+    tr.appendChild(tdName);
+    tr.appendChild(tdTask);
+    tr.appendChild(tdStatus);
+    tr.appendChild(tdPublic);
+    tr.appendChild(tdActions);
+    tbody.appendChild(tr);
+  }
+
+  if (!rows.length) {
+    const tr = document.createElement('tr');
+    const td = document.createElement('td');
+    td.colSpan = 5;
+    td.className = 'pw-muted';
+    td.textContent = 'No apps yet. Create one above.';
+    tr.appendChild(td);
+    tbody.appendChild(tr);
+  }
+}
+
 function buildAppTemplate(templateId, { taskType }) {
   const type = String(taskType ?? '').trim();
   const base = {
@@ -1315,13 +1414,15 @@ async function onPublish() {
   refreshOnboardingStatus().catch(() => {});
 }
 
-async function onListOrgApps() {
-  setStatus('appsStatus', '', null);
+async function onListOrgApps(opts = {}) {
+  const silent = Boolean(opts && opts.silent);
+  if (!silent) setStatus('appsStatus', '', null);
   const token = $('buyerToken').value.trim();
   const { res, json } = await api('/api/org/apps', { method: 'GET', token: token || undefined });
   $('appsOut').textContent = pretty(json);
   if (!res.ok) return setStatus('appsStatus', `list apps failed (${res.status})`, 'bad');
-  setStatus('appsStatus', `ok (${json.apps?.length ?? 0} apps)`, 'good');
+  renderOrgAppsTable(json.apps);
+  if (!silent) setStatus('appsStatus', `ok (${json.apps?.length ?? 0} apps)`, 'good');
 }
 
 async function onCreateOrgApp() {
@@ -1366,6 +1467,7 @@ async function onCreateOrgApp() {
   $('appsOut').textContent = pretty(json);
   if (!res.ok) return setStatus('appsStatus', `create app failed (${res.status})`, 'bad');
   setStatus('appsStatus', `created app ${json.app?.id || ''}`, 'good');
+  onListOrgApps({ silent: true }).catch(() => {});
   refreshOnboardingStatus().catch(() => {});
 }
 
@@ -1524,3 +1626,9 @@ refreshOnboardingStatus().catch(() => {});
 
 autoFillAppIds();
 applySelectedAppTemplate();
+
+// Load "My apps" table when connected (token or session). Keep it best-effort so the page
+// doesn't feel broken if the user hasn't connected yet.
+if (getBuyerToken() || getCsrfToken()) {
+  onListOrgApps({ silent: true }).catch(() => {});
+}

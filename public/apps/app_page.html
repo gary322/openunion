@@ -97,155 +97,187 @@
               </div>
             </div>
 
-            <div class="pw-card soft" id="connectRow">
-              <div class="pw-card-title">
-                <h3>Connect</h3>
-                <span class="pw-kicker">Required</span>
-              </div>
-              <p class="pw-muted">Sign in (recommended) or paste an API token. We store credentials locally in your browser.</p>
-
-              <div class="pw-tabs" role="tablist" aria-label="Connect options">
-                <button class="pw-tab" id="tabSignIn" type="button" role="tab" aria-selected="true" aria-controls="panelSignIn">Sign in</button>
-                <!-- Token mode is developer-oriented; keep it out of the happy-path UX. -->
-                <button class="pw-tab pw-dev" id="tabToken" type="button" role="tab" aria-selected="false" aria-controls="panelToken">API token</button>
-              </div>
-
-              <div class="pw-tabpanels">
-                <div class="pw-tabpanel" id="panelSignIn" role="tabpanel" aria-labelledby="tabSignIn">
-                  <div class="pw-row">
-                    <div class="pw-field">
-                      <label for="loginEmail">Email</label>
-                      <input class="pw-input" id="loginEmail" autocomplete="email" placeholder="buyer@company.com" />
-                    </div>
-                    <div class="pw-field">
-                      <label for="loginPassword">Password</label>
-                      <input class="pw-input" id="loginPassword" type="password" autocomplete="current-password" placeholder="password" />
-                    </div>
+            <details class="pw-fold" id="foldConnect" open>
+              <summary>
+                <div>
+                  <div class="pw-fold-title">Connect</div>
+                  <div class="pw-fold-sub">Sign in (recommended) or paste a buyer token once</div>
+                </div>
+                <span class="pw-pill warn" id="pillConnect">Required</span>
+              </summary>
+              <div class="pw-fold-body">
+                <div class="pw-card soft" id="connectRow">
+                  <div class="pw-card-title">
+                    <h3>Connect</h3>
+                    <span class="pw-kicker">Required</span>
                   </div>
-                  <div class="pw-actions">
-                    <button class="pw-btn primary" id="btnLogin" type="button">Sign in</button>
-                    <a class="pw-btn" href="/buyer/" rel="noreferrer">Platform console</a>
+                  <p class="pw-muted">Sign in (recommended) or paste an API token. We store credentials locally in your browser.</p>
+
+                  <div class="pw-tabs" role="tablist" aria-label="Connect options">
+                    <button class="pw-tab" id="tabSignIn" type="button" role="tab" aria-selected="true" aria-controls="panelSignIn">Sign in</button>
+                    <!-- Token mode is developer-oriented; keep it out of the happy-path UX. -->
+                    <button class="pw-tab pw-dev" id="tabToken" type="button" role="tab" aria-selected="false" aria-controls="panelToken">API token</button>
                   </div>
-                  <div id="loginStatus" class="pw-status" role="status"></div>
-                </div>
 
-                <div class="pw-tabpanel pw-dev" id="panelToken" role="tabpanel" aria-labelledby="tabToken" hidden>
-                  <div class="pw-row">
-                    <div class="pw-field">
-                      <label for="buyerToken">Buyer token</label>
-                      <input class="pw-input" id="buyerToken" placeholder="pw_bu_…" />
-                    </div>
-                    <div class="pw-field">
-                      <label>&nbsp;</label>
-                      <button class="pw-btn primary" id="btnSaveToken" type="button">Connect</button>
-                    </div>
-                  </div>
-                  <div class="pw-help">Tip: tokens are best for programmatic platform integrations. For interactive use, sign in.</div>
-                </div>
-              </div>
-            </div>
-
-            <div id="createAfterConnect" hidden>
-              <div class="pw-card soft" id="templateCard" hidden>
-                <div class="pw-card-title">
-                  <h3>Starting point</h3>
-                  <span class="pw-kicker">Optional</span>
-                </div>
-                <div class="pw-muted">Pick a template to prefill the form. Switching templates will not overwrite fields you have edited.</div>
-                <div class="pw-template-grid" id="templateGrid" role="list" aria-label="Templates"></div>
-              </div>
-
-              <div class="pw-row pw-dev" id="templateRow">
-                <div class="pw-field">
-                  <label for="template">Developer: template</label>
-                  <select class="pw-select" id="template"></select>
-                </div>
-                <div class="pw-field">
-                  <label>&nbsp;</label>
-                  <button class="pw-btn" id="btnApplyTemplate" type="button">Apply (overwrite)</button>
-                </div>
-              </div>
-
-              <div id="form"></div>
-
-              <div class="pw-grid">
-                <details class="pw-fold" id="settingsFold">
-                  <summary>
-                    <div>
-                      <div class="pw-fold-title">Adjust settings</div>
-                      <div class="pw-fold-sub">Optional: origin, payout, proofs, title</div>
-                    </div>
-                    <span class="pw-pill faint" id="payoutPill">Defaults</span>
-                  </summary>
-                  <div class="pw-fold-body">
-                    <div class="pw-card soft">
-                      <div class="pw-kicker">Allowed origin</div>
-                      <div class="pw-muted">Verified origins are required for your own domains. System apps may also provide supported origins.</div>
-                      <div class="pw-field" id="originSelectWrap">
-                        <label class="pw-offscreen" for="originSelect">Origin</label>
-                        <select class="pw-select" id="originSelect"></select>
-                      </div>
-                      <div class="pw-field" id="originSingle" hidden>
-                        <div class="pw-badge">
-                          Origin: <span class="pw-mono" id="originSingleText">—</span>
+                  <div class="pw-tabpanels">
+                    <div class="pw-tabpanel" id="panelSignIn" role="tabpanel" aria-labelledby="tabSignIn">
+                      <div class="pw-row">
+                        <div class="pw-field">
+                          <label for="loginEmail">Email</label>
+                          <input class="pw-input" id="loginEmail" autocomplete="email" placeholder="buyer@company.com" />
+                        </div>
+                        <div class="pw-field">
+                          <label for="loginPassword">Password</label>
+                          <input class="pw-input" id="loginPassword" type="password" autocomplete="current-password" placeholder="password" />
                         </div>
                       </div>
                       <div class="pw-actions">
-                        <button class="pw-btn" id="btnRefreshOrigins" type="button">Refresh</button>
-                        <a class="pw-btn" id="linkVerifyOrigins" href="/buyer/onboarding.html" rel="noreferrer">Verify origin</a>
+                        <button class="pw-btn primary" id="btnLogin" type="button">Sign in</button>
+                        <a class="pw-btn" href="/buyer/" rel="noreferrer">Platform console</a>
                       </div>
+                      <div id="loginStatus" class="pw-status" role="status"></div>
                     </div>
 
-                    <div class="pw-presets" id="payoutPresets" aria-label="Payout presets"></div>
-                    <div class="pw-row">
-                      <div class="pw-field">
-                        <label for="payoutCents">Payout (cents)</label>
-                        <input class="pw-input" id="payoutCents" type="number" value="1000" />
+                    <div class="pw-tabpanel pw-dev" id="panelToken" role="tabpanel" aria-labelledby="tabToken" hidden>
+                      <div class="pw-row">
+                        <div class="pw-field">
+                          <label for="buyerToken">Buyer token</label>
+                          <input class="pw-input" id="buyerToken" placeholder="pw_bu_…" />
+                        </div>
+                        <div class="pw-field">
+                          <label>&nbsp;</label>
+                          <button class="pw-btn primary" id="btnSaveToken" type="button">Connect</button>
+                        </div>
                       </div>
-                      <div class="pw-field">
-                        <label for="requiredProofs">Proofs</label>
-                        <input class="pw-input" id="requiredProofs" type="number" value="2" />
-                      </div>
-                    </div>
-                    <div class="pw-help" id="payoutBreakdown"></div>
-
-                    <div class="pw-row">
-                      <div class="pw-field">
-                        <label for="title">Title (optional)</label>
-                        <input class="pw-input" id="title" placeholder="Auto-filled" />
-                        <div class="pw-help">Titles help you find bounties later. Everything else is generated from the form.</div>
-                      </div>
+                      <div class="pw-help">Tip: tokens are best for programmatic platform integrations. For interactive use, sign in.</div>
                     </div>
                   </div>
-                </details>
-
-                <div class="pw-card soft" id="deliverablesCard">
-                  <div class="pw-kicker">Deliverables</div>
-                  <div class="pw-muted" id="deliverablesSub">What workers must submit for this app.</div>
-                  <div class="pw-chips" id="deliverablesList"></div>
-                  <div class="pw-help" id="deliverablesHelp"></div>
                 </div>
               </div>
+            </details>
 
-              <div id="preflightStatus" class="pw-muted" role="status"></div>
-              <div id="createStatus" class="pw-status" role="status"></div>
+            <div id="createAfterConnect" hidden>
+              <details class="pw-fold" id="foldDescribe" open>
+                <summary>
+                  <div>
+                    <div class="pw-fold-title">Describe</div>
+                    <div class="pw-fold-sub">Fill the friendly form, no JSON required</div>
+                  </div>
+                  <span class="pw-pill faint" id="pillDescribe">Next</span>
+                </summary>
+                <div class="pw-fold-body">
+                  <div class="pw-card soft" id="templateCard" hidden>
+                    <div class="pw-card-title">
+                      <h3>Starting point</h3>
+                      <span class="pw-kicker">Optional</span>
+                    </div>
+                    <div class="pw-muted">Pick a template to prefill the form. Switching templates will not overwrite fields you have edited.</div>
+                    <div class="pw-template-grid" id="templateGrid" role="list" aria-label="Templates"></div>
+                  </div>
 
-              <details class="pw-details pw-dev" id="advanced">
-                <summary>Advanced: descriptor preview</summary>
-                <div class="pw-details-body">
-                  <div class="pw-row">
+                  <div class="pw-row pw-dev" id="templateRow">
                     <div class="pw-field">
-                      <label>Descriptor JSON</label>
-                      <pre class="pw-codeblock" id="descriptorOut">{}</pre>
+                      <label for="template">Developer: template</label>
+                      <select class="pw-select" id="template"></select>
                     </div>
                     <div class="pw-field">
-                      <label>API payload (POST /api/bounties)</label>
-                      <pre class="pw-codeblock" id="payloadOut">{}</pre>
+                      <label>&nbsp;</label>
+                      <button class="pw-btn" id="btnApplyTemplate" type="button">Apply (overwrite)</button>
                     </div>
                   </div>
+
+                  <div id="form"></div>
                 </div>
               </details>
-            </div>
+
+              <details class="pw-fold" id="foldPublish" open>
+                <summary>
+                  <div>
+                    <div class="pw-fold-title">Publish</div>
+                    <div class="pw-fold-sub">Review settings (optional), then publish</div>
+                  </div>
+                  <span class="pw-pill faint" id="pillPublish">Waiting</span>
+                </summary>
+                <div class="pw-fold-body">
+                  <div class="pw-grid">
+                    <details class="pw-fold" id="settingsFold">
+                      <summary>
+                        <div>
+                          <div class="pw-fold-title">Adjust settings</div>
+                          <div class="pw-fold-sub">Optional: origin, payout, proofs, title</div>
+                        </div>
+                        <span class="pw-pill faint" id="payoutPill">Defaults</span>
+                      </summary>
+                      <div class="pw-fold-body">
+                        <div class="pw-card soft">
+                          <div class="pw-kicker">Allowed origin</div>
+                          <div class="pw-muted">Verified origins are required for your own domains. System apps may also provide supported origins.</div>
+                          <div class="pw-field" id="originSelectWrap">
+                            <label class="pw-offscreen" for="originSelect">Origin</label>
+                            <select class="pw-select" id="originSelect"></select>
+                          </div>
+                          <div class="pw-field" id="originSingle" hidden>
+                            <div class="pw-badge">
+                              Origin: <span class="pw-mono" id="originSingleText">—</span>
+                            </div>
+                          </div>
+                          <div class="pw-actions">
+                            <button class="pw-btn" id="btnRefreshOrigins" type="button">Refresh</button>
+                            <a class="pw-btn" id="linkVerifyOrigins" href="/buyer/onboarding.html" rel="noreferrer">Verify origin</a>
+                          </div>
+                        </div>
+
+                        <div class="pw-presets" id="payoutPresets" aria-label="Payout presets"></div>
+                        <div class="pw-row">
+                          <div class="pw-field">
+                            <label for="payoutCents">Payout (cents)</label>
+                            <input class="pw-input" id="payoutCents" type="number" value="1000" />
+                          </div>
+                          <div class="pw-field">
+                            <label for="requiredProofs">Proofs</label>
+                            <input class="pw-input" id="requiredProofs" type="number" value="2" />
+                          </div>
+                        </div>
+                        <div class="pw-help" id="payoutBreakdown"></div>
+
+                        <div class="pw-row">
+                          <div class="pw-field">
+                            <label for="title">Title (optional)</label>
+                            <input class="pw-input" id="title" placeholder="Auto-filled" />
+                            <div class="pw-help">Titles help you find bounties later. Everything else is generated from the form.</div>
+                          </div>
+                        </div>
+                      </div>
+                    </details>
+
+                    <div class="pw-card soft" id="deliverablesCard">
+                      <div class="pw-kicker">Deliverables</div>
+                      <div class="pw-muted" id="deliverablesSub">What workers must submit for this app.</div>
+                      <div class="pw-chips" id="deliverablesList"></div>
+                      <div class="pw-help" id="deliverablesHelp"></div>
+                    </div>
+                  </div>
+
+                  <div id="preflightStatus" class="pw-muted" role="status"></div>
+                  <div id="createStatus" class="pw-status" role="status"></div>
+
+                  <details class="pw-details pw-dev" id="advanced">
+                    <summary>Advanced: descriptor preview</summary>
+                    <div class="pw-details-body">
+                      <div class="pw-row">
+                        <div class="pw-field">
+                          <label>Descriptor JSON</label>
+                          <pre class="pw-codeblock" id="descriptorOut">{}</pre>
+                        </div>
+                        <div class="pw-field">
+                          <label>API payload (POST /api/bounties)</label>
+                          <pre class="pw-codeblock" id="payloadOut">{}</pre>
+                        </div>
+                      </div>
+                    </div>
+                  </details>
+                </div>
+              </details>
           </section>
 
           <section class="pw-card" id="monitor">

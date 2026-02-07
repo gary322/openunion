@@ -37,6 +37,9 @@ test('apps pages: exercise create draft, create+publish, refresh, load jobs on e
     // Connected state should be visible (token is injected via initScript).
     await expect(page.locator('#connectedRow')).toBeVisible();
 
+    // Wizard: ensure describe controls are expanded so Dev-only template tools are interactable.
+    await openDetails(page, '#foldDescribe');
+
     // Describe: (optional) apply the first template if available.
     const hasTemplates = (await page.locator('#template option').count()) > 1;
     if (hasTemplates) {
@@ -46,6 +49,9 @@ test('apps pages: exercise create draft, create+publish, refresh, load jobs on e
 
     // Fill any required friendly-form inputs that templates didn't populate.
     await fillRequiredAppForm(page);
+
+    // Wizard: publish step may be collapsed until the form is complete; expand it for settings access.
+    await openDetails(page, '#foldPublish');
 
     // Most config is intentionally tucked behind a fold so the default workflow stays simple.
     await openDetails(page, '#settingsFold');
