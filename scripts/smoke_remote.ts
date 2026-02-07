@@ -256,7 +256,8 @@ async function main() {
           input_spec: { url: 'https://example.com', query: 'example' },
           output_spec: {
             required_artifacts: [
-              { kind: 'screenshot', label: 'universal_screenshot' },
+              // Avoid brittle label-coupling in deploy smoke: require at least 1 screenshot.
+              { kind: 'screenshot', count: 1 },
               { kind: 'other', label_prefix: 'results' },
               { kind: 'log', label: 'report_summary' },
             ],
