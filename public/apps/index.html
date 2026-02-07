@@ -37,6 +37,10 @@
               <label>&nbsp;</label>
               <button class="pw-btn" id="btnClear" type="button">Clear</button>
             </div>
+            <div class="pw-field pw-mobile-only">
+              <label>&nbsp;</label>
+              <button class="pw-btn" id="btnFilters" type="button">Filters</button>
+            </div>
           </div>
           <div class="pw-badge" id="stats">Loading…</div>
           <div class="pw-actions">
@@ -47,9 +51,13 @@
       </section>
 
       <div class="pw-console">
-        <aside class="pw-sidebar" aria-label="Catalog filters">
+        <div class="pw-backdrop" id="filtersBackdrop" aria-hidden="true"></div>
+        <aside class="pw-sidebar pw-sidebar-collapsible" aria-label="Catalog filters" id="filtersPanel">
           <nav class="pw-sidenav">
             <div class="pw-sidenav-title">Filters</div>
+            <div class="pw-actions pw-mobile-only">
+              <button class="pw-btn" id="btnCloseFilters" type="button">Close</button>
+            </div>
             <div class="pw-filter-group">
               <div class="pw-kicker">Category</div>
               <div id="catFilters" class="pw-filter-list" role="group" aria-label="Category filters"></div>

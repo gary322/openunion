@@ -6,7 +6,7 @@
     <title>Proofwork • Platform Console</title>
     <link rel="stylesheet" href="/ui/ui.css" />
   </head>
-  <body class="theme-buyer" data-portal="buyer">
+  <body class="theme-buyer pw-has-actionbar" data-portal="buyer">
     <header class="pw-topbar">
       <div class="pw-topbar-inner">
         <a class="pw-brand" href="/apps/" aria-label="Proofwork home">
@@ -863,6 +863,20 @@
         </section>
       </div>
     </main>
+
+    <div class="pw-actionbar" id="buyerActionbar" aria-label="Next action">
+      <div class="pw-actionbar-inner">
+        <div class="pw-actionbar-card">
+          <div class="pw-actionbar-meta">
+            <div class="pw-actionbar-title" id="buyerActionbarTitle">Next: connect</div>
+            <div class="pw-actionbar-sub" id="buyerActionbarSub">Follow the guided onboarding checklist.</div>
+          </div>
+          <div class="pw-actions">
+            <button class="pw-btn primary" id="btnBuyerActionbar" type="button">Continue</button>
+          </div>
+        </div>
+      </div>
+    </div>
 
     <script type="module" src="./app.js"></script>
     <script type="module" src="/ui/shell.js"></script>

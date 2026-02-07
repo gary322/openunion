@@ -10,6 +10,9 @@ const btnClear = document.getElementById('btnClear');
 const catFilters = document.getElementById('catFilters');
 const capFilters = document.getElementById('capFilters');
 const onlyUniversal = document.getElementById('onlyUniversal');
+const btnFilters = document.getElementById('btnFilters');
+const btnCloseFilters = document.getElementById('btnCloseFilters');
+const filtersBackdrop = document.getElementById('filtersBackdrop');
 
 const UNIVERSAL_CAPS = new Set(['browser', 'http', 'ffmpeg', 'llm_summarize', 'screenshot']);
 
@@ -133,6 +136,48 @@ function setStatus(text, kind = '') {
   if (kind) statusEl.classList.add(kind);
 }
 
+function setFiltersOpen(on) {
+  document.body.classList.toggle('pw-show-filters', Boolean(on));
+}
+
+function renderSkeletonGrid(count = 9) {
+  if (!grid) return;
+  const nodes = [];
+  for (let i = 0; i < count; i++) {
+    nodes.push(
+      el('article', { class: 'pw-card soft card' }, [
+        el('div', { class: 'pw-card-title' }, [
+          el('div', { class: 'pw-skeleton pw-skeleton-line lg' }),
+          el('div', { class: 'pw-skeleton pw-skeleton-line sm' }),
+        ]),
+        el('div', { class: 'pw-skeleton pw-skeleton-line lg' }),
+        el('div', { class: 'pw-skeleton pw-skeleton-line' }),
+        el('div', { class: 'pw-actions' }, [
+          el('div', { class: 'pw-skeleton pw-skeleton-pill md' }),
+          el('div', { class: 'pw-skeleton pw-skeleton-pill sm' }),
+        ]),
+      ])
+    );
+  }
+  grid.replaceChildren(...nodes);
+}
+
+function renderEmptyState({ title, subtitle } = {}) {
+  if (!grid) return;
+  const card = el('article', { class: 'pw-card soft card pw-span-all' }, [
+    el('div', { class: 'pw-card-title' }, [
+      el('h3', { text: title || 'No apps match your filters.' }),
+      el('span', { class: 'pw-kicker', text: subtitle || 'Try clearing filters or browsing the full catalog.' }),
+    ]),
+    el('div', { class: 'pw-actions' }, [
+      el('button', { class: 'pw-btn', type: 'button', id: 'btnEmptyClear' }, ['Clear filters']),
+      el('a', { class: 'pw-btn primary', href: '/buyer/onboarding.html' }, ['Attach your platform']),
+    ]),
+  ]);
+  grid.replaceChildren(card);
+  card.querySelector('#btnEmptyClear')?.addEventListener('click', () => btnClear?.click());
+}
+
 function render() {
   const needle = norm(q?.value);
   const onlyUW = Boolean(onlyUniversal?.checked);
@@ -165,7 +210,10 @@ function render() {
     return true;
   });
 
-  if (grid) grid.replaceChildren(...visible.map(renderCard));
+  if (grid) {
+    if (apps.length && visible.length === 0) renderEmptyState();
+    else grid.replaceChildren(...visible.map(renderCard));
+  }
 
   const total = apps.length;
   const uwCount = apps.filter(isUniversalCompatible).length;
@@ -176,6 +224,7 @@ function render() {
 
 async function load() {
   try {
+    renderSkeletonGrid();
     setStatus('Loading apps…');
     const res = await fetch('/api/apps?page=1&limit=200', { credentials: 'include' });
     const json = await res.json().catch(() => null);
@@ -209,6 +258,11 @@ async function load() {
       render();
       toast('Cleared filters');
     });
+
+    // Mobile filter drawer toggles.
+    btnFilters?.addEventListener('click', () => setFiltersOpen(true));
+    btnCloseFilters?.addEventListener('click', () => setFiltersOpen(false));
+    filtersBackdrop?.addEventListener('click', () => setFiltersOpen(false));
 
     setStatus('');
     render();

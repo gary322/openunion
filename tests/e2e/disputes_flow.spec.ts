@@ -109,8 +109,7 @@ test('buyer can open a dispute and admin can resolve (refund) via UI', async ({ 
     await fc.setFiles({ name: 'shot.png', mimeType: 'image/png', buffer: png });
     await expect(page.locator('#requiredOutputsStatus')).toContainText('Ready: 1/1');
 
-    await page.fill('#expected', 'Expected');
-    await page.fill('#observed', 'Observed');
+    await page.fill('#summary', 'Uploaded required artifact(s) and submitted.');
 
     const submitRespPromise = page.waitForResponse(
       (r) => r.url().includes('/api/jobs/') && r.url().endsWith('/submit') && r.request().method() === 'POST'
