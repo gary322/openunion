@@ -80,7 +80,11 @@ test('org can register an app and use the dynamic app page to create+publish', a
     // Token should be auto-detected from localStorage and show the connected state.
     await expect(page.locator('#connectedRow')).toBeVisible();
 
-    // The app page keeps advanced settings behind a fold by default.
+    // The app page is now a guided 3-step flow; expand the folds we need before interacting
+    // with any form fields.
+    await openDetails(page, '#foldDescribe');
+    await fillRequiredAppForm(page);
+    await openDetails(page, '#foldPublish');
     await openDetails(page, '#settingsFold');
 
     // Select the verified origin we just proved via http_file.
@@ -93,7 +97,8 @@ test('org can register an app and use the dynamic app page to create+publish', a
       await page.selectOption('#originSelect', origin);
       await expect(page.locator('#originSelect')).toHaveValue(origin);
     } else {
-      await expect(page.locator('#originSingleText')).toContainText(origin);
+      // The single-origin UI may display host-only, so match on the host portion.
+      await expect(page.locator('#originSingleText')).toContainText(`127.0.0.1:${port}`);
     }
 
     // Create + publish with a unique title.
@@ -101,7 +106,6 @@ test('org can register an app and use the dynamic app page to create+publish', a
     await page.fill('#payoutCents', '1200');
     await page.fill('#requiredProofs', '1');
     await page.fill('#title', title);
-    await fillRequiredAppForm(page);
 
     const createRespPromise = page.waitForResponse((r) => r.url().endsWith('/api/bounties') && r.request().method() === 'POST');
     const publishRespPromise = page.waitForResponse(

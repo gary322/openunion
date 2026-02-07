@@ -63,7 +63,12 @@ test('create + publish via a vertical app page (github)', async ({ page }) => {
     // Connect should be already satisfied via localStorage token.
     await expect(page.locator('#connectedRow')).toBeVisible();
 
-    // The app page keeps advanced settings behind a fold by default.
+    // Wizard: complete the required friendly form first so the publish step becomes active.
+    await openDetails(page, '#foldDescribe');
+    await fillRequiredAppForm(page);
+
+    // The app page keeps settings behind folds by default.
+    await openDetails(page, '#foldPublish');
     await openDetails(page, '#settingsFold');
 
     await expect
@@ -81,7 +86,6 @@ test('create + publish via a vertical app page (github)', async ({ page }) => {
     await page.fill('#payoutCents', '1200');
     await page.fill('#requiredProofs', '1');
     await page.fill('#title', title);
-    await fillRequiredAppForm(page);
 
     const createRespPromise = page.waitForResponse((r) => r.url().endsWith('/api/bounties') && r.request().method() === 'POST');
     const publishRespPromise = page.waitForResponse((r) => r.url().includes('/api/bounties/') && r.url().endsWith('/publish') && r.request().method() === 'POST');

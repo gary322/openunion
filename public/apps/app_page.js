@@ -149,6 +149,12 @@ export async function initAppPage(cfg) {
   const createAfterConnect = qs('#createAfterConnect');
   const templateRow = qs('#templateRow');
   const publishActionbar = qs('#publishActionbar');
+  const foldConnect = qs('#foldConnect');
+  const foldDescribe = qs('#foldDescribe');
+  const foldPublish = qs('#foldPublish');
+  const pillConnect = qs('#pillConnect');
+  const pillDescribe = qs('#pillDescribe');
+  const pillPublish = qs('#pillPublish');
   const tabSignIn = qs('#tabSignIn');
   const tabToken = qs('#tabToken');
   const panelSignIn = qs('#panelSignIn');
@@ -211,6 +217,37 @@ export async function initAppPage(cfg) {
     publicAllowedOrigins.find((o) => o.includes('store.steampowered.com')) ||
     publicAllowedOrigins[0] ||
     '';
+
+  function setPill(elPill, text, kind = '') {
+    if (!elPill) return;
+    elPill.textContent = String(text || '');
+    elPill.classList.remove('good', 'warn', 'faint');
+    if (kind) elPill.classList.add(kind);
+  }
+
+  function setFoldOpen(elDetails, open, { force = false } = {}) {
+    if (!elDetails) return;
+    if (!force && String(elDetails.dataset?.userToggled ?? '') === '1') return;
+    try {
+      elDetails.open = Boolean(open);
+    } catch {
+      // ignore
+    }
+  }
+
+  // Mark folds as "user toggled" so async refreshes don't fight manual intent.
+  for (const summary of Array.from(document.querySelectorAll('details.pw-fold > summary'))) {
+    summary.addEventListener('click', (ev) => {
+      const d = ev.currentTarget?.parentElement;
+      if (d && d.tagName?.toLowerCase?.() === 'details') {
+        try {
+          d.dataset.userToggled = '1';
+        } catch {
+          // ignore
+        }
+      }
+    });
+  }
 
   function appStorageKey(suffix) {
     const raw = String(appSlug || taskType || appName || 'app')
@@ -307,6 +344,9 @@ export async function initAppPage(cfg) {
       if (t) connectedTokenPrefix.textContent = `${t.slice(0, 10)}…`;
       else connectedTokenPrefix.textContent = sessionEmail ? `${sessionEmail}` : 'session';
     }
+    setPill(pillConnect, connected ? 'Connected' : 'Required', connected ? 'good' : 'warn');
+    // Workflow-first: show only the next needed block unless the user chooses otherwise.
+    setFoldOpen(foldConnect, !connected);
   }
 
   // Render connect state early to avoid UI flicker on navigation.
@@ -317,6 +357,7 @@ export async function initAppPage(cfg) {
     if (connectedRow) connectedRow.hidden = true;
     // If they previously used token mode, default them back to the token tab.
     setConnectTab(storageGet(LS.buyerToken, '') ? 'token' : 'signin');
+    setFoldOpen(foldConnect, true, { force: true });
     (storageGet(LS.buyerToken, '') ? tokenInput : loginEmail)?.focus?.();
   });
 
@@ -335,6 +376,7 @@ export async function initAppPage(cfg) {
     setLoginStatus('');
     toast('Disconnected');
     renderConnectState();
+    setFoldOpen(foldConnect, true, { force: true });
     enableAuto(false);
     await refreshOrigins();
     await refreshBounties();
@@ -359,6 +401,7 @@ export async function initAppPage(cfg) {
     sessionEmail = email;
     toast('Signed in', 'good');
     renderConnectState();
+    setFoldOpen(foldConnect, false);
     setStatus('createStatus', 'Loading verified origins…');
     await refreshOrigins();
     setStatus('createStatus', '');
@@ -372,6 +415,7 @@ export async function initAppPage(cfg) {
     storageSet(LS.buyerToken, t);
     toast('Connected', 'good');
     renderConnectState();
+    setFoldOpen(foldConnect, false);
     setStatus('createStatus', 'Loading verified origins…');
     await refreshOrigins();
     setStatus('createStatus', '');
@@ -902,6 +946,26 @@ export async function initAppPage(cfg) {
 
     if (btnCreateDraft) btnCreateDraft.disabled = !ready;
     if (btnCreatePublish) btnCreatePublish.disabled = !ready;
+
+    // Wizard state: keep the happy path obvious and low-effort.
+    const connected = auth.mode !== 'none';
+    const describeDone = connected && missing.length === 0 && descErrs.length === 0;
+    const publishReady = connected && describeDone && (Boolean(origin) || hasSupportedOrigins);
+
+    if (foldDescribe) foldDescribe.hidden = !connected;
+    if (foldPublish) foldPublish.hidden = !connected;
+
+    setPill(pillDescribe, !connected ? 'Waiting' : describeDone ? 'Done' : missing.length ? `${missing.length} required` : 'Next', !connected ? 'faint' : describeDone ? 'good' : 'warn');
+    setPill(pillPublish, !connected ? 'Waiting' : !describeDone ? 'Waiting' : publishReady ? 'Ready' : !origin && !hasSupportedOrigins ? 'Pick origin' : 'Review', !connected || !describeDone ? 'faint' : publishReady ? 'good' : !origin && !hasSupportedOrigins ? 'warn' : 'faint');
+
+    if (!connected) {
+      setFoldOpen(foldDescribe, false);
+      setFoldOpen(foldPublish, false);
+    } else {
+      // If the descriptor is valid, guide the user to the publish step.
+      setFoldOpen(foldDescribe, !describeDone);
+      setFoldOpen(foldPublish, describeDone);
+    }
 
     let msg = '';
     let kind = '';

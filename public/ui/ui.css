@@ -710,6 +710,10 @@ details.pw-fold .pw-fold-body {
   padding: 14px;
 }
 
+.pw-row-muted {
+  opacity: 0.62;
+}
+
 .pw-pill {
   display: inline-flex;
   align-items: center;
@@ -1295,6 +1299,27 @@ body.pw-dev-on .pw-not-dev {
 }
 
 /* Marketplace cards */
+.pw-card.card {
+  position: relative;
+  overflow: hidden;
+  transition: transform 160ms ease, box-shadow 160ms ease;
+}
+.pw-card.card::after {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  pointer-events: none;
+  opacity: 0;
+  background: radial-gradient(600px 220px at 20% 0%, var(--accent-soft), transparent 60%);
+  transition: opacity 160ms ease;
+}
+.pw-card.card:hover::after {
+  opacity: 1;
+}
+.pw-card.card:hover {
+  transform: translateY(-2px);
+}
+
 .pw-app-name {
   margin: 0;
   font-family: var(--font-serif);
