@@ -663,12 +663,25 @@ async function onSubmit() {
     return;
   }
 
-  const expected = $('expected').value.trim() || 'Expected behavior';
-  const observed = $('observed').value.trim() || 'Observed behavior';
-  const steps = $('steps').value
+  const summary = String($('summary')?.value ?? '').trim();
+  const expectedRaw = String($('expected')?.value ?? '').trim();
+  const observedRaw = String($('observed')?.value ?? '').trim();
+  const stepsRaw = String($('steps')?.value ?? '');
+
+  const expected = expectedRaw || 'Expected deliverables';
+  const observed = observedRaw || summary || 'Attached deliverables';
+  let steps = stepsRaw
     .split('\n')
     .map((s) => s.trim())
     .filter(Boolean);
+  if (!steps.length) {
+    steps = (summary ? summary.split('\n') : [])
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }
+  if (!steps.length) {
+    steps = ['Completed the requested task', 'Uploaded required artifacts'];
+  }
 
   const allowed = lastClaim?.data?.job?.constraints?.allowedOrigins || lastNext?.data?.job?.constraints?.allowedOrigins || [];
   const targetOrigin = Array.isArray(allowed) && allowed.length ? allowed[0] : apiBase;

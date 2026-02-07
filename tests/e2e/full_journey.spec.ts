@@ -254,8 +254,7 @@ test('buyer → bounty → worker → upload → verify (gateway) → payout (lo
     await page.click('#btnUpload');
     await expect(page.locator('#uploadStatus')).toContainText('uploaded artifactId=');
 
-    await page.fill('#expected', 'Expected behavior here');
-    await page.fill('#observed', 'Observed behavior here');
+    await page.fill('#summary', 'Uploaded required artifacts and submitted for verification.');
 
     const submitRespPromise = page.waitForResponse(
       (r) => r.url().includes('/api/jobs/') && r.url().endsWith('/submit') && r.request().method() === 'POST'

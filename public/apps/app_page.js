@@ -183,6 +183,7 @@ export async function initAppPage(cfg) {
   const deliverablesSub = qs('#deliverablesSub');
   const deliverablesHelp = qs('#deliverablesHelp');
   const titleInput = qs('#title');
+  const btnActionbarConnect = qs('#btnActionbarConnect');
   const btnCreateDraft = qs('#btnCreateDraft');
   const btnCreatePublish = qs('#btnCreatePublish');
   const actionbarTitle = qs('#actionbarTitle');
@@ -337,9 +338,13 @@ export async function initAppPage(cfg) {
     if (connectRow) connectRow.hidden = connected;
     if (connectedRow) connectedRow.hidden = !connected;
     if (createAfterConnect) createAfterConnect.hidden = !connected;
-    if (publishActionbar) publishActionbar.hidden = !connected;
+    // Keep a persistent bottom actionbar: it either helps you connect, or helps you publish.
+    if (publishActionbar) publishActionbar.hidden = false;
     if (monitorGate) monitorGate.hidden = connected;
     if (monitorActions) monitorActions.hidden = !connected;
+    if (btnActionbarConnect) btnActionbarConnect.hidden = connected;
+    if (btnCreateDraft) btnCreateDraft.hidden = !connected;
+    if (btnCreatePublish) btnCreatePublish.hidden = !connected;
     if (connectedTokenPrefix) {
       if (t) connectedTokenPrefix.textContent = `${t.slice(0, 10)}…`;
       else connectedTokenPrefix.textContent = sessionEmail ? `${sessionEmail}` : 'session';
@@ -351,6 +356,14 @@ export async function initAppPage(cfg) {
 
   // Render connect state early to avoid UI flicker on navigation.
   renderConnectState();
+
+  btnActionbarConnect?.addEventListener('click', () => {
+    setFoldOpen(foldConnect, true, { force: true });
+    // Prefer sign-in for interactive UX, but keep token mode accessible in Dev.
+    setConnectTab('signin');
+    foldConnect?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
+    loginEmail?.focus?.();
+  });
 
   btnChangeToken?.addEventListener('click', () => {
     if (connectRow) connectRow.hidden = false;
@@ -1004,10 +1017,13 @@ export async function initAppPage(cfg) {
 
     // Action bar: keep the primary CTA visible without scrolling.
     if (actionbarTitle) {
-      actionbarTitle.textContent = kind === 'good' ? `Ready: ${formatCents(Number(payoutInput?.value ?? 0))} payout` : 'Create and publish';
+      if (auth.mode === 'none') actionbarTitle.textContent = 'Next: connect';
+      else actionbarTitle.textContent = kind === 'good' ? `Ready: ${formatCents(Number(payoutInput?.value ?? 0))} payout` : 'Create and publish';
     }
     if (actionbarSub) {
-      if (kind === 'good') {
+      if (auth.mode === 'none') {
+        actionbarSub.textContent = 'Sign in (recommended). Dev mode reveals API-token connect.';
+      } else if (kind === 'good') {
         const originHost = origin ? String(origin).replace(/^https?:\/\//, '') : hasSupportedOrigins ? 'supported origins' : '—';
         actionbarSub.textContent = `Origin: ${originHost} • Net to worker ${formatCents(workerNetCents)} (platform ${formatBps(platformFeeBps)} then Proofwork 1%)`;
       } else {

@@ -147,6 +147,22 @@ body::before {
   }
 }
 
+/* Responsive helpers. */
+.pw-mobile-only {
+  display: none;
+}
+.pw-desktop-only {
+  display: inline-flex;
+}
+@media (max-width: 980px) {
+  .pw-mobile-only {
+    display: inline-flex;
+  }
+  .pw-desktop-only {
+    display: none;
+  }
+}
+
 a {
   color: var(--accent);
   text-decoration: none;
@@ -954,6 +970,54 @@ body.pw-has-actionbar .pw-container {
   padding-bottom: 120px;
 }
 
+/* Skeletons (loading states). */
+@keyframes pw-shimmer {
+  0% {
+    transform: translateX(-30%);
+  }
+  100% {
+    transform: translateX(130%);
+  }
+}
+.pw-skeleton {
+  position: relative;
+  overflow: hidden;
+  border-radius: 14px;
+  background: rgba(11, 15, 25, 0.06);
+}
+.pw-skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.62), transparent);
+  transform: translateX(-30%);
+  animation: pw-shimmer 1100ms ease-in-out infinite;
+}
+.pw-skeleton-line {
+  height: 10px;
+  border-radius: 999px;
+  margin: 10px 0;
+  background: rgba(11, 15, 25, 0.08);
+}
+.pw-skeleton-line.sm {
+  height: 8px;
+  width: 60%;
+}
+.pw-skeleton-line.lg {
+  height: 12px;
+  width: 90%;
+}
+.pw-skeleton-pill {
+  height: 36px;
+  border-radius: 999px;
+}
+.pw-skeleton-pill.sm {
+  width: 92px;
+}
+.pw-skeleton-pill.md {
+  width: 140px;
+}
+
 /* Small utilities used across pages. */
 .pw-stack {
   display: grid;
@@ -1028,6 +1092,34 @@ body.pw-dev-on .pw-not-dev {
 @media (max-width: 980px) {
   .pw-sidebar {
     position: static;
+  }
+}
+
+/* Mobile filter drawer (opt-in by adding .pw-sidebar-collapsible). */
+.pw-backdrop {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 9;
+  background: rgba(11, 15, 25, 0.28);
+  backdrop-filter: blur(2px);
+}
+@media (max-width: 980px) {
+  .pw-sidebar.pw-sidebar-collapsible {
+    display: none;
+  }
+  body.pw-show-filters .pw-backdrop {
+    display: block;
+  }
+  body.pw-show-filters .pw-sidebar.pw-sidebar-collapsible {
+    display: block;
+    position: fixed;
+    left: 12px;
+    right: 12px;
+    top: 86px;
+    bottom: 16px;
+    overflow: auto;
+    z-index: 10;
   }
 }
 

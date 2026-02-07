@@ -254,6 +254,23 @@ async function refreshOnboardingStatus() {
     nextLabel.textContent = label;
     nextBtn.setAttribute('href', href);
     nextBtn.dataset.nextFold = foldId;
+
+    // Mirror the same "next action" as a persistent bottom actionbar to reduce scrolling/effort.
+    const abTitle = $('buyerActionbarTitle');
+    const abSub = $('buyerActionbarSub');
+    const abBtn = $('btnBuyerActionbar');
+    if (abTitle) abTitle.textContent = `Next: ${label}`;
+    if (abSub) {
+      abSub.textContent =
+        href.startsWith('/apps/')
+          ? 'Open the catalog, pick an app, and publish work in seconds.'
+          : 'The console will guide you step-by-step. Dev mode reveals raw JSON and IDs.';
+    }
+    if (abBtn) {
+      abBtn.dataset.href = href;
+      abBtn.dataset.nextFold = foldId;
+      abBtn.textContent = href.startsWith('/apps/') ? 'Open apps' : 'Continue';
+    }
   }
 
   // Guided mode: open only the next fold (and keep Disputes open if urgent).
@@ -1562,6 +1579,26 @@ if (btnOnboardingNext) {
       target.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
   });
+}
+
+function goNextFromActionbar(btn) {
+  const href = String(btn?.dataset?.href ?? '').trim();
+  const foldId = String(btn?.dataset?.nextFold ?? '').trim();
+  if (href && !href.startsWith('#')) {
+    window.location.assign(href);
+    return;
+  }
+  if (foldId) setFoldOpen(foldId, true, { force: true });
+  const targetId = href.replace(/^#/, '').trim();
+  const target = targetId ? $(targetId) : null;
+  if (target && typeof target.scrollIntoView === 'function') {
+    target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+}
+
+const btnBuyerActionbar = $('btnBuyerActionbar');
+if (btnBuyerActionbar) {
+  btnBuyerActionbar.addEventListener('click', () => goNextFromActionbar(btnBuyerActionbar));
 }
 
 $('btnGetPlatformFee').addEventListener('click', () => onGetPlatformFee().catch((e) => setStatus('pfStatus', String(e), 'bad')));
