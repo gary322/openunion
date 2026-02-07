@@ -106,3 +106,10 @@ export async function openDetails(page: Page, selector: string) {
     d.open = true;
   });
 }
+
+// The buyer console no longer pre-fills demo credentials; tests should explicitly fill them.
+export async function fillBuyerDemoLogin(page: Page, opts: { email?: string; password?: string } = {}) {
+  await openDetails(page, '#foldAccess');
+  await page.fill('#email', String(opts.email ?? 'buyer@example.com'));
+  await page.fill('#password', String(opts.password ?? 'password'));
+}

@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { Wallet } from 'ethers';
-import { openDetails, startHttpFileOriginServer } from './helpers.js';
+import { fillBuyerDemoLogin, openDetails, startHttpFileOriginServer } from './helpers.js';
 
 test('buyer portal: exercise remaining buttons (fee get, quotas, origins list/revoke, bounties list, org apps list, register)', async ({ page, request }) => {
   test.setTimeout(120_000);
@@ -9,6 +9,7 @@ test('buyer portal: exercise remaining buttons (fee get, quotas, origins list/re
 
   try {
     await page.goto('/buyer/index.html');
+    await fillBuyerDemoLogin(page);
     await page.click('#btnLogin');
     await expect(page.locator('#loginStatus')).toContainText('ok');
 

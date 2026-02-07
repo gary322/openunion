@@ -1,9 +1,9 @@
 import { test, expect } from '@playwright/test';
-import { openDetails } from './helpers.js';
+import { fillBuyerDemoLogin, openDetails } from './helpers.js';
 
 test('buyer can set per-org CORS allowlist and it is enforced', async ({ page, request }) => {
   await page.goto('/buyer/index.html');
-  await openDetails(page, '#foldAccess');
+  await fillBuyerDemoLogin(page);
   await page.click('#btnLogin');
   await expect(page.locator('#loginStatus')).toContainText('ok');
 

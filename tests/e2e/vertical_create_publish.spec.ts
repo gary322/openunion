@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import http from 'http';
-import { fillRequiredAppForm, openDetails } from './helpers';
+import { fillBuyerDemoLogin, fillRequiredAppForm, openDetails } from './helpers';
 
 test('create + publish via a vertical app page (github)', async ({ page }) => {
   test.setTimeout(90_000);
@@ -28,6 +28,7 @@ test('create + publish via a vertical app page (github)', async ({ page }) => {
   try {
     // Buyer portal: login and mint a buyer API token.
     await page.goto('/buyer/index.html');
+    await fillBuyerDemoLogin(page);
     await page.click('#btnLogin');
     await expect(page.locator('#loginStatus')).toContainText('ok');
 
@@ -83,6 +84,7 @@ test('create + publish via a vertical app page (github)', async ({ page }) => {
     }
 
     const title = `GitHub E2E ${Date.now()}`;
+    await openDetails(page, '#customPayout');
     await page.fill('#payoutCents', '1200');
     await page.fill('#requiredProofs', '1');
     await page.fill('#title', title);
