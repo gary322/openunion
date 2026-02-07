@@ -838,6 +838,42 @@ async function runStructuredJsonOutputsModule(input: { token: string; job: any; 
   return artifacts;
 }
 
+function hasRequiredArtifact(artifacts: ArtifactRef[], req: any): boolean {
+  const r = req && typeof req === 'object' ? req : null;
+  if (!r) return true;
+  const kind = typeof r.kind === 'string' ? r.kind : '';
+  if (!kind) return true;
+  const label = typeof r.label === 'string' && r.label ? r.label : null;
+  const labelPrefix = typeof r.label_prefix === 'string' && r.label_prefix ? r.label_prefix : null;
+  const count = Number.isFinite(Number(r.count)) ? Math.max(1, Number(r.count)) : 1;
+
+  const hits = artifacts.filter((a) => {
+    if (!a) return false;
+    if (String(a.kind ?? '') !== kind) return false;
+    const lbl = String(a.label ?? '');
+    if (label && lbl !== label) return false;
+    if (labelPrefix && !lbl.startsWith(labelPrefix)) return false;
+    return true;
+  });
+  return hits.length >= count;
+}
+
+function missingRequiredArtifactDescs(required: any[], artifacts: ArtifactRef[]): string[] {
+  const req = Array.isArray(required) ? required : [];
+  const missing: string[] = [];
+  for (const item of req) {
+    if (hasRequiredArtifact(artifacts, item)) continue;
+    const r = item && typeof item === 'object' ? item : null;
+    if (!r) continue;
+    const kind = typeof r.kind === 'string' ? r.kind : '';
+    if (!kind) continue;
+    const label = typeof r.label === 'string' && r.label ? r.label : null;
+    const labelPrefix = typeof r.label_prefix === 'string' && r.label_prefix ? r.label_prefix : null;
+    missing.push(label ? `${kind}:${label}` : labelPrefix ? `${kind}:${labelPrefix}*` : kind);
+  }
+  return missing;
+}
+
 async function runLlmSummarizeModule(input: { token: string; job: any; artifactsSoFar: ArtifactRef[] }): Promise<ArtifactRef> {
   // Deterministic “LLM” module: for production, swap this implementation to call a real model.
   const td = input.job?.taskDescriptor ?? {};
@@ -995,6 +1031,7 @@ async function loop() {
       continue;
     }
 
+    const leaseNonce = String(claim.json?.data?.leaseNonce ?? '').trim();
     const claimedJob = claim.json?.data?.job ?? job;
     const td = claimedJob?.taskDescriptor ?? {};
     const tags: string[] = Array.isArray(td?.capability_tags) ? td.capability_tags : [];
@@ -1007,26 +1044,88 @@ async function loop() {
 
     const artifacts: ArtifactRef[] = [];
     let extracted: Record<string, any> = {};
-    if (tags.includes('browser') || tags.includes('screenshot') || tags.length === 0) {
-      if (browserFlow) {
-        const res = await runBrowserFlowModule({ token, job: claimedJob, flow: browserFlow });
-        artifacts.push(...res.artifacts);
-        extracted = res.extracted ?? {};
-      } else {
-        artifacts.push(await runBrowserScreenshotModule({ token, job: claimedJob }));
+    const jobId = String(claimedJob?.jobId ?? job?.jobId ?? '').trim();
+    async function releaseLease(reason: string) {
+      if (!jobId || !leaseNonce) return;
+      const msg = reason ? reason.slice(0, 500) : 'universal_worker_release';
+      try {
+        await apiFetch(`/api/jobs/${encodeURIComponent(jobId)}/release`, { method: 'POST', token, body: { leaseNonce, reason: msg } });
+      } catch {
+        // ignore
       }
     }
-    if (wantsHttpModule) {
-      const httpArt = await runHttpModule({ token, job: claimedJob });
-      if (httpArt) artifacts.push(httpArt);
-    }
-    const clipArt = await runFfmpegClipModule({ token, job: claimedJob });
-    if (clipArt) artifacts.push(clipArt);
-    const timelineArt = await runClipTimelineModule({ token, job: claimedJob });
-    if (timelineArt) artifacts.push(timelineArt);
-    artifacts.push(...(await runStructuredJsonOutputsModule({ token, job: claimedJob, extracted })));
-    if (tags.includes('llm_summarize')) {
-      artifacts.push(await runLlmSummarizeModule({ token, job: claimedJob, artifactsSoFar: artifacts.slice() }));
+
+    try {
+      if (tags.includes('browser') || tags.includes('screenshot') || tags.length === 0) {
+        if (browserFlow) {
+          const res = await runBrowserFlowModule({ token, job: claimedJob, flow: browserFlow });
+          artifacts.push(...res.artifacts);
+          extracted = res.extracted ?? {};
+        } else {
+          artifacts.push(await runBrowserScreenshotModule({ token, job: claimedJob }));
+        }
+      }
+      if (wantsHttpModule) {
+        const httpArt = await runHttpModule({ token, job: claimedJob });
+        if (httpArt) artifacts.push(httpArt);
+      }
+      const clipArt = await runFfmpegClipModule({ token, job: claimedJob });
+      if (clipArt) artifacts.push(clipArt);
+      const timelineArt = await runClipTimelineModule({ token, job: claimedJob });
+      if (timelineArt) artifacts.push(timelineArt);
+      artifacts.push(...(await runStructuredJsonOutputsModule({ token, job: claimedJob, extracted })));
+      if (tags.includes('llm_summarize')) {
+        artifacts.push(await runLlmSummarizeModule({ token, job: claimedJob, artifactsSoFar: artifacts.slice() }));
+      }
+
+      // Defensive: output_spec is authoritative. If it requires artifacts the capability tags did not trigger,
+      // synthesize them here. This prevents "missing_required_artifacts" fails in production smoke/ops.
+      if (requiredArtifacts.length) {
+        for (const req of requiredArtifacts) {
+          if (hasRequiredArtifact(artifacts, req)) continue;
+          const r = req && typeof req === 'object' ? req : null;
+          const kind = r && typeof r.kind === 'string' ? r.kind : '';
+          const label = r && typeof r.label === 'string' ? r.label : '';
+          const labelPrefix = r && typeof r.label_prefix === 'string' ? r.label_prefix : '';
+
+          if (kind === 'screenshot' && (label === 'universal_screenshot' || labelPrefix === 'universal_screenshot')) {
+            artifacts.push(await runBrowserScreenshotModule({ token, job: claimedJob }));
+            continue;
+          }
+          if (kind === 'log' && label === 'report_http') {
+            const httpArt = await runHttpModule({ token, job: claimedJob });
+            if (httpArt) artifacts.push(httpArt);
+            continue;
+          }
+          if (kind === 'log' && label === 'report_summary') {
+            artifacts.push(await runLlmSummarizeModule({ token, job: claimedJob, artifactsSoFar: artifacts.slice() }));
+            continue;
+          }
+          if (kind === 'video' && label === 'clip_main') {
+            const clip = await runFfmpegClipModule({ token, job: claimedJob });
+            if (clip) artifacts.push(clip);
+            continue;
+          }
+          if (kind === 'other' && label === 'timeline_main') {
+            const t = await runClipTimelineModule({ token, job: claimedJob });
+            if (t) artifacts.push(t);
+            continue;
+          }
+          if (kind === 'other' && labelPrefix) {
+            artifacts.push(...(await runStructuredJsonOutputsModule({ token, job: claimedJob, extracted })));
+            continue;
+          }
+        }
+      }
+
+      const missing = missingRequiredArtifactDescs(requiredArtifacts, artifacts);
+      if (missing.length) {
+        throw new Error(`missing_required_artifacts:${missing.join(',')}`);
+      }
+    } catch (err: any) {
+      const msg = String(err?.message ?? err);
+      await releaseLease(`universal_worker_error:${msg}`);
+      throw err;
     }
 
     const submitted = await submitJob({ token, workerId, job: claimedJob, artifacts });
