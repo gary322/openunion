@@ -797,6 +797,11 @@ export async function seedBuiltInApps() {
   const clipsOrigins = [
     'https://storage.googleapis.com',
     'https://commondatastorage.googleapis.com',
+    // Curated, direct-mp4-friendly origins. Clips enforces ".mp4" for supported origins.
+    'https://archive.org',
+    'https://cdn.discordapp.com',
+    'https://files.catbox.moe',
+    'https://video.twimg.com',
     'https://download.samplelib.com',
     'https://filesamples.com',
   ];
