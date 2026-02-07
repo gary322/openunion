@@ -60,8 +60,10 @@
   --shadow-soft: 0 12px 40px rgba(2, 8, 23, 0.1);
 
   --accent: #2563eb;
+  --accent-2: #1d4ed8;
   --accent-ink: #071022;
   --accent-soft: rgba(37, 99, 235, 0.14);
+  --accent-text: #ffffff;
 
   --good: #16a34a;
   --warn: #ea580c;
@@ -76,18 +78,22 @@
 /* Per-surface theme accents. */
 body.theme-apps {
   --accent: #0d9488;
+  --accent-2: #0f766e;
   --accent-soft: rgba(13, 148, 136, 0.16);
 }
 body.theme-buyer {
   --accent: #2563eb;
+  --accent-2: #1d4ed8;
   --accent-soft: rgba(37, 99, 235, 0.14);
 }
 body.theme-worker {
   --accent: #15803d;
+  --accent-2: #166534;
   --accent-soft: rgba(21, 128, 61, 0.16);
 }
 body.theme-admin {
   --accent: #ea580c;
+  --accent-2: #c2410c;
   --accent-soft: rgba(234, 88, 12, 0.16);
 }
 
@@ -596,8 +602,15 @@ a:hover {
   transform: translateY(0);
 }
 .pw-btn.primary {
-  border-color: rgba(11, 15, 25, 0.18);
-  background: linear-gradient(135deg, var(--accent-soft), rgba(255, 255, 255, 0.85));
+  border-color: rgba(2, 8, 23, 0.12);
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  color: var(--accent-text);
+  box-shadow: 0 16px 44px rgba(2, 8, 23, 0.16);
+  text-shadow: 0 1px 0 rgba(2, 8, 23, 0.14);
+}
+.pw-btn.primary:hover {
+  border-color: rgba(2, 8, 23, 0.18);
+  box-shadow: 0 20px 56px rgba(2, 8, 23, 0.2);
 }
 .pw-btn.danger {
   border-color: rgba(220, 38, 38, 0.24);
