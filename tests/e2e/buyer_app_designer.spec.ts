@@ -46,16 +46,15 @@ test('buyer can design an app form without JSON (app designer) and publish from 
     await page.fill('#appName', appName);
     await page.selectOption('#appTemplate', 'custom');
 
-    // Wait for the designer table to appear.
-    await expect(page.locator('#appFieldsTbody')).toBeVisible();
+    // Wait for the friendly-form builder to appear.
+    await expect(page.locator('#appFieldsList')).toBeVisible();
 
     // Add a required URL field.
     await page.click('#btnAppAddField');
-    const fieldRows = page.locator('#appFieldsTbody tr[data-field-row="1"]');
+    const fieldRows = page.locator('#appFieldsList [data-field-card="1"]');
     await expect(fieldRows).toHaveCount(2);
 
     const newRow = fieldRows.nth(1);
-    await newRow.locator('[data-col="key"]').fill('target_url');
     await newRow.locator('[data-col="label"]').fill('Target URL');
     await newRow.locator('[data-col="type"]').selectOption('url');
     await newRow.locator('[data-col="required"]').check();
@@ -132,4 +131,3 @@ test('buyer can design an app form without JSON (app designer) and publish from 
     await originServer.close();
   }
 });
-
