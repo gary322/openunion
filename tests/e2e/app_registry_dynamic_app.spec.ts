@@ -35,7 +35,7 @@ test('org can register an app and use the dynamic app page to create+publish', a
     await page.click('#btnCreateKey');
     await expect(page.locator('#keyStatus')).toContainText('token created');
 
-    expect(await page.locator('#buyerToken').inputValue()).toMatch(/^pw_bu_/);
+    await expect(page.locator('#buyerToken')).toHaveValue(/^pw_bu_/);
 
     // Add + verify origin via http_file.
     await openDetails(page, '#foldOrigins');

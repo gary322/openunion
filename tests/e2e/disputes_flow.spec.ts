@@ -41,8 +41,9 @@ test('buyer can open a dispute and admin can resolve (refund) via UI', async ({ 
     await page.click('#btnCreateKey');
     const createKeyResp = await createKeyRespPromise;
     expect(createKeyResp.ok()).toBeTruthy();
+    // waitForResponse resolves when the network completes, not when the UI updates.
+    await expect(page.locator('#buyerToken')).toHaveValue(/^pw_bu_/);
     const buyerToken = await page.locator('#buyerToken').inputValue();
-    expect(buyerToken).toMatch(/^pw_bu_/);
 
     // Add + verify origin via http_file.
     await openDetails(page, '#foldOrigins');

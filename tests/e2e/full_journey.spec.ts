@@ -163,8 +163,8 @@ test('buyer → bounty → worker → upload → verify (gateway) → payout (lo
 
     await page.click('#btnCreateKey');
     await expect(page.locator('#keyStatus')).toContainText('token created');
+    await expect(page.locator('#buyerToken')).toHaveValue(/^pw_bu_/);
     buyerToken = await page.locator('#buyerToken').inputValue();
-    expect(buyerToken).toMatch(/^pw_bu_/);
 
     // Snapshot baseline org earnings so this test is deterministic even if other E2E tests
     // created payouts earlier in the same DB.
