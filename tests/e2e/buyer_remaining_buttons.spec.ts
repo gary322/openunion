@@ -158,8 +158,7 @@ test('buyer portal: exercise remaining buttons (fee get, quotas, origins list/re
     const regResp = await regRespPromise;
     expect(regResp.ok()).toBeTruthy();
     await expect(page.locator('#regStatus')).toContainText('ok orgId=');
-    const newToken = await page.locator('#buyerToken').inputValue();
-    expect(newToken).toMatch(/^pw_bu_/);
+    await expect(page.locator('#buyerToken')).toHaveValue(/^pw_bu_/);
   } finally {
     await originSrv.close();
   }

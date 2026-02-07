@@ -17,8 +17,9 @@ test('buyer disputes: create → list → cancel via UI (during hold window)', a
   const createKeyResp = await createKeyRespPromise;
   expect(createKeyResp.ok()).toBeTruthy();
 
+  // waitForResponse resolves when the network completes, not when the UI updates.
+  await expect(page.locator('#buyerToken')).toHaveValue(/^pw_bu_/);
   const buyerToken = await page.locator('#buyerToken').inputValue();
-  expect(buyerToken).toMatch(/^pw_bu_/);
   const auth = { Authorization: `Bearer ${buyerToken}` };
 
   // Create + publish a bounty with a non-zero dispute window so payouts are held (disputable).
