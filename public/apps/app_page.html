@@ -29,7 +29,8 @@
         <p id="hdrDesc"></p>
         <div class="pw-hero-actions">
           <div class="pw-badge">
-            New platform? Follow <a href="/buyer/onboarding.html">onboarding</a>. Already onboarded? Sign in or paste your buyer token and publish.
+            New platform? Follow <a href="/buyer/onboarding.html">onboarding</a>. Already onboarded? Sign in and publish.
+            <span class="pw-dev">Need an API token? Use Dev mode.</span>
           </div>
           <div class="pw-actions">
             <a class="pw-btn" href="/apps/">All apps</a>
@@ -62,7 +63,7 @@
                 <div class="pw-step-dot">1</div>
                 <div>
                   <div class="pw-step-title">Connect</div>
-                  <div class="pw-step-desc">Sign in (recommended) or paste a buyer token once. Passwords are never stored; interactive sessions use cookies + CSRF.</div>
+                  <div class="pw-step-desc">Sign in. Passwords are never stored; interactive sessions use cookies + CSRF.</div>
                 </div>
               </div>
               <div class="pw-step" id="stepDescribe">
@@ -101,7 +102,7 @@
               <summary>
                 <div>
                   <div class="pw-fold-title">Connect</div>
-                  <div class="pw-fold-sub">Sign in (recommended) or paste a buyer token once</div>
+                  <div class="pw-fold-sub">Sign in to publish work</div>
                 </div>
                 <span class="pw-pill warn" id="pillConnect">Required</span>
               </summary>
@@ -111,7 +112,10 @@
                       <h3>Connect</h3>
                       <span class="pw-kicker">Required</span>
                     </div>
-                  <p class="pw-muted">Sign in (recommended) or paste an API token. Passwords are never stored; interactive sessions use cookies + CSRF.</p>
+                  <p class="pw-muted">
+                    Sign in to publish work. Passwords are never stored; interactive sessions use cookies + CSRF.
+                    <span class="pw-dev">API tokens are available in Dev mode for server-to-server integrations.</span>
+                  </p>
 
                   <div class="pw-tabs" role="tablist" aria-label="Connect options">
                     <button class="pw-tab" id="tabSignIn" type="button" role="tab" aria-selected="true" aria-controls="panelSignIn">Sign in</button>

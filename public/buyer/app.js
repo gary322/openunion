@@ -1,4 +1,4 @@
-import { copyToClipboard, formatAgo, toast, initHashViews } from '/ui/pw.js';
+import { copyToClipboard, formatAgo, toast, initHashViews, el } from '/ui/pw.js';
 
 const apiBase = window.location.origin;
 
@@ -567,9 +567,15 @@ function syncAppDesignerFromDom() {
   if (freshness) generatedAppDefaultDescriptor.freshness_sla_sec = freshness;
   else delete generatedAppDefaultDescriptor.freshness_sla_sec;
 
-  const tbody = $('appFieldsTbody');
-  const rows = tbody ? Array.from(tbody.querySelectorAll('tr[data-field-row="1"]')) : [];
+  const fieldsRoot = $('appFieldsList');
+  const tbody = $('appFieldsTbody'); // dev-only table editor
+  const rows = fieldsRoot
+    ? Array.from(fieldsRoot.querySelectorAll('[data-field-card="1"]'))
+    : tbody
+      ? Array.from(tbody.querySelectorAll('tr[data-field-row="1"]'))
+      : [];
   const nextFields = [];
+  const usedKeys = new Set();
   for (let i = 0; i < rows.length; i++) {
     const tr = rows[i];
     const keyIn = tr.querySelector('[data-col="key"]');
@@ -578,15 +584,36 @@ function syncAppDesignerFromDom() {
     const storeSel = tr.querySelector('[data-col="store"]');
     const reqIn = tr.querySelector('[data-col="required"]');
     const phIn = tr.querySelector('[data-col="placeholder"]');
+    const defIn = tr.querySelector('[data-col="default"]');
     const optIn = tr.querySelector('[data-col="options"]');
+    const targetIn = tr.querySelector('[data-col="target"]');
 
-    const key = String(keyIn?.value ?? '').trim();
+    const labelRaw = String(labelIn?.value ?? '').trim();
+    let key = String(keyIn?.value ?? '').trim();
+    if (!key) key = toSnake(labelRaw);
+    // If the user added a placeholder "field_1" row, rename it based on the label.
+    if (labelRaw && /^field(_\\d+)?$/.test(key)) {
+      const derived = toSnake(labelRaw);
+      if (derived) key = derived;
+    }
     if (!key) continue;
-    const label = String(labelIn?.value ?? '').trim() || key;
+    let uniq = key;
+    let n = 1;
+    while (usedKeys.has(uniq)) {
+      n += 1;
+      uniq = `${key}_${n}`;
+    }
+    key = uniq;
+    usedKeys.add(key);
+    // Keep the hidden/dev key input consistent when the builder auto-generates.
+    if (keyIn && String(keyIn.value || '').trim() !== key) keyIn.value = key;
+
+    const label = labelRaw || key;
     const type = String(typeSel?.value ?? 'text').trim() || 'text';
     const store = String(storeSel?.value ?? 'input_spec').trim() === 'site_profile' ? 'site_profile' : 'input_spec';
     const required = Boolean(reqIn?.checked);
     const placeholder = String(phIn?.value ?? '').trim();
+    const defaultRaw = String(defIn?.value ?? '').trim();
     const optionsText = String(optIn?.value ?? '');
 
     const prev = prevFields[i] && typeof prevFields[i] === 'object' ? prevFields[i] : {};
@@ -595,7 +622,10 @@ function syncAppDesignerFromDom() {
     const prevStore = prevTarget.startsWith('site_profile.') ? 'site_profile' : 'input_spec';
 
     let target = prevTarget;
+    const typedTarget = String(targetIn?.value ?? '').trim();
+    if (typedTarget) target = typedTarget;
     if (!target || prevKey !== key || prevStore !== store) target = `${store}.${key}`;
+    if (targetIn && !String(targetIn.value || '').trim()) targetIn.value = target;
 
     const next = { ...prev };
     next.key = key;
@@ -605,6 +635,24 @@ function syncAppDesignerFromDom() {
     if (placeholder) next.placeholder = placeholder;
     else delete next.placeholder;
     next.target = target;
+
+    if (defaultRaw) {
+      if (type === 'number') {
+        const n = Number(defaultRaw);
+        if (Number.isFinite(n)) next.default = n;
+        else delete next.default;
+      } else if (type === 'boolean') {
+        // default is stored as a boolean; the input uses "true/false" text in non-dev modes.
+        const s = defaultRaw.toLowerCase();
+        if (s === 'true' || s === '1' || s === 'yes') next.default = true;
+        else if (s === 'false' || s === '0' || s === 'no') next.default = false;
+        else delete next.default;
+      } else {
+        next.default = defaultRaw;
+      }
+    } else {
+      delete next.default;
+    }
 
     if (type === 'select') {
       const opts = parseOptionsText(optionsText);
@@ -634,8 +682,13 @@ function syncAppDesignerFromDom() {
   }
   sec.fields = nextFields;
 
-  const outTbody = $('appOutputsTbody');
-  const outRows = outTbody ? Array.from(outTbody.querySelectorAll('tr[data-output-row="1"]')) : [];
+  const outRoot = $('appOutputsList');
+  const outTbody = $('appOutputsTbody'); // dev-only table editor
+  const outRows = outRoot
+    ? Array.from(outRoot.querySelectorAll('[data-output-card="1"]'))
+    : outTbody
+      ? Array.from(outTbody.querySelectorAll('tr[data-output-row="1"]'))
+      : [];
   const reqArtifacts = [];
   for (const tr of outRows) {
     const kindSel = tr.querySelector('[data-col="kind"]');
@@ -663,10 +716,12 @@ function syncAppDesignerFromDom() {
 
 function renderAppDesigner() {
   const card = $('appDesignerCard');
-  const tbody = $('appFieldsTbody');
-  const outTbody = $('appOutputsTbody');
+  const fieldsList = $('appFieldsList');
+  const outputsList = $('appOutputsList');
+  const tbody = $('appFieldsTbody'); // dev-only table editor
+  const outTbody = $('appOutputsTbody'); // dev-only table editor
   const capsWrap = $('appCapsWrap');
-  if (!card || !tbody || !outTbody || !capsWrap) return;
+  if (!card || !fieldsList || !outputsList || !capsWrap) return;
 
   if (!appDesignerWired) {
     appDesignerWired = true;
@@ -709,33 +764,71 @@ function renderAppDesigner() {
       syncGeneratedToDevJson();
     });
 
-    // Field table event delegation
-    tbody.addEventListener('input', (ev) => {
+    // Card builder event delegation (primary UX).
+    fieldsList.addEventListener('input', (ev) => {
       const t = ev.target;
       if (!t) return;
-      if (t.matches('[data-col="key"],[data-col="label"],[data-col="placeholder"],[data-col="options"],[data-col="required"]')) scheduleAppDesignerSync();
+      if (t.matches('[data-col="label"],[data-col="placeholder"],[data-col="options"],[data-col="required"],[data-col="default"],[data-col="key"],[data-col="target"]')) {
+        scheduleAppDesignerSync();
+      }
     });
-    tbody.addEventListener('change', (ev) => {
+    fieldsList.addEventListener('change', (ev) => {
       const t = ev.target;
       if (!t) return;
       if (t.matches('[data-col="type"]')) {
-        const tr = t.closest('tr');
-        const opt = tr?.querySelector?.('[data-col="options"]');
+        const card = t.closest('[data-field-card="1"]');
+        const opt = card?.querySelector?.('[data-col="options"]');
         if (opt) opt.disabled = String(t.value) !== 'select';
         scheduleAppDesignerSync();
       }
-      if (t.matches('[data-col="store"]')) scheduleAppDesignerSync();
-    });
-    tbody.addEventListener('blur', (ev) => {
-      const t = ev.target;
-      if (!t) return;
-      if (t.matches('[data-col="key"]')) {
-        const next = toSnake(String(t.value || ''));
-        if (next && next !== String(t.value || '')) t.value = next;
+      if (t.matches('[data-col="store"]')) {
+        const card = t.closest('[data-field-card="1"]');
+        const keyIn = card?.querySelector?.('[data-col="key"]');
+        const targetIn = card?.querySelector?.('[data-col="target"]');
+        const key = String(keyIn?.value ?? '').trim();
+        const store = String(t.value ?? 'input_spec').trim() === 'site_profile' ? 'site_profile' : 'input_spec';
+        if (key && targetIn) {
+          const curTarget = String(targetIn.value || '').trim();
+          const isAuto = !curTarget || curTarget.endsWith(`.${key}`);
+          if (isAuto) targetIn.value = `${store}.${key}`;
+        }
         scheduleAppDesignerSync();
       }
-    }, true);
-    tbody.addEventListener('click', (ev) => {
+    });
+    fieldsList.addEventListener(
+      'blur',
+      (ev) => {
+        const t = ev.target;
+        if (!t) return;
+        // Auto-generate a stable key when the user edits the label (unless they already typed a key in Dev mode).
+        if (t.matches('[data-col="label"]')) {
+          const card = t.closest('[data-field-card="1"]');
+          const keyIn = card?.querySelector?.('[data-col="key"]');
+          const storeSel = card?.querySelector?.('[data-col="store"]');
+          const targetIn = card?.querySelector?.('[data-col="target"]');
+          const keyCur = String(keyIn?.value ?? '').trim();
+          const derived = toSnake(String(t.value || ''));
+          if (derived && (!keyCur || /^field(_\\d+)?$/.test(keyCur))) {
+            if (keyIn) keyIn.value = derived;
+          }
+          const store = String(storeSel?.value ?? 'input_spec').trim() === 'site_profile' ? 'site_profile' : 'input_spec';
+          const finalKey = String(keyIn?.value ?? '').trim();
+          if (finalKey && targetIn) {
+            const curTarget = String(targetIn.value || '').trim();
+            const prevAuto = keyCur ? `${store}.${keyCur}` : '';
+            if (!curTarget || (prevAuto && curTarget === prevAuto)) targetIn.value = `${store}.${finalKey}`;
+          }
+          scheduleAppDesignerSync();
+        }
+        if (t.matches('[data-col="key"]')) {
+          const next = toSnake(String(t.value || ''));
+          if (next && next !== String(t.value || '')) t.value = next;
+          scheduleAppDesignerSync();
+        }
+      },
+      true
+    );
+    fieldsList.addEventListener('click', (ev) => {
       const btn = ev.target?.closest?.('button[data-action="remove-field"]');
       if (!btn) return;
       if (!generatedAppUiSchema) return;
@@ -758,18 +851,18 @@ function renderAppDesigner() {
       syncGeneratedToDevJson();
     });
 
-    // Outputs table
-    outTbody.addEventListener('input', (ev) => {
+    // Outputs card builder
+    outputsList.addEventListener('input', (ev) => {
       const t = ev.target;
       if (!t) return;
       if (t.matches('[data-col="label"],[data-col="count"]')) scheduleAppDesignerSync();
     });
-    outTbody.addEventListener('change', (ev) => {
+    outputsList.addEventListener('change', (ev) => {
       const t = ev.target;
       if (!t) return;
       if (t.matches('[data-col="kind"]')) scheduleAppDesignerSync();
     });
-    outTbody.addEventListener('click', (ev) => {
+    outputsList.addEventListener('click', (ev) => {
       const btn = ev.target?.closest?.('button[data-action="remove-output"]');
       if (!btn) return;
       if (!generatedAppDefaultDescriptor) return;
@@ -810,8 +903,24 @@ function renderAppDesigner() {
 
   // No app named yet: keep it calm and non-interactive.
   if (!generatedAppUiSchema || !generatedAppDefaultDescriptor) {
-    tbody.innerHTML = '<tr><td class="pw-muted" colspan="8">Name your app and pick a template to start designing.</td></tr>';
-    outTbody.innerHTML = '<tr><td class="pw-muted" colspan="4">Optional: set required outputs after you add fields.</td></tr>';
+    fieldsList.replaceChildren(
+      (() => {
+        const empty = document.createElement('div');
+        empty.className = 'pw-builder-card';
+        empty.textContent = 'Name your app and pick a template to start designing.';
+        return empty;
+      })()
+    );
+    outputsList.replaceChildren(
+      (() => {
+        const empty = document.createElement('div');
+        empty.className = 'pw-builder-card';
+        empty.textContent = 'Optional: set required outputs to guide worker uploads.';
+        return empty;
+      })()
+    );
+    if (tbody) tbody.innerHTML = '<tr><td class="pw-muted" colspan="8">Name your app and pick a template to start designing.</td></tr>';
+    if (outTbody) outTbody.innerHTML = '<tr><td class="pw-muted" colspan="4">Optional: set required outputs after you add fields.</td></tr>';
     capsWrap.replaceChildren();
     return;
   }
@@ -845,164 +954,250 @@ function renderAppDesigner() {
     })
   );
 
-  // Fields
-  tbody.innerHTML = '';
-  const fields = Array.isArray(sec.fields) ? sec.fields : [];
-  for (let i = 0; i < fields.length; i++) {
-    const f = fields[i] || {};
-    const tr = document.createElement('tr');
-    tr.dataset.fieldRow = '1';
+  function renderFieldCard(f, idx) {
+    const wrap = document.createElement('div');
+    wrap.className = 'pw-builder-card';
+    wrap.dataset.fieldCard = '1';
 
-    const target = String(f?.target || '').trim();
-    const store = target.startsWith('site_profile.') ? 'site_profile' : 'input_spec';
+    const titleText = String(f?.label || f?.key || `Field ${idx + 1}`);
+    const head = document.createElement('div');
+    head.className = 'pw-builder-head';
+    head.appendChild(
+      (() => {
+        const left = document.createElement('div');
+        left.className = 'pw-builder-title';
+        const pill = document.createElement('span');
+        pill.className = 'pw-pill faint';
+        pill.textContent = `Field ${idx + 1}`;
+        const strong = document.createElement('strong');
+        strong.textContent = titleText;
+        left.appendChild(pill);
+        left.appendChild(strong);
+        return left;
+      })()
+    );
 
-    const tdKey = document.createElement('td');
-    const inKey = document.createElement('input');
-    inKey.className = 'pw-input';
-    inKey.value = String(f?.key || '');
-    inKey.placeholder = 'field_key';
-    inKey.setAttribute('data-col', 'key');
-    tdKey.appendChild(inKey);
+    const rm = document.createElement('button');
+    rm.type = 'button';
+    rm.className = 'pw-icon-btn danger';
+    rm.textContent = 'Remove';
+    rm.dataset.action = 'remove-field';
+    rm.dataset.idx = String(idx);
+    rm.setAttribute('aria-label', `Remove field ${idx + 1}`);
+    head.appendChild(rm);
+    wrap.appendChild(head);
 
-    const tdLabel = document.createElement('td');
+    const grid = document.createElement('div');
+    grid.className = 'pw-grid';
+
+    const label = document.createElement('div');
+    label.className = 'pw-field';
+    label.appendChild(el('label', { text: 'Question' }));
     const inLabel = document.createElement('input');
     inLabel.className = 'pw-input';
+    inLabel.placeholder = 'e.g. Target URL';
     inLabel.value = String(f?.label || '');
-    inLabel.placeholder = 'Label';
     inLabel.setAttribute('data-col', 'label');
-    tdLabel.appendChild(inLabel);
+    label.appendChild(inLabel);
 
-    const tdType = document.createElement('td');
+    const type = document.createElement('div');
+    type.className = 'pw-field';
+    type.appendChild(el('label', { text: 'Type' }));
     const selType = document.createElement('select');
     selType.className = 'pw-select';
     selType.setAttribute('data-col', 'type');
-    for (const [id, label] of APP_DESIGNER_FIELD_TYPES) {
-      const o = document.createElement('option');
-      o.value = id;
-      o.textContent = label;
-      selType.appendChild(o);
-    }
+    for (const [id, lab] of APP_DESIGNER_FIELD_TYPES) selType.appendChild(el('option', { value: id }, [lab]));
     selType.value = String(f?.type || 'text');
-    tdType.appendChild(selType);
+    type.appendChild(selType);
 
-    const tdStore = document.createElement('td');
+    const store = document.createElement('div');
+    store.className = 'pw-field';
+    store.appendChild(el('label', { text: 'Store' }));
     const selStore = document.createElement('select');
     selStore.className = 'pw-select';
     selStore.setAttribute('data-col', 'store');
-    for (const [id, label] of APP_DESIGNER_STORES) {
-      const o = document.createElement('option');
-      o.value = id;
-      o.textContent = label;
-      selStore.appendChild(o);
-    }
-    selStore.value = store;
-    tdStore.appendChild(selStore);
+    for (const [id, lab] of APP_DESIGNER_STORES) selStore.appendChild(el('option', { value: id }, [lab]));
+    const target = String(f?.target || '').trim();
+    selStore.value = target.startsWith('site_profile.') ? 'site_profile' : 'input_spec';
+    store.appendChild(selStore);
 
-    const tdReq = document.createElement('td');
+    const req = document.createElement('div');
+    req.className = 'pw-field';
+    req.appendChild(el('label', { text: 'Required' }));
+    const reqLab = document.createElement('label');
+    reqLab.className = 'pw-check';
     const inReq = document.createElement('input');
     inReq.type = 'checkbox';
     inReq.checked = Boolean(f?.required);
     inReq.setAttribute('data-col', 'required');
-    tdReq.appendChild(inReq);
+    reqLab.appendChild(inReq);
+    reqLab.appendChild(el('span', { text: 'Required' }));
+    req.appendChild(reqLab);
 
-    const tdPh = document.createElement('td');
+    const ph = document.createElement('div');
+    ph.className = 'pw-field';
+    ph.appendChild(el('label', { text: 'Placeholder (optional)' }));
     const inPh = document.createElement('input');
     inPh.className = 'pw-input';
+    inPh.placeholder = 'Shown as an example input';
     inPh.value = String(f?.placeholder || '');
-    inPh.placeholder = 'Optional';
     inPh.setAttribute('data-col', 'placeholder');
-    tdPh.appendChild(inPh);
+    ph.appendChild(inPh);
 
-    const tdOpt = document.createElement('td');
+    const def = document.createElement('div');
+    def.className = 'pw-field';
+    def.appendChild(el('label', { text: 'Default (optional)' }));
+    const inDef = document.createElement('input');
+    inDef.className = 'pw-input';
+    inDef.placeholder = 'Auto-filled for job creators';
+    inDef.value = f?.default === undefined || f?.default === null ? '' : String(f.default);
+    inDef.setAttribute('data-col', 'default');
+    def.appendChild(inDef);
+
+    const devKey = document.createElement('div');
+    devKey.className = 'pw-field pw-dev';
+    devKey.appendChild(el('label', { text: 'Key (dev)' }));
+    const inKey = document.createElement('input');
+    inKey.className = 'pw-input';
+    inKey.placeholder = 'target_url';
+    inKey.value = String(f?.key || '');
+    inKey.setAttribute('data-col', 'key');
+    devKey.appendChild(inKey);
+
+    const devTarget = document.createElement('div');
+    devTarget.className = 'pw-field pw-dev';
+    devTarget.appendChild(el('label', { text: 'Target (dev)' }));
+    const inTarget = document.createElement('input');
+    inTarget.className = 'pw-input';
+    inTarget.placeholder = 'input_spec.target_url';
+    inTarget.value = String(f?.target || '');
+    inTarget.setAttribute('data-col', 'target');
+    devTarget.appendChild(inTarget);
+
+    const optWrap = document.createElement('div');
+    optWrap.className = 'pw-field pw-span-all';
+    optWrap.appendChild(el('label', { text: 'Options (select only)' }));
     const inOpt = document.createElement('textarea');
     inOpt.className = 'pw-textarea';
-    inOpt.rows = 1;
+    inOpt.rows = 2;
+    inOpt.placeholder = 'one per line (e.g. small: S)';
     inOpt.value = optionsTextFromArray(f?.options);
-    inOpt.placeholder = 'one per line';
     inOpt.setAttribute('data-col', 'options');
     inOpt.disabled = String(selType.value) !== 'select';
-    tdOpt.appendChild(inOpt);
+    optWrap.appendChild(inOpt);
+    optWrap.appendChild(el('div', { class: 'pw-help', text: 'Use “label: value” or just “value”.' }));
 
-    const tdAct = document.createElement('td');
-    const btnRm = document.createElement('button');
-    btnRm.type = 'button';
-    btnRm.className = 'pw-btn danger';
-    btnRm.textContent = 'Remove';
-    btnRm.dataset.action = 'remove-field';
-    btnRm.dataset.idx = String(i);
-    tdAct.appendChild(btnRm);
+    grid.appendChild(label);
+    grid.appendChild(type);
+    grid.appendChild(store);
+    grid.appendChild(req);
+    grid.appendChild(ph);
+    grid.appendChild(def);
+    grid.appendChild(devKey);
+    grid.appendChild(devTarget);
+    grid.appendChild(optWrap);
 
-    tr.appendChild(tdKey);
-    tr.appendChild(tdLabel);
-    tr.appendChild(tdType);
-    tr.appendChild(tdStore);
-    tr.appendChild(tdReq);
-    tr.appendChild(tdPh);
-    tr.appendChild(tdOpt);
-    tr.appendChild(tdAct);
-    tbody.appendChild(tr);
+    wrap.appendChild(grid);
+    return wrap;
   }
 
+  const fields = Array.isArray(sec.fields) ? sec.fields : [];
+  fieldsList.replaceChildren(...fields.map((f, i) => renderFieldCard(f, i)));
+
   // Outputs
-  outTbody.innerHTML = '';
+  function renderOutputCard(a, idx) {
+    const wrap = document.createElement('div');
+    wrap.className = 'pw-builder-card';
+    wrap.dataset.outputCard = '1';
+
+    const head = document.createElement('div');
+    head.className = 'pw-builder-head';
+    head.appendChild(
+      (() => {
+        const left = document.createElement('div');
+        left.className = 'pw-builder-title';
+        const pill = document.createElement('span');
+        pill.className = 'pw-pill faint';
+        pill.textContent = `Output ${idx + 1}`;
+        const strong = document.createElement('strong');
+        strong.textContent = String(a?.label || a?.kind || `Output ${idx + 1}`);
+        left.appendChild(pill);
+        left.appendChild(strong);
+        return left;
+      })()
+    );
+
+    const rm = document.createElement('button');
+    rm.type = 'button';
+    rm.className = 'pw-icon-btn danger';
+    rm.textContent = 'Remove';
+    rm.dataset.action = 'remove-output';
+    rm.dataset.idx = String(idx);
+    rm.setAttribute('aria-label', `Remove output ${idx + 1}`);
+    head.appendChild(rm);
+    wrap.appendChild(head);
+
+    const grid = document.createElement('div');
+    grid.className = 'pw-grid';
+
+    const kind = document.createElement('div');
+    kind.className = 'pw-field';
+    kind.appendChild(el('label', { text: 'Kind' }));
+    const selKind = document.createElement('select');
+    selKind.className = 'pw-select';
+    selKind.setAttribute('data-col', 'kind');
+    for (const [id, lab] of APP_DESIGNER_ARTIFACT_KINDS) selKind.appendChild(el('option', { value: id }, [lab]));
+    selKind.value = String(a?.kind || 'log');
+    kind.appendChild(selKind);
+
+    const lab = document.createElement('div');
+    lab.className = 'pw-field';
+    lab.appendChild(el('label', { text: 'Label' }));
+    const inLab = document.createElement('input');
+    inLab.className = 'pw-input';
+    inLab.placeholder = 'e.g. report';
+    inLab.value = String(a?.label || '');
+    inLab.setAttribute('data-col', 'label');
+    lab.appendChild(inLab);
+
+    const count = document.createElement('div');
+    count.className = 'pw-field';
+    count.appendChild(el('label', { text: 'Count (optional)' }));
+    const inCount = document.createElement('input');
+    inCount.className = 'pw-input';
+    inCount.type = 'number';
+    inCount.min = '1';
+    inCount.placeholder = '1';
+    inCount.value = a?.count ? String(a.count) : '';
+    inCount.setAttribute('data-col', 'count');
+    count.appendChild(inCount);
+
+    grid.appendChild(kind);
+    grid.appendChild(lab);
+    grid.appendChild(count);
+    wrap.appendChild(grid);
+    return wrap;
+  }
+
   const reqArtifacts = Array.isArray(generatedAppDefaultDescriptor?.output_spec?.required_artifacts)
     ? generatedAppDefaultDescriptor.output_spec.required_artifacts
     : [];
-  if (!reqArtifacts.length) {
-    outTbody.innerHTML = '<tr><td class="pw-muted" colspan="4">Optional. Add at least one output to guide worker uploads.</td></tr>';
-  } else {
-    for (let i = 0; i < reqArtifacts.length; i++) {
-      const a = reqArtifacts[i] || {};
-      const tr = document.createElement('tr');
-      tr.dataset.outputRow = '1';
+  outputsList.replaceChildren(
+    ...(reqArtifacts.length
+      ? reqArtifacts.map((a, i) => renderOutputCard(a, i))
+      : [
+          (() => {
+            const empty = document.createElement('div');
+            empty.className = 'pw-builder-card';
+            empty.textContent = 'Optional. Add at least one output to guide worker uploads.';
+            return empty;
+          })(),
+        ])
+  );
 
-      const tdKind = document.createElement('td');
-      const selKind = document.createElement('select');
-      selKind.className = 'pw-select';
-      selKind.setAttribute('data-col', 'kind');
-      for (const [id, label] of APP_DESIGNER_ARTIFACT_KINDS) {
-        const o = document.createElement('option');
-        o.value = id;
-        o.textContent = label;
-        selKind.appendChild(o);
-      }
-      selKind.value = String(a?.kind || 'log');
-      tdKind.appendChild(selKind);
-
-      const tdLab = document.createElement('td');
-      const inLab = document.createElement('input');
-      inLab.className = 'pw-input';
-      inLab.value = String(a?.label || '');
-      inLab.placeholder = 'e.g. report';
-      inLab.setAttribute('data-col', 'label');
-      tdLab.appendChild(inLab);
-
-      const tdCount = document.createElement('td');
-      const inCount = document.createElement('input');
-      inCount.className = 'pw-input';
-      inCount.type = 'number';
-      inCount.min = '1';
-      inCount.value = a?.count ? String(a.count) : '';
-      inCount.placeholder = '1';
-      inCount.setAttribute('data-col', 'count');
-      tdCount.appendChild(inCount);
-
-      const tdAct = document.createElement('td');
-      const btnRm = document.createElement('button');
-      btnRm.type = 'button';
-      btnRm.className = 'pw-btn danger';
-      btnRm.textContent = 'Remove';
-      btnRm.dataset.action = 'remove-output';
-      btnRm.dataset.idx = String(i);
-      tdAct.appendChild(btnRm);
-
-      tr.appendChild(tdKind);
-      tr.appendChild(tdLab);
-      tr.appendChild(tdCount);
-      tr.appendChild(tdAct);
-      outTbody.appendChild(tr);
-    }
-  }
+  // Dev-only tables are kept as a fallback/debug surface.
+  if (tbody) tbody.innerHTML = '';
+  if (outTbody) outTbody.innerHTML = '';
 }
 
 function appPageHrefFor(app) {

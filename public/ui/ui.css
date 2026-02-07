@@ -302,6 +302,60 @@ a:hover {
   gap: 14px;
 }
 
+/* Builder: card-based list editor (used for app form fields, outputs, etc.). */
+.pw-builder {
+  display: grid;
+  gap: 12px;
+}
+.pw-builder-card {
+  border: 1px solid rgba(11, 15, 25, 0.14);
+  background: rgba(255, 255, 255, 0.72);
+  border-radius: 18px;
+  padding: 12px;
+  box-shadow: var(--shadow-soft);
+}
+.pw-builder-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.pw-builder-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.pw-builder-title strong {
+  font-weight: 900;
+  color: rgba(11, 15, 25, 0.92);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pw-icon-btn {
+  appearance: none;
+  border: 1px solid rgba(11, 15, 25, 0.14);
+  background: rgba(255, 255, 255, 0.82);
+  color: rgba(11, 15, 25, 0.92);
+  border-radius: 14px;
+  padding: 8px 10px;
+  cursor: pointer;
+  font-weight: 850;
+  transition: transform 140ms ease, border-color 140ms ease, background 140ms ease, box-shadow 140ms ease;
+}
+.pw-icon-btn:hover {
+  transform: translateY(-1px);
+  border-color: rgba(11, 15, 25, 0.2);
+  box-shadow: var(--shadow-soft);
+}
+.pw-icon-btn.danger {
+  border-color: rgba(220, 38, 38, 0.25);
+  background: rgba(220, 38, 38, 0.08);
+  color: rgba(220, 38, 38, 0.95);
+}
+
 /* Choice grids (templates, presets) */
 .pw-template-grid {
   margin-top: 12px;

@@ -537,23 +537,7 @@
                   </div>
                 </div>
 
-                <div class="pw-scroll">
-                  <table class="pw-table" aria-label="App form fields">
-                    <thead>
-                      <tr>
-                        <th>Key</th>
-                        <th>Label</th>
-                        <th>Type</th>
-                        <th>Store</th>
-                        <th>Required</th>
-                        <th>Placeholder</th>
-                        <th>Options</th>
-                        <th></th>
-                      </tr>
-                    </thead>
-                    <tbody id="appFieldsTbody"></tbody>
-                  </table>
-                </div>
+                <div id="appFieldsList" class="pw-builder" aria-label="App form fields"></div>
                 <div class="pw-actions">
                   <button class="pw-btn" id="btnAppAddField" type="button">Add field</button>
                 </div>
@@ -589,19 +573,7 @@
 
                     <div class="pw-kicker pw-mt-10">Required outputs (optional)</div>
                     <div class="pw-muted">If set, workers see a guided upload checklist. If not set, they can still upload artifacts manually.</div>
-                    <div class="pw-scroll pw-mt-10">
-                      <table class="pw-table" aria-label="Required outputs">
-                        <thead>
-                          <tr>
-                            <th>Kind</th>
-                            <th>Label</th>
-                            <th>Count</th>
-                            <th></th>
-                          </tr>
-                        </thead>
-                        <tbody id="appOutputsTbody"></tbody>
-                      </table>
-                    </div>
+                    <div id="appOutputsList" class="pw-builder pw-mt-10" aria-label="Required outputs"></div>
                     <div class="pw-actions">
                       <button class="pw-btn" id="btnAppAddOutput" type="button">Add output</button>
                     </div>
