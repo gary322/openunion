@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import http from 'http';
-import { fillRequiredAppForm, openDetails } from './helpers';
+import { fillBuyerDemoLogin, fillRequiredAppForm, openDetails } from './helpers';
 
 test('org can register an app and use the dynamic app page to create+publish', async ({ page }) => {
   test.setTimeout(90_000);
@@ -28,7 +28,7 @@ test('org can register an app and use the dynamic app page to create+publish', a
   try {
     // Buyer portal: login and mint a buyer API token.
     await page.goto('/buyer/index.html');
-    await openDetails(page, '#foldAccess');
+    await fillBuyerDemoLogin(page);
     await page.click('#btnLogin');
     await expect(page.locator('#loginStatus')).toContainText('ok');
 
@@ -103,6 +103,7 @@ test('org can register an app and use the dynamic app page to create+publish', a
 
     // Create + publish with a unique title.
     const title = `Dynamic app bounty ${Date.now()}`;
+    await openDetails(page, '#customPayout');
     await page.fill('#payoutCents', '1200');
     await page.fill('#requiredProofs', '1');
     await page.fill('#title', title);

@@ -6,7 +6,7 @@ import { fileURLToPath } from 'url';
 import { readFile } from 'fs/promises';
 import { Contract, ContractFactory, HDNodeWallet, JsonRpcProvider, Wallet, getAddress } from 'ethers';
 import pg from 'pg';
-import { openDetails } from './helpers.js';
+import { fillBuyerDemoLogin, openDetails } from './helpers.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -150,7 +150,7 @@ test('buyer → bounty → worker → upload → verify (gateway) → payout (lo
 
     // --- Buyer portal: login → create key → add+verify origin → create+publish bounty.
     await page.goto('/buyer/index.html');
-    await openDetails(page, '#foldAccess');
+    await fillBuyerDemoLogin(page);
     await page.click('#btnLogin');
     await expect(page.locator('#loginStatus')).toContainText('ok');
 

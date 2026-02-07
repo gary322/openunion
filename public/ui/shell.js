@@ -75,6 +75,53 @@ function mountTopbarTools() {
   inner.insertBefore(tools, nav.nextSibling);
 }
 
+function mountSidebarDrawer() {
+  const sidebar = document.querySelector('.pw-sidebar.pw-sidebar-collapsible');
+  if (!sidebar) return;
+
+  // The catalog uses the same collapsible sidebar CSS for filters and has its own toggle UI.
+  const portal = currentPortal();
+  if (portal === 'apps' && document.getElementById('btnFilters')) return;
+
+  const tools = document.querySelector('.pw-topbar-tools');
+  if (!tools) return;
+
+  if (!document.getElementById('pwSidebarBackdrop')) {
+    const backdrop = document.createElement('div');
+    backdrop.className = 'pw-backdrop';
+    backdrop.id = 'pwSidebarBackdrop';
+    backdrop.addEventListener('click', () => document.body.classList.remove('pw-show-filters'));
+    document.body.appendChild(backdrop);
+  }
+
+  function setOpen(on) {
+    document.body.classList.toggle('pw-show-filters', Boolean(on));
+    const btn = document.getElementById('pwSidebarToggle');
+    if (btn) btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+  }
+
+  if (!document.getElementById('pwSidebarToggle')) {
+    const btn = el('button', { type: 'button', class: 'pw-btn pw-mobile-only', id: 'pwSidebarToggle', 'aria-pressed': 'false' }, [
+      'Menu',
+    ]);
+    btn.addEventListener('click', () => setOpen(!document.body.classList.contains('pw-show-filters')));
+    tools.insertBefore(btn, tools.firstChild);
+  }
+
+  if (!sidebar.querySelector('.pw-sidebar-close')) {
+    const closeRow = el('div', { class: 'pw-row pw-sidebar-close pw-mobile-only' }, [
+      el('div', { class: 'pw-kicker', text: 'Menu' }),
+      el('button', { type: 'button', class: 'pw-btn', text: 'Close' }),
+    ]);
+    closeRow.querySelector('button')?.addEventListener('click', () => setOpen(false));
+    sidebar.insertBefore(closeRow, sidebar.firstChild);
+  }
+
+  document.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Escape') setOpen(false);
+  });
+}
+
 initDevMode();
 
 // First-party UIs use cookie sessions for interactive auth. Because cookies can outlive localStorage,
@@ -103,3 +150,4 @@ async function hydrateSessionCsrf() {
 
 hydrateSessionCsrf();
 mountTopbarTools();
+mountSidebarDrawer();

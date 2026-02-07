@@ -417,6 +417,19 @@ export async function initAppPage(cfg) {
     setFoldOpen(foldConnect, false);
     setStatus('createStatus', 'Loading verified origins…');
     await refreshOrigins();
+    // Reduce effort: after connecting, immediately guide the user to the next required inputs.
+    setFoldOpen(foldDescribe, true, { force: true });
+    try {
+      foldDescribe?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
+    } catch {
+      // ignore
+    }
+    try {
+      const missing = validateRequiredFields(buildDescriptorFromForm());
+      focusFirstMissing(missing);
+    } catch {
+      // ignore
+    }
     setStatus('createStatus', '');
     await refreshBounties();
     enableAuto(true);
@@ -431,6 +444,19 @@ export async function initAppPage(cfg) {
     setFoldOpen(foldConnect, false);
     setStatus('createStatus', 'Loading verified origins…');
     await refreshOrigins();
+    // Reduce effort: after connecting, take focus to the first required field.
+    setFoldOpen(foldDescribe, true, { force: true });
+    try {
+      foldDescribe?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
+    } catch {
+      // ignore
+    }
+    try {
+      const missing = validateRequiredFields(buildDescriptorFromForm());
+      focusFirstMissing(missing);
+    } catch {
+      // ignore
+    }
     setStatus('createStatus', '');
     await refreshBounties();
     enableAuto(true);

@@ -68,6 +68,7 @@ test('apps pages: exercise create draft, create+publish, refresh, load jobs on e
       await expect(page.locator('#originSingleText')).toContainText('https://example.com');
     }
 
+    await openDetails(page, '#customPayout');
     await page.fill('#payoutCents', '1200');
     await page.fill('#requiredProofs', '1');
 

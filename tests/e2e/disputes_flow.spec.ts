@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import http from 'http';
-import { openDetails } from './helpers.js';
+import { fillBuyerDemoLogin, openDetails } from './helpers.js';
 
 const VERIFIER_TOKEN = 'pw_vf_internal';
 const ADMIN_TOKEN = 'pw_adm_internal';
@@ -31,7 +31,7 @@ test('buyer can open a dispute and admin can resolve (refund) via UI', async ({ 
   try {
     // Buyer portal: login and mint a buyer API token.
     await page.goto('/buyer/index.html');
-    await openDetails(page, '#foldAccess');
+    await fillBuyerDemoLogin(page);
     await page.click('#btnLogin');
     await expect(page.locator('#loginStatus')).toContainText('ok');
 

@@ -1074,6 +1074,16 @@ body.pw-dev-on .pw-not-dev {
   display: none;
 }
 
+/* Mobile-only utility (used for the sidebar drawer toggle and close button). */
+.pw-mobile-only {
+  display: none;
+}
+@media (max-width: 980px) {
+  .pw-mobile-only {
+    display: inline-flex;
+  }
+}
+
 /* Console layout: sidebar + main content. */
 .pw-console {
   display: grid;
@@ -1100,6 +1110,15 @@ body.pw-dev-on .pw-not-dev {
   border: 1px solid var(--border);
   background: rgba(255, 255, 255, 0.72);
   box-shadow: var(--shadow-soft);
+}
+.pw-sidebar .pw-sidebar-close {
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.pw-sidebar .pw-sidebar-close .pw-kicker {
+  margin: 0;
 }
 @media (max-width: 980px) {
   .pw-sidebar {
