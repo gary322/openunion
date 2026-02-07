@@ -103,6 +103,9 @@ test('create + publish via a vertical app page (github)', async ({ page }) => {
     const publishResp = await publishRespPromise;
     expect(publishResp.ok()).toBeTruthy();
 
+    // Publish should land users in Monitor.
+    await expect(page.locator('#monitor')).toBeVisible();
+
     // After publish, the app page refreshes the bounties list; assert our title appears.
     await expect
       .poll(async () => String(await page.locator('#bountiesTbody').textContent()), { timeout: 10_000 })
