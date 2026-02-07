@@ -13,7 +13,7 @@ function setStatus(id, text, kind = '') {
   const elStatus = qs(`#${id}`);
   if (!elStatus) return;
   elStatus.textContent = text || '';
-  elStatus.classList.remove('good', 'bad');
+  elStatus.classList.remove('good', 'bad', 'warn', 'faint');
   if (kind) elStatus.classList.add(kind);
 }
 
@@ -499,7 +499,18 @@ export async function initAppPage(cfg) {
 
   function focusFirstMissing(missing) {
     const first = missing?.[0]?.input;
-    if (first && typeof first.focus === 'function') first.focus();
+    if (!first) return;
+    try {
+      first.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+    } catch {
+      // ignore
+    }
+    try {
+      // preventScroll is best-effort; older browsers will ignore the option.
+      first.focus?.({ preventScroll: true });
+    } catch {
+      first.focus?.();
+    }
   }
 
   function effectiveBuyerAuth() {
@@ -980,22 +991,27 @@ export async function initAppPage(cfg) {
       setFoldOpen(foldPublish, describeDone);
     }
 
+    // Preflight: keep a single, high-signal "next action" instead of a wall of errors.
     let msg = '';
     let kind = '';
+    const firstMissingLabel = String(missing?.[0]?.label || missing?.[0]?.key || '').trim();
     if (auth.mode === 'none') {
-      msg = 'Next: sign in (recommended) or paste an API token.';
+      msg = 'Next: sign in (recommended).';
+      kind = 'warn';
     } else if (!origin && !hasSupportedOrigins && verifiedOriginsCount <= 0) {
       msg = 'Next: verify an origin in the Platform console.';
+      kind = 'warn';
     } else if (!origin && !hasSupportedOrigins && verifiedOriginsCount > 0) {
-      msg = 'Next: pick an allowed origin (verified).';
+      msg = 'Next: pick a verified origin.';
+      kind = 'warn';
     } else if (missing.length) {
-      msg = `Missing required: ${missing.map((m) => m.label || m.key).filter(Boolean).join(', ')}`;
+      msg = firstMissingLabel ? `Next: fill "${firstMissingLabel}".` : 'Next: fill required fields.';
       kind = 'bad';
     } else if (descErrs.length) {
-      msg = `Descriptor invalid: ${descErrs.join('; ')}`;
+      msg = `Descriptor invalid: ${String(descErrs[0] || '').trim()}`;
       kind = 'bad';
     } else {
-      msg = 'Ready. Create and publish.';
+      msg = 'Ready. Publish work.';
       kind = 'good';
     }
     setStatus('preflightStatus', msg, kind);
@@ -1018,7 +1034,7 @@ export async function initAppPage(cfg) {
     // Action bar: keep the primary CTA visible without scrolling.
     if (actionbarTitle) {
       if (auth.mode === 'none') actionbarTitle.textContent = 'Next: connect';
-      else actionbarTitle.textContent = kind === 'good' ? `Ready: ${formatCents(Number(payoutInput?.value ?? 0))} payout` : 'Create and publish';
+      else actionbarTitle.textContent = kind === 'good' ? `Ready: ${formatCents(Number(payoutInput?.value ?? 0))} payout` : 'Publish work';
     }
     if (actionbarSub) {
       if (auth.mode === 'none') {
@@ -1119,7 +1135,8 @@ export async function initAppPage(cfg) {
     const descriptor = buildDescriptorFromForm();
     const missing = validateRequiredFields(descriptor);
     if (missing.length) {
-      setStatus('createStatus', `Missing required fields: ${missing.map((m) => m.label || m.key).filter(Boolean).join(', ')}`, 'bad');
+      const first = String(missing?.[0]?.label || missing?.[0]?.key || '').trim();
+      setStatus('createStatus', first ? `Missing required: ${first}` : 'Missing required fields', 'bad');
       focusFirstMissing(missing);
       return;
     }
@@ -1158,6 +1175,14 @@ export async function initAppPage(cfg) {
     }
 
     await refreshBounties();
+    if (publish) {
+      // After publish, take the user straight to monitoring so they don't wonder what happened.
+      try {
+        document.getElementById('monitor')?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
+      } catch {
+        // ignore
+      }
+    }
   }
 
   btnCreateDraft?.addEventListener('click', () => createBounty(false));
