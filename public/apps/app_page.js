@@ -1,4 +1,4 @@
-import { authHeader, copyToClipboard, el, fetchJson, formatAgo, formatCents, startPolling, storageGet, storageSet, toast, LS, qs } from '/ui/pw.js';
+import { authHeader, copyToClipboard, el, fetchJson, formatAgo, formatBps, formatCents, startPolling, storageGet, storageSet, toast, LS, qs } from '/ui/pw.js';
 
 async function loadDescriptorSchema() {
   const res = await fetch('/contracts/task_descriptor.schema.json', { credentials: 'omit' });
@@ -779,7 +779,7 @@ export async function initAppPage(cfg) {
     if (!items.length) {
       deliverablesList.replaceChildren(el('span', { class: 'pw-chip faint' }, ['No required artifacts']));
       if (deliverablesSub) deliverablesSub.textContent = 'Workers can submit any artifacts. Consider requiring at least one screenshot or log.';
-      if (deliverablesHelp) deliverablesHelp.textContent = 'Set required artifacts in task_descriptor.output_spec.required_artifacts.';
+      if (deliverablesHelp) deliverablesHelp.textContent = 'Tip: require a minimal proof (like a screenshot) so verifiers can be deterministic.';
       return;
     }
 
@@ -933,7 +933,7 @@ export async function initAppPage(cfg) {
 
     if (payoutPill) payoutPill.textContent = `${formatCents(payoutCents)} • ${requiredProofs} proof${requiredProofs === 1 ? '' : 's'}`;
     if (payoutBreakdown) {
-      const pf = Number.isFinite(Number(platformFeeBps)) && Number(platformFeeBps) > 0 ? `platform ${platformFeeBps}bps` : 'platform 0bps';
+      const pf = Number.isFinite(Number(platformFeeBps)) && Number(platformFeeBps) > 0 ? `platform ${formatBps(platformFeeBps)}` : 'platform 0%';
       payoutBreakdown.textContent = `Net to worker ${formatCents(workerNetCents)} (${pf} then Proofwork 1%)`;
     }
     updatePayoutPresetsUi();
@@ -945,7 +945,7 @@ export async function initAppPage(cfg) {
     if (actionbarSub) {
       if (kind === 'good') {
         const originHost = origin ? String(origin).replace(/^https?:\/\//, '') : hasSupportedOrigins ? 'supported origins' : '—';
-        actionbarSub.textContent = `Origin: ${originHost} • Net to worker ${formatCents(workerNetCents)} (platform ${platformFeeBps}bps then Proofwork 1%)`;
+        actionbarSub.textContent = `Origin: ${originHost} • Net to worker ${formatCents(workerNetCents)} (platform ${formatBps(platformFeeBps)} then Proofwork 1%)`;
       } else {
         actionbarSub.textContent = msg;
       }
