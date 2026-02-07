@@ -223,8 +223,13 @@ async function clickFirstVisible(locator: Locator, timeoutMs: number): Promise<b
       const enabled = await el.isEnabled().catch(() => false);
       if (!enabled) continue;
       await el.scrollIntoViewIfNeeded().catch(() => undefined);
-      await el.click({ timeout: 10_000 }).catch(() => undefined);
-      return true;
+      try {
+        await el.click({ timeout: 10_000 });
+        return true;
+      } catch {
+        // If the click fails (overlay, detached, etc.), try other candidates.
+        continue;
+      }
     }
     await new Promise((r) => setTimeout(r, 250));
   }
@@ -391,12 +396,39 @@ async function completeStripeCheckout(input: { checkoutUrl: string; email: strin
       60_000
     );
 
+    // Cardholder name is required in some Checkout configurations.
+    await fillHostedInput(
+      page,
+      [
+        'input[name="cardholderName"]',
+        'input[autocomplete="cc-name"]',
+        'input[data-elements-stable-field-name="cardholderName"]',
+        'input[aria-label*="name on card" i]',
+        'input[placeholder*="Full name" i]',
+        'input[placeholder*="name on card" i]',
+      ],
+      'Smoke Test',
+      5_000
+    ).catch(() => undefined);
+
     // Postal code is optional depending on settings; try if present.
     await fillHostedInput(
       page,
-      ['input[name="postal"]', 'input[autocomplete="postal-code"]', 'input[data-elements-stable-field-name="postalCode"]'],
+      [
+        'input[name="postal"]',
+        'input[name="postalCode"]',
+        'input[name="zip"]',
+        'input[autocomplete="postal-code"]',
+        'input[data-elements-stable-field-name="postalCode"]',
+        'input[placeholder="ZIP"]',
+        'input[placeholder*="ZIP" i]',
+        'input[aria-label="ZIP"]',
+        'input[aria-label*="ZIP" i]',
+        'input[id*="postal" i]',
+        'input[id*="zip" i]',
+      ],
       '94103',
-      2_000
+      5_000
     ).catch(() => undefined);
 
     // Click pay/submit (avoid payment method buttons like "Pay with card").
@@ -554,6 +586,10 @@ async function main() {
   const checkoutUrlFile = `/tmp/proofwork_stripe_checkout_url_${tsSuffix()}.txt`;
   await writeFile(checkoutUrlFile, `${checkoutUrl}\n`, { mode: 0o600 });
   console.log(`[smoke_stripe_real] checkout_url_file=${checkoutUrlFile}`);
+  console.log('[smoke_stripe_real] tip: to avoid copy/paste issues (missing the `#...` fragment), open the URL from the file:');
+  if (process.platform === 'darwin') console.log(`[smoke_stripe_real] open_cmd=open \"$(cat ${checkoutUrlFile})\"`);
+  else if (process.platform === 'win32') console.log(`[smoke_stripe_real] open_cmd=type ${checkoutUrlFile}`);
+  else console.log(`[smoke_stripe_real] open_cmd=xdg-open \"$(cat ${checkoutUrlFile})\"`);
 
   const openRaw = String(process.env.SMOKE_OPEN_CHECKOUT_URL ?? '').trim();
   const openDefault = !parseBool(String(process.env.CI ?? '').trim());
