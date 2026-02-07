@@ -242,7 +242,10 @@
               <div class="pw-field">
                 <label for="pfPct">Platform cut</label>
                 <input class="pw-input" id="pfPct" type="range" min="0" max="20" value="5" />
-                <div class="pw-help">Current: <span class="pw-mono" id="pfPctLabel">5%</span> (<span class="pw-mono" id="pfBpsLabel">500 bps</span>)</div>
+                <div class="pw-help">
+                  Current: <span class="pw-mono" id="pfPctLabel">5%</span>
+                  <span class="pw-dev">(<span class="pw-mono" id="pfBpsLabel">500 bps</span>)</span>
+                </div>
               </div>
               <div class="pw-field">
                 <label for="pfWallet">Platform wallet (Base)</label>
@@ -297,7 +300,7 @@
                   <div class="pw-field">
                     <label for="appTaskType">Task type</label>
                     <input class="pw-input" id="appTaskType" placeholder="my_task_type" />
-                    <div class="pw-help">Maps to <span class="pw-mono">task_descriptor.type</span>.</div>
+                    <div class="pw-help">Routes work to this app<span class="pw-dev"> (Dev: <span class="pw-mono">task_descriptor.type</span>)</span>.</div>
                   </div>
                 </div>
               </div>

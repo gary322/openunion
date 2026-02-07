@@ -1,4 +1,4 @@
-import { el, fetchJson, getDevMode, initDevMode, setDevMode, storageGet, toast, authHeader, LS } from '/ui/pw.js';
+import { el, fetchJson, getDevMode, initDevMode, setDevMode, storageGet, storageSet, toast, authHeader, LS } from '/ui/pw.js';
 
 function currentPortal() {
   const v = String(document.body?.dataset?.portal ?? '').trim();
@@ -76,5 +76,30 @@ function mountTopbarTools() {
 }
 
 initDevMode();
-mountTopbarTools();
 
+// First-party UIs use cookie sessions for interactive auth. Because cookies can outlive localStorage,
+// hydrate the CSRF token (stored in localStorage) from the session if needed so users don't get
+// stuck in a "not connected" state even though they are signed in.
+async function hydrateSessionCsrf() {
+  const portal = currentPortal();
+  if (portal !== 'apps' && portal !== 'buyer') return;
+
+  const buyerToken = String(storageGet(LS.buyerToken, '') || '').trim();
+  if (buyerToken) return; // Token mode doesn't use CSRF.
+
+  try {
+    const res = await fetchJson('/api/auth/session', { method: 'GET', credentials: 'include' });
+    if (!res.ok) {
+      // Avoid stale "connected" UI when the cookie session is gone.
+      storageSet(LS.csrfToken, '');
+      return;
+    }
+    const csrf = String(res.json?.csrfToken ?? '').trim();
+    if (csrf) storageSet(LS.csrfToken, csrf);
+  } catch {
+    // Best-effort only: the page can still function in token mode.
+  }
+}
+
+hydrateSessionCsrf();
+mountTopbarTools();

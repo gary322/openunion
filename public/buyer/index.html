@@ -27,8 +27,8 @@
       <section class="pw-hero" id="home">
         <h1>Platform Console</h1>
         <p>
-          Attach your product, publish bounties with <span class="pw-mono">task_descriptor</span>, and pay workers - while your platform earns a cut on
-          every successful job. Proofwork always charges a fixed <strong>1%</strong> fee from the worker portion.
+          Attach your product, publish work, and pay workers, while your platform earns a cut on every successful job. Proofwork always charges a fixed
+          <strong>1%</strong> fee from the worker portion.
         </p>
         <div class="pw-hero-actions">
           <div class="pw-badge">
@@ -103,7 +103,7 @@
                 <div class="pw-step-dot">3</div>
                 <div>
                   <div class="pw-step-title">Set your platform fee</div>
-                  <div class="pw-step-desc">Pick your cut (bps) + wallet. Proofwork always takes 1% of the worker share.</div>
+                  <div class="pw-step-desc">Pick your cut + wallet. Proofwork always takes 1% of the worker share.</div>
                 </div>
                 <a class="pw-btn" href="#settings">Set fee</a>
               </div>
@@ -471,7 +471,8 @@
                 <span class="pw-kicker">Instant publish (no approval)</span>
               </div>
               <p class="pw-muted">
-                Apps map to <span class="pw-mono">task_descriptor.type</span>. Once created, your app shows up in <a href="/apps/">the marketplace</a> immediately.
+                Apps map to a task type<span class="pw-dev"> (Dev: <span class="pw-mono">task_descriptor.type</span>)</span>. Once created, your app shows up in
+                <a href="/apps/">the marketplace</a> immediately.
               </p>
 
               <div class="pw-row">
@@ -510,7 +511,7 @@
                     <div class="pw-field">
                       <label for="appTaskType">Task type</label>
                       <input class="pw-input" id="appTaskType" placeholder="my_task_type" />
-                      <div class="pw-muted">Must match <span class="pw-mono">task_descriptor.type</span>. Auto-generated from name.</div>
+                      <div class="pw-muted">Routes work to this app. Auto-generated from name<span class="pw-dev"> (Dev: <span class="pw-mono">task_descriptor.type</span>)</span>.</div>
                     </div>
                   </div>
                 </div>
