@@ -1710,6 +1710,7 @@ export function buildJobSpec(job: Job, bounty: Bounty): JobSpecResponse {
   return {
     jobId: job.id,
     bountyId: bounty.id,
+    requiredProofs: bounty.requiredProofs ?? 1,
     title: bounty.title,
     description: bounty.description,
     constraints,

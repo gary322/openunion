@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { Wallet } from 'ethers';
-import { fillBuyerDemoLogin, openDetails, startHttpFileOriginServer } from './helpers.js';
+import { fillBuyerDemoLogin, openBuyerApiKeysTab, openBuyerCreateOrgTab, openDetails, startHttpFileOriginServer } from './helpers.js';
 
 test('buyer portal: exercise remaining buttons (fee get, quotas, origins list/revoke, bounties list, org apps list, register)', async ({ page, request }) => {
   test.setTimeout(120_000);
@@ -14,6 +14,7 @@ test('buyer portal: exercise remaining buttons (fee get, quotas, origins list/re
     await expect(page.locator('#loginStatus')).toContainText('ok');
 
     // Mint a buyer token via session (CSRF-protected).
+    await openBuyerApiKeysTab(page);
     await page.click('#btnCreateKey');
     await expect(page.locator('#keyStatus')).toContainText('token created and saved');
     const buyerToken = await page.evaluate(() => localStorage.getItem('pw_buyer_token') || '');
@@ -147,7 +148,7 @@ test('buyer portal: exercise remaining buttons (fee get, quotas, origins list/re
     await expect(page.locator('#appsOut')).toContainText(expectedSlug);
 
     // Finally, ensure the "Register" flow works (unique email).
-    await openDetails(page, '#foldAccess');
+    await openBuyerCreateOrgTab(page);
     const email = `e2e+${Date.now()}@example.com`;
     await page.fill('#regOrgName', `E2E Org ${Date.now()}`);
     await page.fill('#regApiKeyName', 'default');

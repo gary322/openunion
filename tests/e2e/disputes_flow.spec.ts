@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import http from 'http';
-import { fillBuyerDemoLogin, openDetails } from './helpers.js';
+import { fillBuyerDemoLogin, gotoWorkerView, openBuyerApiKeysTab, openDetails } from './helpers.js';
 
 const VERIFIER_TOKEN = 'pw_vf_internal';
 const ADMIN_TOKEN = 'pw_adm_internal';
@@ -35,6 +35,7 @@ test('buyer can open a dispute and admin can resolve (refund) via UI', async ({ 
     await page.click('#btnLogin');
     await expect(page.locator('#loginStatus')).toContainText('ok');
 
+    await openBuyerApiKeysTab(page);
     const createKeyRespPromise = page.waitForResponse(
       (r) => r.url().endsWith('/api/session/api-keys') && r.request().method() === 'POST'
     );
@@ -93,15 +94,21 @@ test('buyer can open a dispute and admin can resolve (refund) via UI', async ({ 
 
     // Worker portal: register → next → claim → upload → submit.
     await page.goto('/worker/index.html');
+    await gotoWorkerView(page, 'auth');
+    await openDetails(page, '#auth');
     await page.click('#btnRegister');
     await expect(page.locator('#authStatus')).toContainText('Registered workerId');
     const workerToken = await page.locator('#token').inputValue();
     expect(workerToken).toMatch(/^pw_wk_/);
 
+    await gotoWorkerView(page, 'find');
+    await openDetails(page, '#find');
     await page.click('#btnClaimNext');
     await expect(page.locator('#jobStatus')).toContainText('claimed leaseNonce=');
 
     // Upload a minimal PNG (scanner is basic in E2E). Use the guided required-outputs flow.
+    await gotoWorkerView(page, 'outputs');
+    await openDetails(page, '#outputs');
     await expect(page.locator('#requiredOutputs')).toContainText('repro');
     const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00]);
     const fcPromise = page.waitForEvent('filechooser');
@@ -110,6 +117,8 @@ test('buyer can open a dispute and admin can resolve (refund) via UI', async ({ 
     await fc.setFiles({ name: 'shot.png', mimeType: 'image/png', buffer: png });
     await expect(page.locator('#requiredOutputsStatus')).toContainText('Ready: 1/1');
 
+    await gotoWorkerView(page, 'submit');
+    await openDetails(page, '#submit');
     await page.fill('#summary', 'Uploaded required artifact(s) and submitted.');
 
     const submitRespPromise = page.waitForResponse(
@@ -165,9 +174,8 @@ test('buyer can open a dispute and admin can resolve (refund) via UI', async ({ 
     expect(payoutId).toBeTruthy();
 
     // Buyer UI: open dispute.
-    await page.goto('/buyer/index.html');
-    await openDetails(page, '#foldAccess');
-    await page.fill('#buyerToken', buyerToken);
+    await page.addInitScript((t) => localStorage.setItem('pw_buyer_token', String(t || '')), buyerToken);
+    await page.goto('/buyer/index.html#disputes');
     await openDetails(page, '#foldDisputes');
     await page.fill('#disputePayoutId', payoutId);
     await page.fill('#disputeReason', 'Incorrect result');

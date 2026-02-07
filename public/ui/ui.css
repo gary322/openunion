@@ -147,6 +147,13 @@ body::before {
   }
 }
 
+/* Views: hide/show large sections without heavy SPA frameworks. */
+@media (prefers-reduced-motion: no-preference) {
+  .pw-view {
+    animation: pw-rise 220ms ease both;
+  }
+}
+
 /* Responsive helpers. */
 .pw-mobile-only {
   display: none;

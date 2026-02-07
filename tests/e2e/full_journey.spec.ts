@@ -6,7 +6,7 @@ import { fileURLToPath } from 'url';
 import { readFile } from 'fs/promises';
 import { Contract, ContractFactory, HDNodeWallet, JsonRpcProvider, Wallet, getAddress } from 'ethers';
 import pg from 'pg';
-import { fillBuyerDemoLogin, openDetails } from './helpers.js';
+import { fillBuyerDemoLogin, gotoWorkerView, openBuyerApiKeysTab, openDetails } from './helpers.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -161,6 +161,7 @@ test('buyer → bounty → worker → upload → verify (gateway) → payout (lo
     await page.click('#btnSetPlatformFee');
     await expect(page.locator('#pfStatus')).toContainText('saved');
 
+    await openBuyerApiKeysTab(page);
     await page.click('#btnCreateKey');
     await expect(page.locator('#keyStatus')).toContainText('token created');
     await expect(page.locator('#buyerToken')).toHaveValue(/^pw_bu_/);
@@ -207,6 +208,8 @@ test('buyer → bounty → worker → upload → verify (gateway) → payout (lo
     await page.fill('#bOrigins', targetOrigin);
     await page.fill('#bPayout', '2000');
     await page.fill('#bFps', 'desktop_us');
+    // E2E expects immediate payout; bypass the default 1-day disputes hold.
+    await page.fill('#bDisputeWindowSec', '0');
     await page.click('#btnCreateBounty');
     await expect(page.locator('#bountyStatus')).toContainText('created bounty');
 
@@ -216,6 +219,8 @@ test('buyer → bounty → worker → upload → verify (gateway) → payout (lo
 
     // --- Worker portal: register → next → claim → upload → submit.
     await page.goto('/worker/index.html');
+    await gotoWorkerView(page, 'auth');
+    await openDetails(page, '#auth');
     await page.click('#btnRegister');
     await expect(page.locator('#authStatus')).toContainText('Registered workerId');
 
@@ -231,6 +236,8 @@ test('buyer → bounty → worker → upload → verify (gateway) → payout (lo
     const workerWallet = Wallet.createRandom();
     const normalized = getAddress(workerWallet.address);
 
+    await gotoWorkerView(page, 'payouts');
+    await openDetails(page, '#payouts');
     await page.selectOption('#payoutChain', 'base');
     await page.fill('#payoutAddress', normalized);
     await page.click('#btnPayoutMessage');
@@ -242,18 +249,24 @@ test('buyer → bounty → worker → upload → verify (gateway) → payout (lo
     await page.click('#btnSetPayoutAddress');
     await expect(page.locator('#payoutAddrStatus')).toContainText('verified');
 
+    await gotoWorkerView(page, 'find');
+    await openDetails(page, '#find');
     await page.click('#btnClaimNext');
     await expect(page.locator('#jobStatus')).toContainText('claimed leaseNonce=');
 
-    // Upload a minimal PNG (scanner checks signature only).
+    // Upload a minimal PNG via the guided required-outputs flow so Submit unlocks deterministically.
+    await gotoWorkerView(page, 'outputs');
+    await openDetails(page, '#outputs');
+    await expect(page.locator('#requiredOutputs')).toContainText('repro');
     const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00]);
-    await page.setInputFiles('#file', { name: 'shot.png', mimeType: 'image/png', buffer: png });
-    await page.selectOption('#kind', 'screenshot');
-    await page.fill('#label', 'repro');
+    const fcPromise = page.waitForEvent('filechooser');
+    await page.click('#requiredOutputs button[data-slot="0"]');
+    const fc = await fcPromise;
+    await fc.setFiles({ name: 'shot.png', mimeType: 'image/png', buffer: png });
+    await expect(page.locator('#requiredOutputsStatus')).toContainText('Ready: 1/1');
 
-    await page.click('#btnUpload');
-    await expect(page.locator('#uploadStatus')).toContainText('uploaded artifactId=');
-
+    await gotoWorkerView(page, 'submit');
+    await openDetails(page, '#submit');
     await page.fill('#summary', 'Uploaded required artifacts and submitted for verification.');
 
     const submitRespPromise = page.waitForResponse(
@@ -326,6 +339,8 @@ test('buyer → bounty → worker → upload → verify (gateway) → payout (lo
     expect(paid.proofwork_fee_cents).toBe(18);
 
     // Worker UI: payout history should show the paid payout (no DB access required).
+    await gotoWorkerView(page, 'payouts');
+    await openDetails(page, '#payouts');
     await page.click('#btnListPayouts');
     await expect(page.locator('#payoutOut')).toContainText(payoutId);
     await expect(page.locator('#payoutOut')).toContainText(/"status"\s*:\s*"paid"/);

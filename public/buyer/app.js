@@ -1,4 +1,4 @@
-import { copyToClipboard, formatAgo, toast } from '/ui/pw.js';
+import { copyToClipboard, formatAgo, toast, initHashViews } from '/ui/pw.js';
 
 const apiBase = window.location.origin;
 
@@ -84,6 +84,22 @@ function setText(id, text) {
   const el = $(id);
   if (!el) return;
   el.textContent = String(text ?? '');
+}
+
+function setTab(rootId, tabId) {
+  const root = $(rootId);
+  if (!root) return;
+  const tabs = Array.from(root.querySelectorAll('[role="tab"]'));
+  for (const tab of tabs) {
+    const controls = tab.getAttribute('aria-controls');
+    const on = String(tab.id) === String(tabId);
+    tab.setAttribute('aria-selected', on ? 'true' : 'false');
+    tab.classList.toggle('active', on);
+    if (controls) {
+      const panel = $(controls);
+      if (panel) panel.hidden = !on;
+    }
+  }
 }
 
 let onboardingReqNo = 0;
@@ -283,6 +299,26 @@ async function refreshOnboardingStatus() {
   setFoldOpen('foldMoney', nextFold === 'foldMoney');
   setFoldOpen('foldDisputes', openDisputes > 0);
   setFoldOpen('foldSettings', nextFold === 'foldSettings');
+}
+
+function initAccessTabs() {
+  const root = $('accessTabs');
+  if (!root) return;
+
+  const LS_TAB = 'pw_buyer_access_tab';
+  const saved = String(localStorage.getItem(LS_TAB) || '').trim();
+  const fallback = 'tabAccessLogin';
+  const initial = saved && $(saved) ? saved : fallback;
+  setTab('accessTabs', initial);
+
+  root.addEventListener('click', (ev) => {
+    const btn = ev.target?.closest?.('[role="tab"]');
+    if (!btn) return;
+    const id = String(btn.id || '').trim();
+    if (!id) return;
+    localStorage.setItem(LS_TAB, id);
+    setTab('accessTabs', id);
+  });
 }
 
 function originRecordName(originUrl) {
@@ -1392,16 +1428,30 @@ async function onCreateBounty() {
     .map((s) => s.trim())
     .filter(Boolean);
   const payoutCents = Number($('bPayout').value);
+  const requiredProofs = Number($('bProofs')?.value ?? 1);
+  if (!Number.isFinite(requiredProofs) || requiredProofs < 1 || requiredProofs > 10) {
+    return setStatus('bountyStatus', 'requiredProofs must be 1..10', 'bad');
+  }
   const fingerprintClassesRequired = $('bFps')
     .value.split(',')
     .map((s) => s.trim())
     .filter(Boolean);
 
+  let disputeWindowSec = undefined;
+  const disputeRaw = String($('bDisputeWindowSec')?.value ?? '').trim();
+  if (disputeRaw) {
+    const v = Number(disputeRaw);
+    if (!Number.isFinite(v) || v < 0 || v > 60 * 60 * 24 * 30) {
+      return setStatus('bountyStatus', 'disputeWindowSec must be 0..2592000', 'bad');
+    }
+    disputeWindowSec = Math.floor(v);
+  }
+
   const { res, json } = await api('/api/bounties', {
     method: 'POST',
     token: token || undefined,
     csrf,
-    body: { title, description, allowedOrigins, payoutCents, requiredProofs: 1, fingerprintClassesRequired },
+    body: { title, description, allowedOrigins, payoutCents, requiredProofs, disputeWindowSec, fingerprintClassesRequired },
   });
   $('bountyOut').textContent = pretty(json);
   if (!res.ok) return setStatus('bountyStatus', `create bounty failed (${res.status})`, 'bad');
@@ -1659,6 +1709,8 @@ for (const summary of Array.from(document.querySelectorAll('details.pw-fold > su
   });
 }
 
+initAccessTabs();
+initHashViews({ defaultViewId: 'onboarding' });
 refreshOnboardingStatus().catch(() => {});
 
 autoFillAppIds();
