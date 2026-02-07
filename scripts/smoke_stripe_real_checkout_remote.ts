@@ -465,11 +465,55 @@ async function pollBalanceDelta(input: {
   throw new Error('stripe_real_checkout_timeout_waiting_for_balance_update');
 }
 
+async function pollStripeTopupEvent(input: {
+  baseUrl: string;
+  authHeader: Record<string, string>;
+  stripeSessionId: string;
+  expectedAmountCents: number;
+  timeoutMs: number;
+}) {
+  const deadline = Date.now() + input.timeoutMs;
+  let lastLogAt = 0;
+  while (Date.now() < deadline) {
+    const events = await fetchJson({ baseUrl: input.baseUrl, path: '/api/billing/events', headers: input.authHeader });
+    if (events.ok) {
+      const rows: any[] = Array.isArray(events.json?.events) ? events.json.events : [];
+      const hit = rows.find(
+        (e) =>
+          String(e?.eventType ?? '') === 'stripe_topup' &&
+          String(e?.metadata?.stripeSessionId ?? '') === input.stripeSessionId
+      );
+      if (hit) {
+        const amount = Number(hit?.amountCents ?? NaN);
+        if (!Number.isFinite(amount) || amount !== input.expectedAmountCents) {
+          throw new Error(
+            `stripe_topup_amount_mismatch expected=${input.expectedAmountCents} got=${String(hit?.amountCents ?? '')}`
+          );
+        }
+        return;
+      }
+    }
+    const now = Date.now();
+    if (now - lastLogAt > 10_000) {
+      lastLogAt = now;
+      console.log('[smoke_stripe_real] waiting_for_webhook (stripe_topup event not found yet)');
+    }
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+  throw new Error('stripe_real_checkout_timeout_waiting_for_stripe_topup_event');
+}
+
 async function main() {
   const baseUrl = normalizeBaseUrl(argValue('--base-url') ?? process.env.BASE_URL ?? 'http://localhost:3000');
 
-  const email = mustEnv('SMOKE_BUYER_EMAIL', 'buyer@example.com');
-  const password = mustEnv('SMOKE_BUYER_PASSWORD', 'password');
+  // Default to a fresh org for real-Stripe smoke runs so parallel smoke traffic doesn't make
+  // "balance delta" assertions flaky. If the caller wants to reuse an existing org, they can
+  // set SMOKE_BUYER_EMAIL + SMOKE_BUYER_PASSWORD explicitly.
+  const emailEnv = String(process.env.SMOKE_BUYER_EMAIL ?? '').trim();
+  const passwordEnv = String(process.env.SMOKE_BUYER_PASSWORD ?? '').trim();
+  const email = emailEnv || `smoke+stripe-real-${tsSuffix()}@example.com`;
+  const password = emailEnv ? mustEnv('SMOKE_BUYER_PASSWORD') : passwordEnv || `pw_${tsSuffix()}_demo`;
+
   const topupCentsRaw = Number(process.env.SMOKE_TOPUP_CENTS ?? 500);
   const topupCents = Number.isFinite(topupCentsRaw) ? Math.max(100, Math.min(50_000, Math.floor(topupCentsRaw))) : 500;
 
@@ -507,6 +551,10 @@ async function main() {
   console.log(`[smoke_stripe_real] checkout_url=${checkoutUrl}`);
   console.log('[smoke_stripe_real] note: copy the FULL Stripe Checkout URL (including any `#...` fragment) or Stripe may show "page not found".');
 
+  const checkoutUrlFile = `/tmp/proofwork_stripe_checkout_url_${tsSuffix()}.txt`;
+  await writeFile(checkoutUrlFile, `${checkoutUrl}\n`, { mode: 0o600 });
+  console.log(`[smoke_stripe_real] checkout_url_file=${checkoutUrlFile}`);
+
   const openRaw = String(process.env.SMOKE_OPEN_CHECKOUT_URL ?? '').trim();
   const openDefault = !parseBool(String(process.env.CI ?? '').trim());
   const open = openRaw ? parseBool(openRaw) : openDefault;
@@ -535,8 +583,16 @@ async function main() {
 
   const waitSecRaw = Number(process.env.SMOKE_WAIT_SEC ?? 600);
   const waitSec = Number.isFinite(waitSecRaw) ? Math.max(30, Math.min(1800, Math.floor(waitSecRaw))) : 600;
-  const polled = await pollBalanceDelta({ baseUrl, authHeader, before, expectedDelta: topupCents, timeoutMs: waitSec * 1000 });
-  console.log(`[smoke_stripe_real] after=${polled.after} delta=${polled.after - before}`);
+  await pollStripeTopupEvent({
+    baseUrl,
+    authHeader,
+    stripeSessionId,
+    expectedAmountCents: topupCents,
+    timeoutMs: waitSec * 1000,
+  });
+  const acct1 = await fetchJson({ baseUrl, path: '/api/billing/account', headers: authHeader });
+  const after = Number(acct1.json?.account?.balance_cents ?? 0);
+  console.log(`[smoke_stripe_real] after=${after} delta=${after - before}`);
 
   console.log('[smoke_stripe_real] ok');
 }
