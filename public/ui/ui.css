@@ -1224,6 +1224,56 @@ body.pw-dev-on .pw-not-dev {
   }
 }
 
+/* Lightweight modal (no framework). */
+.pw-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  background: rgba(11, 15, 25, 0.34);
+  backdrop-filter: blur(3px);
+}
+.pw-modal {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 21;
+  width: min(640px, calc(100vw - 28px));
+  border-radius: var(--radius);
+  border: 1px solid rgba(11, 15, 25, 0.16);
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: var(--shadow);
+  padding: 18px 18px 16px;
+}
+.pw-modal h3 {
+  margin: 0;
+  font-family: var(--font-serif);
+  font-size: 24px;
+  line-height: 1.1;
+  letter-spacing: 0.1px;
+}
+.pw-modal .pw-modal-sub {
+  margin: 8px 0 0;
+  color: var(--muted);
+  line-height: 1.35;
+}
+.pw-modal .pw-modal-actions {
+  margin-top: 14px;
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.pw-modal .pw-modal-footer {
+  margin-top: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.pw-modal .pw-modal-footer .pw-muted {
+  font-size: 12px;
+}
+
 .pw-sidenav {
   display: grid;
   gap: 6px;
