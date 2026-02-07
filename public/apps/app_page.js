@@ -784,11 +784,39 @@ export async function initAppPage(cfg) {
       ]);
       card.appendChild(title);
 
-      const grid = document.createElement('div');
-      grid.className = 'pw-grid';
       const fields = Array.isArray(sec.fields) ? sec.fields : [];
-      for (const f of fields) grid.appendChild(renderField(f));
-      card.appendChild(grid);
+
+      // Low-effort default: show only required fields up front. Hide optional fields in a
+      // progressive-disclosure block so non-technical users don't face a "form wall".
+      const requiredFields = fields.filter((f) => Boolean(f?.required));
+      const optionalFields = fields.filter((f) => !Boolean(f?.required));
+
+      if (requiredFields.length) {
+        const grid = document.createElement('div');
+        grid.className = 'pw-grid';
+        for (const f of requiredFields) grid.appendChild(renderField(f));
+        card.appendChild(grid);
+      }
+
+      if (optionalFields.length) {
+        const details = document.createElement('details');
+        details.className = 'pw-details';
+        // Keep optional inputs collapsed unless the section has no required fields.
+        details.open = requiredFields.length === 0;
+        const summary = document.createElement('summary');
+        summary.textContent = requiredFields.length ? `Optional inputs (${optionalFields.length})` : `Inputs (${optionalFields.length})`;
+        details.appendChild(summary);
+
+        const body = document.createElement('div');
+        body.className = 'pw-details-body';
+        const grid = document.createElement('div');
+        grid.className = 'pw-grid';
+        for (const f of optionalFields) grid.appendChild(renderField(f));
+        body.appendChild(grid);
+        details.appendChild(body);
+        card.appendChild(details);
+      }
+
       nodes.push(card);
     }
     formRoot.replaceChildren(...nodes);
