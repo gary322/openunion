@@ -124,6 +124,9 @@ test('org can register an app and use the dynamic app page to create+publish', a
     const publishResp = await publishRespPromise;
     expect(publishResp.ok()).toBeTruthy();
 
+    // Publish should land users in Monitor.
+    await expect(page.locator('#monitor')).toBeVisible();
+
     // After publish, the page refreshes the bounties list; assert our title appears in the table.
     await expect
       .poll(async () => String(await page.locator('#bountiesTbody').textContent()), { timeout: 10_000 })

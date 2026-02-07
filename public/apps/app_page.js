@@ -1,4 +1,4 @@
-import { authHeader, copyToClipboard, el, fetchJson, formatAgo, formatBps, formatCents, startPolling, storageGet, storageSet, toast, LS, qs } from '/ui/pw.js';
+import { authHeader, copyToClipboard, el, fetchJson, formatAgo, formatBps, formatCents, initHashViews, startPolling, storageGet, storageSet, toast, LS, qs } from '/ui/pw.js';
 
 async function loadDescriptorSchema() {
   const res = await fetch('/contracts/task_descriptor.schema.json', { credentials: 'omit' });
@@ -218,6 +218,11 @@ export async function initAppPage(cfg) {
     publicAllowedOrigins.find((o) => o.includes('store.steampowered.com')) ||
     publicAllowedOrigins[0] ||
     '';
+
+  // App pages use hash-views to avoid long-scroll "form walls". Keep the router handle so
+  // we can jump users to Monitor after publish (low-effort default).
+  let viewRouter = null;
+  let currentView = 'create';
 
   function setPill(elPill, text, kind = '') {
     if (!elPill) return;
@@ -1201,13 +1206,30 @@ export async function initAppPage(cfg) {
     }
 
     await refreshBounties();
-    if (publish) {
-      // After publish, take the user straight to monitoring so they don't wonder what happened.
+
+    // Reduce "did it work?" moments: after creating a bounty, jump straight to Monitor so the
+    // user immediately sees the new row (draft or published).
+    if (currentView !== 'monitor') {
       try {
-        document.getElementById('monitor')?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
+        viewRouter?.setView?.('monitor', { push: true });
       } catch {
         // ignore
       }
+    }
+
+    if (publish) {
+      // Monitor view should stay live while it's on-screen.
+      try {
+        enableAuto(true);
+      } catch {
+        // ignore
+      }
+    }
+
+    try {
+      document.getElementById('monitor')?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
+    } catch {
+      // ignore
     }
   }
 
@@ -1312,6 +1334,53 @@ export async function initAppPage(cfg) {
     enableAuto(on);
   });
 
+  // Views: Create vs Monitor. Keep it hash-addressable and instant.
+  viewRouter = initHashViews({
+    defaultViewId: 'create',
+    navSelector: '.pw-sidenav a[href="#create"], .pw-sidenav a[href="#monitor"]',
+    onChange: (viewId) => {
+      currentView = String(viewId || '').trim() || 'create';
+      if (currentView === 'monitor') {
+        const auth = effectiveBuyerAuth();
+        if (auth.mode !== 'none') {
+          refreshBounties().catch(() => {});
+          refreshJobs().catch(() => {});
+          enableAuto(true);
+        } else {
+          enableAuto(false);
+          setStatus('monitorStatus', 'Connect to see bounties and jobs.', 'warn');
+        }
+      } else {
+        // Avoid background churn while the user is editing the form.
+        enableAuto(false);
+      }
+    },
+  });
+
+  // Advanced link: ensure it lands in Create view and expands the descriptor preview.
+  const advancedLink = document.querySelector('.pw-sidenav a[href="#advanced"]');
+  advancedLink?.addEventListener('click', (ev) => {
+    ev.preventDefault();
+    try {
+      viewRouter?.setView?.('create', { push: true });
+    } catch {
+      // ignore
+    }
+    const d = document.getElementById('advanced');
+    if (d && d.tagName && d.tagName.toLowerCase() === 'details') {
+      try {
+        d.open = true;
+      } catch {
+        // ignore
+      }
+    }
+    try {
+      d?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
+    } catch {
+      // ignore
+    }
+  });
+
   // Initial render
   renderForm();
   renderTemplateGrid();
@@ -1326,8 +1395,12 @@ export async function initAppPage(cfg) {
   const auth0 = effectiveBuyerAuth();
   if (auth0.mode !== 'none') {
     await refreshOrigins();
-    await refreshBounties();
-    enableAuto(true);
+    if (currentView === 'monitor') {
+      await refreshBounties();
+      enableAuto(true);
+    } else {
+      enableAuto(false);
+    }
   } else {
     enableAuto(false);
   }

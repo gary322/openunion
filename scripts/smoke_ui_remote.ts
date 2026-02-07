@@ -22,7 +22,7 @@ function normalizeBaseUrl(raw: string): string {
 async function main() {
   const baseUrl = normalizeBaseUrl(argValue('--base-url') ?? process.env.BASE_URL ?? 'http://localhost:3000');
 
-  const checks: Array<{ path: string; titleIncludes: string }> = [
+  const checks: Array<{ path: string; titleIncludes: string; minBodyTextLen?: number }> = [
     // /buyer/ is now the low-effort entrypoint (onboarding). Keep the full console as /buyer/index.html.
     { path: '/buyer/', titleIncludes: 'Platform Onboarding' },
     { path: '/buyer/index.html', titleIncludes: 'Platform Console' },
@@ -35,6 +35,8 @@ async function main() {
     // hit the canonical page directly to avoid timing flakes during the redirect.
     { path: '/apps/app/github/', titleIncludes: 'GitHub' },
     { path: '/docs/', titleIncludes: 'Docs' },
+    // Verify the viewer boots and loads markdown (not just static file serving).
+    { path: '/docs/view.html?path=runbooks/ThirdPartyOnboarding.md', titleIncludes: 'ThirdPartyOnboarding', minBodyTextLen: 200 },
   ];
 
   const browser = await chromium.launch({ headless: true });
@@ -55,6 +57,17 @@ async function main() {
       const title = await page.title();
       if (!title.includes(c.titleIncludes)) {
         throw new Error(`ui_smoke_failed:${c.path}:expected_title_includes:${c.titleIncludes}:got:${title}`);
+      }
+      if (c.minBodyTextLen) {
+        await page.waitForFunction(
+          (minLen) => {
+            const root = document.getElementById('content') || document.body;
+            const t = String(root?.textContent || '').trim();
+            return t.length >= Number(minLen || 0);
+          },
+          c.minBodyTextLen,
+          { timeout: 10_000 }
+        );
       }
       console.log(`[ui-smoke] ok ${c.path} (${title})`);
     }

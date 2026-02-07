@@ -72,10 +72,6 @@ test('apps pages: exercise create draft, create+publish, refresh, load jobs on e
     await page.fill('#payoutCents', '1200');
     await page.fill('#requiredProofs', '1');
 
-    // Refresh bounties (might be empty; must not error).
-    await page.click('#btnRefreshBounties');
-    await expect(page.locator('#monitorStatus')).not.toContainText('Failed');
-
     // Create draft bounty.
     const draftTitle = `E2E ${app.titleIncludes} draft ${Date.now()}`;
     await page.fill('#title', draftTitle);
@@ -84,10 +80,21 @@ test('apps pages: exercise create draft, create+publish, refresh, load jobs on e
     const draftResp = await createDraftRespPromise;
     expect(draftResp.ok()).toBeTruthy();
 
+    // Creating a bounty should land users in Monitor (low-effort feedback).
+    await expect(page.locator('#monitor')).toBeVisible();
+
     // Monitor table should include the title we just created.
     await expect
       .poll(async () => String(await page.locator('#bountiesTbody').textContent()), { timeout: 10_000 })
       .toContain(draftTitle);
+
+    // Refresh bounties (must not error, even if empty in other cases).
+    await page.click('#btnRefreshBounties');
+    await expect(page.locator('#monitorStatus')).not.toContainText('Failed');
+
+    // Return to Create work for the next publish.
+    await page.locator('.pw-sidenav a[href="#create"]').click();
+    await expect(page.locator('#create')).toBeVisible();
 
     // Create + publish bounty (should create jobs).
     const pubTitle = `E2E ${app.titleIncludes} pub ${Date.now()}`;
