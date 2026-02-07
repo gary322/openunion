@@ -79,189 +79,221 @@
             </div>
           </section>
 
-          <section class="pw-card" id="auth">
-            <div class="pw-card-title">
-              <h2>Access</h2>
-              <span class="pw-kicker">Create or reuse your worker token</span>
-            </div>
-
-            <div class="pw-row">
-              <div class="pw-field">
-                <label for="regName">Display name</label>
-                <input class="pw-input" id="regName" placeholder="e.g. Alice" value="Alice" />
+          <details class="pw-fold" id="auth" open>
+            <summary>
+              <div>
+                <div class="pw-fold-title">Access</div>
+                <div class="pw-fold-sub">Get a token once, then reuse it</div>
               </div>
-              <div class="pw-field">
-                <label for="regBrowser">Capabilities</label>
-                <select class="pw-select" id="regBrowser">
-                  <option value="true" selected>browser: true</option>
-                  <option value="false">browser: false</option>
-                </select>
-              </div>
-            </div>
-
-            <div class="pw-actions">
-              <button class="pw-btn primary" id="btnRegister">Register worker</button>
-            </div>
-
-            <div class="pw-field">
-              <label for="token">Worker token</label>
-              <input class="pw-input" id="token" placeholder="pw_wk_..." />
-            </div>
-            <div class="pw-actions">
-              <button class="pw-btn" id="btnSaveToken">Save token</button>
-              <button class="pw-btn" id="btnMe">Check token</button>
-              <button class="pw-btn" id="btnCopyWorkerToken" type="button">Copy token</button>
-            </div>
-            <div id="authStatus" class="pw-status" role="status"></div>
-          </section>
-
-          <section class="pw-card" id="find">
-            <div class="pw-card-title">
-              <h2>Find work</h2>
-              <span class="pw-kicker">Claimable jobs</span>
-            </div>
-            <p class="pw-muted">
-              Claim the next compatible job. Filters are optional. If you already have an active job, finish it first.
-            </p>
-
-            <div class="pw-row">
-              <div class="pw-field">
-                <label for="minPayoutCents">Min payout (cents)</label>
-                <input class="pw-input" id="minPayoutCents" placeholder="e.g. 1200" />
-              </div>
-              <div class="pw-field">
-                <label for="capabilityTag">Capability tag (optional)</label>
-                <input class="pw-input" id="capabilityTag" placeholder="browser|http|ffmpeg|llm_summarize|screenshot" />
-              </div>
-            </div>
-
-            <div class="pw-actions">
-              <button class="pw-btn primary" id="btnClaimNext">Claim next job</button>
-              <button class="pw-btn pw-dev" id="btnNext">Find next job</button>
-              <button class="pw-btn pw-dev" id="btnClaim">Claim loaded job</button>
-            </div>
-
-            <details class="pw-details pw-dev">
-              <summary>Developer: current job spec / state</summary>
-              <div class="pw-details-body">
-                <pre class="pw-codeblock" id="jobOut">{}</pre>
-              </div>
-            </details>
-            <div id="jobStatus" class="pw-status" role="status"></div>
-          </section>
-
-          <section class="pw-card" id="job">
-            <div class="pw-card-title">
-              <h2>Active job</h2>
-              <span class="pw-kicker">What to do next</span>
-            </div>
-            <div class="pw-muted" id="jobSummary">Load a job from "Find work".</div>
-            <div class="pw-actions">
-              <a class="pw-btn" href="#outputs">Jump to outputs</a>
-              <a class="pw-btn primary" href="#submit">Jump to submit</a>
-            </div>
-          </section>
-
-          <section class="pw-card" id="outputs">
-            <div class="pw-card-title">
-              <h2>Outputs</h2>
-              <span class="pw-kicker">Upload what is required</span>
-            </div>
-            <p class="pw-muted">
-              This checklist is derived from the job requirements when available. In Dev mode, you can view the raw job spec.
-            </p>
-
-            <div id="requiredOutputs"></div>
-            <div id="requiredOutputsStatus" class="pw-status" role="status"></div>
-
-            <label class="pw-offscreen" for="slotFile">Pick a required output file</label>
-            <input class="pw-input pw-offscreen" id="slotFile" type="file" />
-
-            <details class="pw-details" id="advancedUploads">
-              <summary>Advanced: upload extra artifacts</summary>
-              <div class="pw-details-body">
+              <span class="pw-pill warn" id="pillAuth">Not connected</span>
+            </summary>
+            <div class="pw-fold-body">
+              <div class="pw-row">
                 <div class="pw-field">
-                  <label for="file">Pick a file</label>
-                  <input class="pw-input" id="file" type="file" />
-                </div>
-                <div class="pw-row">
-                  <div class="pw-field">
-                    <label for="kind">Kind</label>
-                    <select class="pw-select" id="kind">
-                      <option value="screenshot">screenshot</option>
-                      <option value="snapshot">snapshot</option>
-                      <option value="pdf">pdf</option>
-                      <option value="log">log</option>
-                      <option value="video">video</option>
-                      <option value="other" selected>other</option>
-                    </select>
-                  </div>
-                  <div class="pw-field">
-                    <label for="label">Label</label>
-                    <input class="pw-input" id="label" placeholder="e.g. repro" value="repro" />
-                  </div>
-                </div>
-                <div class="pw-actions">
-                  <button class="pw-btn primary" id="btnUpload">Presign + upload</button>
-                </div>
-                <details class="pw-details pw-dev">
-                  <summary>Developer: artifact ref</summary>
-                  <div class="pw-details-body">
-                    <pre class="pw-codeblock" id="artifactOut">{}</pre>
-                  </div>
-                </details>
-                <div id="uploadStatus" class="pw-status" role="status"></div>
-              </div>
-            </details>
-          </section>
-
-          <section class="pw-card" id="submit">
-            <div class="pw-card-title">
-              <h2>Submit</h2>
-              <span class="pw-kicker">Finalize your work</span>
-            </div>
-
-            <div class="pw-field">
-              <label for="summary">Notes for the verifier (optional)</label>
-              <textarea class="pw-textarea" id="summary" placeholder="Optional: what you did, what to look at, and anything important."></textarea>
-            </div>
-            <details class="pw-details">
-              <summary>Advanced: submission details</summary>
-              <div class="pw-details-body">
-                <div class="pw-row">
-                  <div class="pw-field">
-                    <label for="expected">Expected</label>
-                    <input class="pw-input" id="expected" placeholder="Expected deliverables" />
-                  </div>
-                  <div class="pw-field">
-                    <label for="observed">Observed</label>
-                    <input class="pw-input" id="observed" placeholder="Attached deliverables" />
-                  </div>
+                  <label for="regName">Display name</label>
+                  <input class="pw-input" id="regName" placeholder="e.g. Alice" value="Alice" />
                 </div>
                 <div class="pw-field">
-                  <label for="steps">Steps / notes (one per line)</label>
-                  <textarea class="pw-textarea" id="steps" placeholder="1. ..."></textarea>
+                  <label for="regBrowser">Capabilities</label>
+                  <select class="pw-select" id="regBrowser">
+                    <option value="true" selected>browser: true</option>
+                    <option value="false">browser: false</option>
+                  </select>
                 </div>
               </div>
-            </details>
-            <div class="pw-actions">
-              <button class="pw-btn primary" id="btnSubmit">Submit</button>
-            </div>
-            <details class="pw-details pw-dev">
-              <summary>Developer: response</summary>
-              <div class="pw-details-body">
-                <pre class="pw-codeblock" id="submitOut">{}</pre>
-              </div>
-            </details>
-            <div id="submitStatus" class="pw-status" role="status"></div>
-          </section>
 
-          <section class="pw-card" id="payouts">
-            <div class="pw-card-title">
-              <h2>Payouts</h2>
-              <span class="pw-kicker">Address + history</span>
+              <div class="pw-actions">
+                <button class="pw-btn primary" id="btnRegister">Register worker</button>
+              </div>
+
+              <div class="pw-field">
+                <label for="token">Worker token</label>
+                <input class="pw-input" id="token" placeholder="pw_wk_..." />
+              </div>
+              <div class="pw-actions">
+                <button class="pw-btn" id="btnSaveToken">Save token</button>
+                <button class="pw-btn" id="btnMe">Check token</button>
+                <button class="pw-btn" id="btnCopyWorkerToken" type="button">Copy token</button>
+              </div>
+              <div id="authStatus" class="pw-status" role="status"></div>
             </div>
-            <p class="pw-muted">Set a payout address once; then check payout history (holds show as pending).</p>
+          </details>
+
+          <details class="pw-fold" id="find">
+            <summary>
+              <div>
+                <div class="pw-fold-title">Find work</div>
+                <div class="pw-fold-sub">Claim the next compatible job</div>
+              </div>
+              <span class="pw-pill faint" id="pillFind">Idle</span>
+            </summary>
+            <div class="pw-fold-body">
+              <p class="pw-muted">
+                Filters are optional. If you already have an active job, finish it first.
+              </p>
+
+              <details class="pw-details">
+                <summary>Optional filters</summary>
+                <div class="pw-details-body">
+                  <div class="pw-row">
+                    <div class="pw-field">
+                      <label for="minPayoutCents">Min payout (cents)</label>
+                      <input class="pw-input" id="minPayoutCents" placeholder="e.g. 1200" />
+                    </div>
+                    <div class="pw-field">
+                      <label for="capabilityTag">Capability tag</label>
+                      <input class="pw-input" id="capabilityTag" placeholder="browser|http|ffmpeg|llm_summarize|screenshot" />
+                    </div>
+                  </div>
+                </div>
+              </details>
+
+              <div class="pw-actions">
+                <button class="pw-btn primary" id="btnClaimNext">Claim next job</button>
+                <button class="pw-btn pw-dev" id="btnNext">Find next job</button>
+                <button class="pw-btn pw-dev" id="btnClaim">Claim loaded job</button>
+              </div>
+
+              <details class="pw-details pw-dev">
+                <summary>Developer: current job spec / state</summary>
+                <div class="pw-details-body">
+                  <pre class="pw-codeblock" id="jobOut">{}</pre>
+                </div>
+              </details>
+              <div id="jobStatus" class="pw-status" role="status"></div>
+            </div>
+          </details>
+
+          <details class="pw-fold" id="job">
+            <summary>
+              <div>
+                <div class="pw-fold-title">Active job</div>
+                <div class="pw-fold-sub">What you should do next</div>
+              </div>
+              <span class="pw-pill faint" id="pillJob">No job</span>
+            </summary>
+            <div class="pw-fold-body">
+              <div class="pw-muted" id="jobSummary">Load a job from "Find work".</div>
+              <div class="pw-actions">
+                <a class="pw-btn" href="#outputs">Jump to outputs</a>
+                <a class="pw-btn primary" href="#submit">Jump to submit</a>
+              </div>
+            </div>
+          </details>
+
+          <details class="pw-fold" id="outputs">
+            <summary>
+              <div>
+                <div class="pw-fold-title">Outputs</div>
+                <div class="pw-fold-sub">Upload what is required (then Submit unlocks)</div>
+              </div>
+              <span class="pw-pill faint" id="pillOutputs">Waiting</span>
+            </summary>
+            <div class="pw-fold-body">
+              <p class="pw-muted">
+                This checklist is derived from the job requirements when available. In Dev mode, you can view the raw job spec.
+              </p>
+
+              <div id="requiredOutputs"></div>
+              <div id="requiredOutputsStatus" class="pw-status" role="status"></div>
+
+              <label class="pw-offscreen" for="slotFile">Pick a required output file</label>
+              <input class="pw-input pw-offscreen" id="slotFile" type="file" />
+
+              <details class="pw-details" id="advancedUploads">
+                <summary>Advanced: upload extra artifacts</summary>
+                <div class="pw-details-body">
+                  <div class="pw-field">
+                    <label for="file">Pick a file</label>
+                    <input class="pw-input" id="file" type="file" />
+                  </div>
+                  <div class="pw-row">
+                    <div class="pw-field">
+                      <label for="kind">Kind</label>
+                      <select class="pw-select" id="kind">
+                        <option value="screenshot">screenshot</option>
+                        <option value="snapshot">snapshot</option>
+                        <option value="pdf">pdf</option>
+                        <option value="log">log</option>
+                        <option value="video">video</option>
+                        <option value="other" selected>other</option>
+                      </select>
+                    </div>
+                    <div class="pw-field">
+                      <label for="label">Label</label>
+                      <input class="pw-input" id="label" placeholder="e.g. repro" value="repro" />
+                    </div>
+                  </div>
+                  <div class="pw-actions">
+                    <button class="pw-btn primary" id="btnUpload">Presign + upload</button>
+                  </div>
+                  <details class="pw-details pw-dev">
+                    <summary>Developer: artifact ref</summary>
+                    <div class="pw-details-body">
+                      <pre class="pw-codeblock" id="artifactOut">{}</pre>
+                    </div>
+                  </details>
+                  <div id="uploadStatus" class="pw-status" role="status"></div>
+                </div>
+              </details>
+            </div>
+          </details>
+
+          <details class="pw-fold" id="submit">
+            <summary>
+              <div>
+                <div class="pw-fold-title">Submit</div>
+                <div class="pw-fold-sub">Finalize your work</div>
+              </div>
+              <span class="pw-pill faint" id="pillSubmit">Locked</span>
+            </summary>
+            <div class="pw-fold-body">
+              <div class="pw-field">
+                <label for="summary">Notes for the verifier (optional)</label>
+                <textarea class="pw-textarea" id="summary" placeholder="Optional: what you did, what to look at, and anything important."></textarea>
+              </div>
+              <details class="pw-details">
+                <summary>Advanced: submission details</summary>
+                <div class="pw-details-body">
+                  <div class="pw-row">
+                    <div class="pw-field">
+                      <label for="expected">Expected</label>
+                      <input class="pw-input" id="expected" placeholder="Expected deliverables" />
+                    </div>
+                    <div class="pw-field">
+                      <label for="observed">Observed</label>
+                      <input class="pw-input" id="observed" placeholder="Attached deliverables" />
+                    </div>
+                  </div>
+                  <div class="pw-field">
+                    <label for="steps">Steps / notes (one per line)</label>
+                    <textarea class="pw-textarea" id="steps" placeholder="1. ..."></textarea>
+                  </div>
+                </div>
+              </details>
+              <div class="pw-actions">
+                <button class="pw-btn primary" id="btnSubmit">Submit</button>
+              </div>
+              <details class="pw-details pw-dev">
+                <summary>Developer: response</summary>
+                <div class="pw-details-body">
+                  <pre class="pw-codeblock" id="submitOut">{}</pre>
+                </div>
+              </details>
+              <div id="submitStatus" class="pw-status" role="status"></div>
+            </div>
+          </details>
+
+          <details class="pw-fold" id="payouts">
+            <summary>
+              <div>
+                <div class="pw-fold-title">Payouts</div>
+                <div class="pw-fold-sub">Address + history</div>
+              </div>
+              <span class="pw-pill faint" id="pillPayouts">Not set</span>
+            </summary>
+            <div class="pw-fold-body">
+              <p class="pw-muted">Set a payout address once; then check payout history (holds show as pending).</p>
 
             <div class="pw-field">
               <label for="payoutChain">Payout chain</label>
@@ -339,7 +371,8 @@
               </div>
             </details>
             <div id="payoutStatusMsg" class="pw-status" role="status"></div>
-          </section>
+            </div>
+          </details>
         </section>
       </div>
     </main>

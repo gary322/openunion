@@ -10,9 +10,57 @@ function $(id) {
 let actionbarHandler = null;
 let cachedPayoutOk = false;
 
+// Mark folds as "user toggled" so guided auto-open logic doesn't fight manual intent.
+for (const summary of Array.from(document.querySelectorAll('details.pw-fold > summary'))) {
+  summary.addEventListener('click', (ev) => {
+    const d = ev.currentTarget?.parentElement;
+    if (d && String(d.tagName || '').toLowerCase() === 'details') {
+      try {
+        d.dataset.userToggled = '1';
+      } catch {
+        // ignore
+      }
+    }
+  });
+}
+
+function setPill(id, text, kind) {
+  const el = $(id);
+  if (!el) return;
+  el.textContent = String(text ?? '');
+  el.classList.remove('good', 'warn', 'faint');
+  if (kind) el.classList.add(kind);
+}
+
+function setFoldOpen(id, open, opts = {}) {
+  const el = $(id);
+  if (!el) return;
+  const force = Boolean(opts && opts.force);
+  if (!force && String(el.dataset?.userToggled ?? '') === '1') return;
+  try {
+    el.open = Boolean(open);
+  } catch {
+    // ignore
+  }
+}
+
+function openOnlyFold(focusId) {
+  // "Only" is aspirational: we avoid auto-closing other sections because it can hide controls
+  // mid-flow (low trust UX). Instead, always open the recommended fold.
+  setFoldOpen(focusId, true);
+}
+
 function scrollToAnchor(id) {
   const el = document.getElementById(String(id || '').replace(/^#/, ''));
   if (!el) return;
+  if (String(el.tagName || '').toLowerCase() === 'details') {
+    // If the anchor is a fold, open it so the user doesn't scroll to hidden content.
+    try {
+      el.open = true;
+    } catch {
+      // ignore
+    }
+  }
   try {
     el.scrollIntoView({ behavior: 'smooth', block: 'start' });
   } catch {
@@ -38,6 +86,30 @@ function updateActionbar() {
   const hasToken = Boolean(String(token || '').trim());
   const hasJob = Boolean(lastClaim?.data?.job?.jobId || lastNext?.data?.job?.jobId);
 
+  setPill('pillAuth', hasToken ? 'Connected' : 'Not connected', hasToken ? 'good' : 'warn');
+  setPill('pillPayouts', cachedPayoutOk ? 'Verified' : 'Not set', cachedPayoutOk ? 'good' : 'warn');
+
+  if (!hasJob) setPill('pillJob', 'No job', 'faint');
+  else setPill('pillJob', 'Job loaded', 'good');
+
+  // Keep key workflow sections discoverable by default. We guide via actionbar, but we don't
+  // hide the work surface.
+  if (hasToken) setFoldOpen('find', true);
+  if (hasToken && !cachedPayoutOk) setFoldOpen('payouts', true);
+  if (hasJob && !canSubmitNow()) setFoldOpen('outputs', true);
+  if (hasJob && canSubmitNow()) setFoldOpen('submit', true);
+
+  if (requiredSlots.length) {
+    const done = requiredSlots.filter((s) => s.scanStatus === 'scanned' || s.scanStatus === 'accepted').length;
+    const blocked = requiredSlots.filter((s) => s.scanStatus === 'blocked').length;
+    const total = requiredSlots.length;
+    setPill('pillOutputs', blocked ? `Blocked ${blocked}` : `Ready ${done}/${total}`, blocked ? 'warn' : done === total ? 'good' : 'faint');
+  } else {
+    setPill('pillOutputs', hasJob ? 'Waiting' : 'Waiting', 'faint');
+  }
+  setPill('pillSubmit', canSubmitNow() ? 'Ready' : 'Locked', canSubmitNow() ? 'good' : 'faint');
+  setPill('pillFind', !hasToken ? 'Locked' : hasJob ? 'Done' : 'Ready', !hasToken ? 'warn' : hasJob ? 'faint' : 'good');
+
   if (!hasToken) {
     setActionbar({
       title: 'Next: get a worker token',
@@ -45,6 +117,7 @@ function updateActionbar() {
       label: 'Set up',
       onClick: () => scrollToAnchor('auth'),
     });
+    openOnlyFold('auth');
     return;
   }
 
@@ -55,6 +128,7 @@ function updateActionbar() {
       label: 'Verify',
       onClick: () => scrollToAnchor('payouts'),
     });
+    openOnlyFold('payouts');
     return;
   }
 
@@ -68,6 +142,7 @@ function updateActionbar() {
         onClaimNext().catch((e) => setStatus('jobStatus', String(e), 'bad'));
       },
     });
+    openOnlyFold('find');
     return;
   }
 
@@ -78,6 +153,7 @@ function updateActionbar() {
       label: 'Upload',
       onClick: () => scrollToAnchor('outputs'),
     });
+    openOnlyFold('outputs');
     return;
   }
 
@@ -87,6 +163,7 @@ function updateActionbar() {
     label: 'Submit',
     onClick: () => scrollToAnchor('submit'),
   });
+  openOnlyFold('submit');
 }
 
 function setStatus(id, text, kind) {

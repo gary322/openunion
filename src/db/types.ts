@@ -62,6 +62,7 @@ export interface JobsTable {
   lease_nonce: string | null;
   current_submission_id: string | null;
   final_verdict: string | null;
+  final_reason: string | null;
   final_quality_score: number | null;
   done_at: Timestamp | null;
   task_descriptor: unknown | null;
@@ -79,6 +80,7 @@ export interface SubmissionsTable {
   status: string;
   dedupe_key: string | null;
   final_verdict: string | null;
+  final_reason: string | null;
   final_quality_score: number | null;
   payout_status: string | null;
   created_at: Timestamp;

@@ -62,6 +62,7 @@ export interface Job {
   leaseNonce?: string;
   currentSubmissionId?: string;
   finalVerdict?: VerificationVerdict;
+  finalReason?: string;
   finalQualityScore?: number;
   doneAt?: number;
   createdAt?: number;
@@ -79,6 +80,7 @@ export interface Submission {
   status: SubmissionStatus;
   dedupeKey?: string;
   finalVerdict?: VerificationVerdict;
+  finalReason?: string;
   finalQualityScore?: number;
   payoutStatus?: 'none' | 'pending' | 'paid' | 'failed' | 'reversed';
   createdAt: number;
