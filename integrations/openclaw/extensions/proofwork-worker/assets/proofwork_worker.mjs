@@ -2623,6 +2623,8 @@ async function loop() {
         capability_tags: supported.join(","),
         ...(prefer ? { capability_tag: prefer } : {}),
         ...(requireTaskType ? { task_type: requireTaskType } : {}),
+        ...(REQUIRE_JOB_ID ? { require_job_id: REQUIRE_JOB_ID } : {}),
+        ...(REQUIRE_BOUNTY_ID ? { require_bounty_id: REQUIRE_BOUNTY_ID } : {}),
         ...(minPayoutCents ? { min_payout_cents: minPayoutCents } : {}),
         ...(exclude ? { exclude_job_ids: exclude } : {}),
       },

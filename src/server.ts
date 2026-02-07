@@ -2770,6 +2770,8 @@ export function buildServer(opts: { taskDescriptorBrowserFlowValidationGate?: bo
     // Track liveness for monitoring / pool health.
     await touchWorkerLastSeen(worker.id);
     const q = request.query || {};
+    const requireJobId = typeof q.require_job_id === 'string' ? String(q.require_job_id).trim() : undefined;
+    const requireBountyId = typeof q.require_bounty_id === 'string' ? String(q.require_bounty_id).trim() : undefined;
     const capabilityTag =
       isTaskDescriptorEnabled() && typeof q.capability_tag === 'string' ? q.capability_tag : undefined;
     const taskType =
@@ -2821,7 +2823,15 @@ export function buildServer(opts: { taskDescriptorBrowserFlowValidationGate?: bo
         return envelope('idle', [`Scanner backlog high (${Math.round(age)}s); wait and retry later.`], {}, {}, {});
       }
     }
-    const claimable = await findClaimableJob(worker, { capabilityTag, supportedCapabilityTags, minPayoutCents, taskType, excludeJobIds });
+    const claimable = await findClaimableJob(worker, {
+      capabilityTag,
+      supportedCapabilityTags,
+      minPayoutCents,
+      taskType,
+      excludeJobIds,
+      requireJobId,
+      requireBountyId,
+    });
     if (!claimable) {
       return envelope('idle', ['No jobs available right now. Reply HEARTBEAT_OK.'], {}, {}, {});
     }

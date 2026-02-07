@@ -1057,7 +1057,15 @@ async function workerDuplicateRate(workerId: string, window = 100): Promise<numb
 
 export async function findClaimableJob(
   worker: Worker,
-  opts: { capabilityTag?: string; supportedCapabilityTags?: string[]; minPayoutCents?: number; taskType?: string; excludeJobIds?: string[] } = {}
+  opts: {
+    capabilityTag?: string;
+    supportedCapabilityTags?: string[];
+    minPayoutCents?: number;
+    taskType?: string;
+    excludeJobIds?: string[];
+    requireJobId?: string;
+    requireBountyId?: string;
+  } = {}
 ): Promise<{ job: Job; bounty: Bounty } | undefined> {
   const now = new Date();
   const rep = await expectedPassRate(worker.id);
@@ -1109,6 +1117,12 @@ export async function findClaimableJob(
     .orderBy('bounties.payout_cents', 'desc')
     .orderBy('jobs.created_at', 'asc')
     .limit(50);
+
+  if (opts.requireJobId) {
+    q = q.where('jobs.id', '=', String(opts.requireJobId)).limit(1);
+  } else if (opts.requireBountyId) {
+    q = q.where('bounties.id', '=', String(opts.requireBountyId)).limit(50);
+  }
 
   if (opts.taskType) {
     // When provided, restrict candidates to tasks with a matching descriptor type
