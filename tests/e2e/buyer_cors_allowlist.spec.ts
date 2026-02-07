@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { fillBuyerDemoLogin, openDetails } from './helpers.js';
+import { fillBuyerDemoLogin, openBuyerApiKeysTab, openDetails } from './helpers.js';
 
 test('buyer can set per-org CORS allowlist and it is enforced', async ({ page, request }) => {
   await page.goto('/buyer/index.html');
@@ -7,6 +7,7 @@ test('buyer can set per-org CORS allowlist and it is enforced', async ({ page, r
   await page.click('#btnLogin');
   await expect(page.locator('#loginStatus')).toContainText('ok');
 
+  await openBuyerApiKeysTab(page);
   const createRespPromise = page.waitForResponse(
     (r) => r.url().endsWith('/api/session/api-keys') && r.request().method() === 'POST'
   );

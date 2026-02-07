@@ -86,6 +86,22 @@ function setText(id, text) {
   el.textContent = String(text ?? '');
 }
 
+function setTab(rootId, tabId) {
+  const root = $(rootId);
+  if (!root) return;
+  const tabs = Array.from(root.querySelectorAll('[role="tab"]'));
+  for (const tab of tabs) {
+    const controls = tab.getAttribute('aria-controls');
+    const on = String(tab.id) === String(tabId);
+    tab.setAttribute('aria-selected', on ? 'true' : 'false');
+    tab.classList.toggle('active', on);
+    if (controls) {
+      const panel = $(controls);
+      if (panel) panel.hidden = !on;
+    }
+  }
+}
+
 let onboardingReqNo = 0;
 async function refreshOnboardingStatus() {
   const reqNo = ++onboardingReqNo;
@@ -283,6 +299,26 @@ async function refreshOnboardingStatus() {
   setFoldOpen('foldMoney', nextFold === 'foldMoney');
   setFoldOpen('foldDisputes', openDisputes > 0);
   setFoldOpen('foldSettings', nextFold === 'foldSettings');
+}
+
+function initAccessTabs() {
+  const root = $('accessTabs');
+  if (!root) return;
+
+  const LS_TAB = 'pw_buyer_access_tab';
+  const saved = String(localStorage.getItem(LS_TAB) || '').trim();
+  const fallback = 'tabAccessLogin';
+  const initial = saved && $(saved) ? saved : fallback;
+  setTab('accessTabs', initial);
+
+  root.addEventListener('click', (ev) => {
+    const btn = ev.target?.closest?.('[role="tab"]');
+    if (!btn) return;
+    const id = String(btn.id || '').trim();
+    if (!id) return;
+    localStorage.setItem(LS_TAB, id);
+    setTab('accessTabs', id);
+  });
 }
 
 function originRecordName(originUrl) {
@@ -1659,6 +1695,7 @@ for (const summary of Array.from(document.querySelectorAll('details.pw-fold > su
   });
 }
 
+initAccessTabs();
 refreshOnboardingStatus().catch(() => {});
 
 autoFillAppIds();

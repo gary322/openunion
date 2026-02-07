@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import http from 'http';
-import { fillBuyerDemoLogin, openDetails } from './helpers.js';
+import { fillBuyerDemoLogin, openBuyerApiKeysTab, openDetails } from './helpers.js';
 
 const VERIFIER_TOKEN = 'pw_vf_internal';
 const ADMIN_TOKEN = 'pw_adm_internal';
@@ -35,6 +35,7 @@ test('buyer can open a dispute and admin can resolve (refund) via UI', async ({ 
     await page.click('#btnLogin');
     await expect(page.locator('#loginStatus')).toContainText('ok');
 
+    await openBuyerApiKeysTab(page);
     const createKeyRespPromise = page.waitForResponse(
       (r) => r.url().endsWith('/api/session/api-keys') && r.request().method() === 'POST'
     );

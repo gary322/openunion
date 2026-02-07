@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { fillBuyerDemoLogin, openDetails } from './helpers.js';
+import { fillBuyerDemoLogin, openBuyerApiKeysTab } from './helpers.js';
 
 test('buyer can create, list, and revoke API keys (revoked token is rejected)', async ({ page, request }) => {
   await page.goto('/buyer/index.html');
@@ -7,6 +7,7 @@ test('buyer can create, list, and revoke API keys (revoked token is rejected)', 
   await page.click('#btnLogin');
   await expect(page.locator('#loginStatus')).toContainText('ok');
 
+  await openBuyerApiKeysTab(page);
   const createRespPromise = page.waitForResponse(
     (r) => r.url().endsWith('/api/session/api-keys') && r.request().method() === 'POST'
   );
@@ -19,7 +20,7 @@ test('buyer can create, list, and revoke API keys (revoked token is rejected)', 
   expect(apiKeyId).toBeTruthy();
   expect(buyerToken).toMatch(/^pw_bu_/);
 
-  await openDetails(page, '#foldAccess');
+  await openBuyerApiKeysTab(page);
   const listRespPromise = page.waitForResponse(
     (r) => r.url().endsWith('/api/org/api-keys') && r.request().method() === 'GET'
   );
@@ -31,7 +32,7 @@ test('buyer can create, list, and revoke API keys (revoked token is rejected)', 
   expect(apiKeys.length).toBeGreaterThan(0);
   expect(apiKeys.some((k: any) => String(k?.id ?? '') === apiKeyId)).toBeTruthy();
 
-  await openDetails(page, '#foldAccess');
+  await openBuyerApiKeysTab(page);
   await page.fill('#revokeKeyId', apiKeyId);
   const revokeRespPromise = page.waitForResponse(
     (r) => r.url().includes(`/api/session/api-keys/${encodeURIComponent(apiKeyId)}/revoke`) && r.request().method() === 'POST'

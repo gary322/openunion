@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { fillBuyerDemoLogin } from './helpers.js';
+import { fillBuyerDemoLogin, openBuyerApiKeysTab } from './helpers.js';
 
 const VERIFIER_TOKEN = 'pw_vf_internal';
 
@@ -12,6 +12,7 @@ test('buyer disputes: create → list → cancel via UI (during hold window)', a
   await page.click('#btnLogin');
   await expect(page.locator('#loginStatus')).toContainText('ok');
 
+  await openBuyerApiKeysTab(page);
   const createKeyRespPromise = page.waitForResponse((r) => r.url().endsWith('/api/session/api-keys') && r.request().method() === 'POST');
   await page.click('#btnCreateKey');
   const createKeyResp = await createKeyRespPromise;

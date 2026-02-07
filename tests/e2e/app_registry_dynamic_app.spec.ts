@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import http from 'http';
-import { fillBuyerDemoLogin, fillRequiredAppForm, openDetails } from './helpers';
+import { fillBuyerDemoLogin, fillRequiredAppForm, openBuyerApiKeysTab, openDetails } from './helpers';
 
 test('org can register an app and use the dynamic app page to create+publish', async ({ page }) => {
   test.setTimeout(90_000);
@@ -32,6 +32,7 @@ test('org can register an app and use the dynamic app page to create+publish', a
     await page.click('#btnLogin');
     await expect(page.locator('#loginStatus')).toContainText('ok');
 
+    await openBuyerApiKeysTab(page);
     await page.click('#btnCreateKey');
     await expect(page.locator('#keyStatus')).toContainText('token created');
 

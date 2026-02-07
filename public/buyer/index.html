@@ -144,140 +144,161 @@
                 <span class="pw-pill faint" id="pillAccess">Not connected</span>
               </summary>
               <div class="pw-fold-body">
-            <div class="pw-card">
+            <div class="pw-card soft">
               <div class="pw-card-title">
-                <h2>Access</h2>
-                <span class="pw-kicker">Sign in or paste token</span>
+                <h2>Connect</h2>
+                <span class="pw-kicker">Do this once</span>
+              </div>
+              <p class="pw-muted">Most platforms use the session sign-in. API keys are for server-to-server integrations.</p>
+
+              <div class="pw-tabs" role="tablist" aria-label="Connect options" id="accessTabs">
+                <button class="pw-tab active" id="tabAccessLogin" type="button" role="tab" aria-selected="true" aria-controls="panelAccessLogin">
+                  Sign in
+                </button>
+                <button class="pw-tab" id="tabAccessRegister" type="button" role="tab" aria-selected="false" aria-controls="panelAccessRegister">
+                  Create org
+                </button>
+                <button class="pw-tab" id="tabAccessKeys" type="button" role="tab" aria-selected="false" aria-controls="panelAccessKeys">
+                  API keys
+                </button>
               </div>
 
-              <div class="pw-row">
-                <div class="pw-field">
-                  <label for="email">Email</label>
-                  <input class="pw-input" id="email" autocomplete="email" placeholder="buyer@company.com" />
+              <div class="pw-tabpanels">
+                <div class="pw-tabpanel" id="panelAccessLogin" role="tabpanel" aria-labelledby="tabAccessLogin">
+                  <div class="pw-row">
+                    <div class="pw-field">
+                      <label for="email">Email</label>
+                      <input class="pw-input" id="email" autocomplete="email" placeholder="buyer@company.com" />
+                    </div>
+                    <div class="pw-field">
+                      <label for="password">Password</label>
+                      <input class="pw-input" id="password" type="password" autocomplete="current-password" placeholder="password" />
+                    </div>
+                  </div>
+
+                  <div class="pw-actions">
+                    <button class="pw-btn primary" id="btnLogin">Sign in</button>
+                    <a class="pw-btn" href="/buyer/onboarding.html">Onboarding wizard</a>
+                  </div>
+
+                  <div id="loginStatus" class="pw-status" role="status"></div>
+                  <details class="pw-details pw-dev">
+                    <summary>Developer response</summary>
+                    <div class="pw-details-body">
+                      <pre class="pw-codeblock" id="loginOut">{}</pre>
+                    </div>
+                  </details>
                 </div>
-                <div class="pw-field">
-                  <label for="password">Password</label>
-                  <input class="pw-input" id="password" type="password" autocomplete="current-password" placeholder="password" />
+
+                <div class="pw-tabpanel" id="panelAccessRegister" role="tabpanel" aria-labelledby="tabAccessRegister" hidden>
+                  <div class="pw-card soft">
+                    <div class="pw-card-title">
+                      <h3>Create org</h3>
+                      <span class="pw-kicker">Third-party onboarding</span>
+                    </div>
+                    <p class="pw-muted">Creates your org and an initial API key. You can set fees and publish apps immediately.</p>
+
+                    <div class="pw-row">
+                      <div class="pw-field">
+                        <label for="regOrgName">Org name</label>
+                        <input class="pw-input" id="regOrgName" placeholder="My Platform" />
+                      </div>
+                      <div class="pw-field">
+                        <label for="regApiKeyName">API key name</label>
+                        <input class="pw-input" id="regApiKeyName" value="default" />
+                      </div>
+                    </div>
+
+                    <div class="pw-row">
+                      <div class="pw-field">
+                        <label for="regEmail">Email</label>
+                        <input class="pw-input" id="regEmail" placeholder="you@company.com" />
+                      </div>
+                      <div class="pw-field">
+                        <label for="regPassword">Password</label>
+                        <input class="pw-input" id="regPassword" type="password" placeholder="min 8 chars" />
+                      </div>
+                    </div>
+
+                    <div class="pw-actions">
+                      <button class="pw-btn primary" id="btnRegister">Create org</button>
+                    </div>
+
+                    <div id="regStatus" class="pw-status" role="status"></div>
+                    <details class="pw-details pw-dev">
+                      <summary>Developer response</summary>
+                      <div class="pw-details-body">
+                        <pre class="pw-codeblock" id="regOut">{}</pre>
+                      </div>
+                    </details>
+                  </div>
+                </div>
+
+                <div class="pw-tabpanel" id="panelAccessKeys" role="tabpanel" aria-labelledby="tabAccessKeys" hidden>
+                  <div class="pw-card soft">
+                    <div class="pw-card-title">
+                      <h3>API keys</h3>
+                      <span class="pw-kicker">Server-to-server</span>
+                    </div>
+
+                    <div class="pw-row">
+                      <div class="pw-field">
+                        <label for="keyName">API key name</label>
+                        <input class="pw-input" id="keyName" value="default" />
+                      </div>
+                      <div class="pw-field">
+                        <label>&nbsp;</label>
+                        <button class="pw-btn primary" id="btnCreateKey">Create API key</button>
+                      </div>
+                    </div>
+
+                    <div class="pw-field">
+                      <label for="buyerToken">Buyer token</label>
+                      <input class="pw-input" id="buyerToken" placeholder="pw_bu_..." />
+                    </div>
+
+                    <div class="pw-actions">
+                      <button class="pw-btn" id="btnSaveToken">Save token</button>
+                      <button class="pw-btn" id="btnCopyBuyerToken" type="button">Copy token</button>
+                      <button class="pw-btn" id="btnListKeys">List keys</button>
+                    </div>
+
+                    <div class="pw-row">
+                      <div class="pw-field">
+                        <label for="revokeKeyId">Revoke API key (id)</label>
+                        <input class="pw-input" id="revokeKeyId" placeholder="apiKeyId" />
+                      </div>
+                      <div class="pw-field">
+                        <label>&nbsp;</label>
+                        <button class="pw-btn danger" id="btnRevokeKey">Revoke</button>
+                      </div>
+                    </div>
+
+                    <div id="keyStatus" class="pw-status" role="status"></div>
+                    <div class="pw-scroll">
+                      <table class="pw-table" aria-label="API keys list">
+                        <thead>
+                          <tr>
+                            <th>Id</th>
+                            <th>Name</th>
+                            <th>Prefix</th>
+                            <th>Created</th>
+                            <th>Last used</th>
+                            <th>Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody id="apiKeysTbody"></tbody>
+                      </table>
+                    </div>
+                    <details class="pw-details pw-dev">
+                      <summary>Developer response</summary>
+                      <div class="pw-details-body">
+                        <pre class="pw-codeblock" id="keyOut">{}</pre>
+                      </div>
+                    </details>
+                  </div>
                 </div>
               </div>
-
-              <div class="pw-actions">
-                <button class="pw-btn primary" id="btnLogin">Sign in</button>
-                <a class="pw-btn" href="/buyer/onboarding.html">Onboarding wizard</a>
-              </div>
-
-              <div id="loginStatus" class="pw-status" role="status"></div>
-              <details class="pw-details pw-dev">
-                <summary>Developer response</summary>
-                <div class="pw-details-body">
-                  <pre class="pw-codeblock" id="loginOut">{}</pre>
-                </div>
-              </details>
-            </div>
-
-            <div class="pw-card">
-              <div class="pw-card-title">
-                <h2>Register platform</h2>
-                <span class="pw-kicker">Creates org + initial API key</span>
-              </div>
-              <p class="pw-muted">Use this for real third-party onboarding. You'll get an API key + buyer token you can copy.</p>
-
-              <div class="pw-row">
-                <div class="pw-field">
-                  <label for="regOrgName">Org name</label>
-                  <input class="pw-input" id="regOrgName" placeholder="My Platform" />
-                </div>
-                <div class="pw-field">
-                  <label for="regApiKeyName">API key name</label>
-                  <input class="pw-input" id="regApiKeyName" value="default" />
-                </div>
-              </div>
-
-              <div class="pw-row">
-                <div class="pw-field">
-                  <label for="regEmail">Email</label>
-                  <input class="pw-input" id="regEmail" placeholder="you@company.com" />
-                </div>
-                <div class="pw-field">
-                  <label for="regPassword">Password</label>
-                  <input class="pw-input" id="regPassword" type="password" placeholder="min 8 chars" />
-                </div>
-              </div>
-
-              <div class="pw-actions">
-                <button class="pw-btn primary" id="btnRegister">Create org</button>
-              </div>
-
-              <div id="regStatus" class="pw-status" role="status"></div>
-              <details class="pw-details pw-dev">
-                <summary>Developer response</summary>
-                <div class="pw-details-body">
-                  <pre class="pw-codeblock" id="regOut">{}</pre>
-                </div>
-              </details>
-            </div>
-
-            <div class="pw-card">
-              <div class="pw-card-title">
-                <h2>API keys</h2>
-                <span class="pw-kicker">Create, revoke, and copy</span>
-              </div>
-
-              <div class="pw-row">
-                <div class="pw-field">
-                  <label for="keyName">API key name</label>
-                  <input class="pw-input" id="keyName" value="default" />
-                </div>
-                <div class="pw-field">
-                  <label>&nbsp;</label>
-                  <button class="pw-btn primary" id="btnCreateKey">Create API key</button>
-                </div>
-              </div>
-
-              <div class="pw-field">
-                <label for="buyerToken">Buyer token</label>
-                <input class="pw-input" id="buyerToken" placeholder="pw_bu_..." />
-              </div>
-
-              <div class="pw-actions">
-                <button class="pw-btn" id="btnSaveToken">Save token</button>
-                <button class="pw-btn" id="btnCopyBuyerToken" type="button">Copy token</button>
-                <button class="pw-btn" id="btnListKeys">List keys</button>
-              </div>
-
-              <div class="pw-row">
-                <div class="pw-field">
-                  <label for="revokeKeyId">Revoke API key (id)</label>
-                  <input class="pw-input" id="revokeKeyId" placeholder="apiKeyId" />
-                </div>
-                <div class="pw-field">
-                  <label>&nbsp;</label>
-                  <button class="pw-btn danger" id="btnRevokeKey">Revoke</button>
-                </div>
-              </div>
-
-              <div id="keyStatus" class="pw-status" role="status"></div>
-              <div class="pw-scroll">
-                <table class="pw-table" aria-label="API keys list">
-                  <thead>
-                    <tr>
-                      <th>Id</th>
-                      <th>Name</th>
-                      <th>Prefix</th>
-                      <th>Created</th>
-                      <th>Last used</th>
-                      <th>Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody id="apiKeysTbody"></tbody>
-                </table>
-              </div>
-              <details class="pw-details pw-dev">
-                <summary>Developer response</summary>
-                <div class="pw-details-body">
-                  <pre class="pw-codeblock" id="keyOut">{}</pre>
-                </div>
-              </details>
             </div>
 
               </div>
