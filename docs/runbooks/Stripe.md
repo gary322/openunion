@@ -106,6 +106,14 @@ This will:
 
 By default, the script prints the `checkout_url` and waits for you to complete it in a real browser (Stripe may show bot mitigation that makes headless automation unreliable).
 
+Tip: the printed Checkout URL includes a `#...` fragment. If you copy only the part before `#`, Stripe may show "The page you were looking for could not be found".
+
+The smoke also writes the full URL to a local file (`checkout_url_file=...`). On macOS you can open it without copy/paste issues via:
+
+```bash
+open "$(cat /tmp/proofwork_stripe_checkout_url_*.txt)"
+```
+
 If you want to *attempt* automation via Playwright:
 
 ```bash
