@@ -3380,6 +3380,7 @@ export function buildServer(opts: { taskDescriptorBrowserFlowValidationGate?: bo
     const submission = await getSubmission(body.submissionId);
     if (!submission) return reply.code(404).send({ error: { code: 'not_found', message: 'Submission not found' } });
     submission.finalVerdict = body.verdict;
+    submission.finalReason = String(body.reason ?? '').slice(0, 500);
     submission.status = body.verdict === 'pass' ? 'accepted' : body.verdict === 'fail' ? 'failed' : 'inconclusive';
     submission.finalQualityScore = body.scorecard.qualityScore;
     submission.payoutStatus = body.verdict === 'pass' ? 'pending' : 'none';
@@ -3399,6 +3400,7 @@ export function buildServer(opts: { taskDescriptorBrowserFlowValidationGate?: bo
     const job = await getJob(submission.jobId);
     if (!job) return reply.code(404).send({ error: { code: 'not_found', message: 'Job missing' } });
     job.finalVerdict = body.verdict;
+    job.finalReason = submission.finalReason;
     job.finalQualityScore = body.scorecard.qualityScore;
 
     // If inconclusive and attempts remain, requeue verification instead of completing the job.
@@ -3502,11 +3504,13 @@ export function buildServer(opts: { taskDescriptorBrowserFlowValidationGate?: bo
     if (!sub) return reply.code(404).send({ error: { code: 'not_found', message: 'submission not found' } });
     sub.status = 'duplicate';
     sub.finalVerdict = 'fail';
+    sub.finalReason = 'admin_mark_duplicate';
     await updateSubmission(sub);
     const job = await getJob(sub.jobId);
     if (job) {
       job.status = 'done';
       job.finalVerdict = 'fail';
+      job.finalReason = sub.finalReason;
       await updateJob(job);
     }
     await writeAuditEvent({
@@ -3526,6 +3530,7 @@ export function buildServer(opts: { taskDescriptorBrowserFlowValidationGate?: bo
     const { verdict, qualityScore } = request.body as any;
     if (!['pass', 'fail', 'inconclusive'].includes(verdict)) return reply.code(400).send({ error: { code: 'invalid', message: 'verdict required' } });
     sub.finalVerdict = verdict as any;
+    sub.finalReason = `admin_override:${verdict}`;
     sub.status = verdict === 'pass' ? 'accepted' : verdict === 'fail' ? 'failed' : 'inconclusive';
     sub.finalQualityScore = qualityScore ?? sub.finalQualityScore ?? 0;
     sub.payoutStatus = verdict === 'pass' ? 'pending' : 'none';
@@ -3533,6 +3538,7 @@ export function buildServer(opts: { taskDescriptorBrowserFlowValidationGate?: bo
     const job = await getJob(sub.jobId);
     if (job) {
       job.finalVerdict = verdict as any;
+      job.finalReason = sub.finalReason;
       job.finalQualityScore = sub.finalQualityScore;
       job.status = 'done';
       await updateJob(job);

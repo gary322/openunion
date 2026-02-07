@@ -197,132 +197,148 @@ async function main() {
   const password = mustEnv('SMOKE_BUYER_PASSWORD', 'password');
   const smokeTaskType = `smoke_marketplace_results_${tsSuffix()}`;
 
-  // Health
-  const health = await fetchJson({ baseUrl, path: '/health' });
-  if (!health.ok) throw new Error(`health_failed:${health.status}`);
+  let buyerToken = '';
+  let authHeader: Record<string, string> = {};
+  let bountyId = '';
 
-  // Obtain buyer token (existing user or self-serve register).
-  const auth = await ensureBuyerAuth({ baseUrl, email, password });
-  const buyerToken = auth.buyerToken;
+  try {
+    // Health
+    const health = await fetchJson({ baseUrl, path: '/health' });
+    if (!health.ok) throw new Error(`health_failed:${health.status}`);
 
-  const authHeader = { authorization: `Bearer ${buyerToken}` };
+    // Obtain buyer token (existing user or self-serve register).
+    const auth = await ensureBuyerAuth({ baseUrl, email, password });
+    buyerToken = auth.buyerToken;
+    authHeader = { authorization: `Bearer ${buyerToken}` };
 
-  // Ensure origin is verified for this org so bounty creation succeeds.
-  const smokeOrigin = process.env.SMOKE_ORIGIN ?? 'https://example.com';
-  await ensureVerifiedOrigin({ baseUrl, buyerToken, origin: smokeOrigin });
+    // Ensure origin is verified for this org so bounty creation succeeds.
+    const smokeOrigin = process.env.SMOKE_ORIGIN ?? 'https://example.com';
+    await ensureVerifiedOrigin({ baseUrl, buyerToken, origin: smokeOrigin });
 
-  // Register the smoke task type in the app registry (required for taskDescriptor.type).
-  // Use a unique task type per run to avoid cross-org collisions if smoke falls back to creating a new org.
-  const appReg = await fetchJson({
-    baseUrl,
-    path: '/api/org/apps',
-    method: 'POST',
-    headers: authHeader,
-    body: {
-      slug: `smoke-${Date.now()}`,
-      taskType: smokeTaskType,
-      name: 'Smoke App',
-      description: 'auto-created by smoke_remote.ts',
-      public: false,
-      dashboardUrl: '/apps/',
-    },
-  });
-  if (!appReg.ok && appReg.status !== 409) {
-    throw new Error(`app_register_failed:${appReg.status}:${appReg.json?.error?.code ?? ''}`);
-  }
-
-  // Create a bounty with a descriptor that our Universal Worker can deterministically satisfy.
-  const bountyTitle = `Smoke bounty ${new Date().toISOString()}`;
-  const bountyResp = await fetchJson({
-    baseUrl,
-    path: '/api/bounties',
-    method: 'POST',
-    headers: authHeader,
-    body: {
-      title: bountyTitle,
-      description: 'Smoke test bounty for task_descriptor + universal worker.',
-      allowedOrigins: [smokeOrigin],
-      requiredProofs: 1,
-      fingerprintClassesRequired: ['desktop_us'],
-      payoutCents: 1500,
-      taskDescriptor: {
-        schema_version: 'v1',
-        type: smokeTaskType,
-        capability_tags: ['browser', 'screenshot', 'http', 'llm_summarize'],
-        input_spec: { url: 'https://example.com', query: 'example' },
-        output_spec: {
-          required_artifacts: [
-            { kind: 'screenshot', label: 'universal_screenshot' },
-            { kind: 'other', label_prefix: 'results' },
-            { kind: 'log', label: 'report_summary' },
-          ],
-        },
-        freshness_sla_sec: 3600,
+    // Register the smoke task type in the app registry (required for taskDescriptor.type).
+    // Use a unique task type per run to avoid cross-org collisions if smoke falls back to creating a new org.
+    const appReg = await fetchJson({
+      baseUrl,
+      path: '/api/org/apps',
+      method: 'POST',
+      headers: authHeader,
+      body: {
+        slug: `smoke-${Date.now()}`,
+        taskType: smokeTaskType,
+        name: 'Smoke App',
+        description: 'auto-created by smoke_remote.ts',
+        public: false,
+        dashboardUrl: '/apps/',
       },
-    },
-  });
-  if (!bountyResp.ok) throw new Error(`bounty_create_failed:${bountyResp.status}:${bountyResp.json?.error?.code ?? ''}`);
-  const bountyId = String(bountyResp.json?.id ?? '');
-  if (!bountyId) throw new Error('bounty_create_missing_id');
+    });
+    if (!appReg.ok && appReg.status !== 409) {
+      throw new Error(`app_register_failed:${appReg.status}:${appReg.json?.error?.code ?? ''}`);
+    }
 
-  // Publish bounty (creates open jobs).
-  let pub = await fetchJson({ baseUrl, path: `/api/bounties/${encodeURIComponent(bountyId)}/publish`, method: 'POST', headers: authHeader });
-  if (!pub.ok) {
-    const code = String(pub.json?.error?.code ?? '');
-    if (pub.status === 409 && code === 'insufficient_funds') {
-      const adminToken = String(process.env.SMOKE_ADMIN_TOKEN ?? '').trim();
-      let orgId = auth.orgId;
-      if (!orgId) {
-        const acct = await fetchJson({ baseUrl, path: '/api/billing/account', headers: authHeader });
-        orgId = String(acct.json?.account?.org_id ?? acct.json?.account?.orgId ?? '') || undefined;
+    // Create a bounty with a descriptor that our Universal Worker can deterministically satisfy.
+    const bountyTitle = `Smoke bounty ${new Date().toISOString()}`;
+    const bountyResp = await fetchJson({
+      baseUrl,
+      path: '/api/bounties',
+      method: 'POST',
+      headers: authHeader,
+      body: {
+        title: bountyTitle,
+        description: 'Smoke test bounty for task_descriptor + universal worker.',
+        allowedOrigins: [smokeOrigin],
+        requiredProofs: 1,
+        fingerprintClassesRequired: ['desktop_us'],
+        payoutCents: 1500,
+        taskDescriptor: {
+          schema_version: 'v1',
+          type: smokeTaskType,
+          capability_tags: ['browser', 'screenshot', 'http', 'llm_summarize'],
+          input_spec: { url: 'https://example.com', query: 'example' },
+          output_spec: {
+            required_artifacts: [
+              { kind: 'screenshot', label: 'universal_screenshot' },
+              { kind: 'other', label_prefix: 'results' },
+              { kind: 'log', label: 'report_summary' },
+            ],
+          },
+          freshness_sla_sec: 3600,
+        },
+      },
+    });
+    if (!bountyResp.ok) throw new Error(`bounty_create_failed:${bountyResp.status}:${bountyResp.json?.error?.code ?? ''}`);
+    bountyId = String(bountyResp.json?.id ?? '');
+    if (!bountyId) throw new Error('bounty_create_missing_id');
+
+    // Publish bounty (creates open jobs).
+    let pub = await fetchJson({ baseUrl, path: `/api/bounties/${encodeURIComponent(bountyId)}/publish`, method: 'POST', headers: authHeader });
+    if (!pub.ok) {
+      const code = String(pub.json?.error?.code ?? '');
+      if (pub.status === 409 && code === 'insufficient_funds') {
+        const adminToken = String(process.env.SMOKE_ADMIN_TOKEN ?? '').trim();
+        let orgId = auth.orgId;
+        if (!orgId) {
+          const acct = await fetchJson({ baseUrl, path: '/api/billing/account', headers: authHeader });
+          orgId = String(acct.json?.account?.org_id ?? acct.json?.account?.orgId ?? '') || undefined;
+        }
+        if (!adminToken || !orgId) {
+          throw new Error(`bounty_publish_failed_insufficient_funds:missing_admin_or_org_id`);
+        }
+        const amountCents = Number(process.env.SMOKE_TOPUP_CENTS ?? 10_000);
+        const top = await fetchJson({
+          baseUrl,
+          path: `/api/admin/billing/orgs/${encodeURIComponent(orgId)}/topup`,
+          method: 'POST',
+          headers: { authorization: `Bearer ${adminToken}` },
+          body: { amountCents },
+        });
+        if (!top.ok) throw new Error(`admin_topup_failed:${top.status}`);
+        pub = await fetchJson({ baseUrl, path: `/api/bounties/${encodeURIComponent(bountyId)}/publish`, method: 'POST', headers: authHeader });
       }
-      if (!adminToken || !orgId) {
-        throw new Error(`bounty_publish_failed_insufficient_funds:missing_admin_or_org_id`);
+    }
+    if (!pub.ok) throw new Error(`bounty_publish_failed:${pub.status}:${pub.json?.error?.code ?? ''}`);
+
+    // Ensure job exists.
+    const jobs0 = await fetchJson({ baseUrl, path: `/api/bounties/${encodeURIComponent(bountyId)}/jobs`, headers: authHeader });
+    if (!jobs0.ok) throw new Error(`bounty_jobs_failed:${jobs0.status}`);
+    const jobId = String(jobs0.json?.jobs?.[0]?.id ?? '');
+    if (!jobId) throw new Error('missing_job_id_after_publish');
+
+    console.log(`[smoke] base_url=${baseUrl}`);
+    console.log(`[smoke] bounty_id=${bountyId}`);
+    console.log(`[smoke] job_id=${jobId}`);
+
+    // Run a real Universal Worker against this environment (claims job + uploads artifacts + submits).
+    await runUniversalWorkerOnce({ baseUrl, requireTaskType: smokeTaskType });
+
+    // Poll until job is done/pass (buyer view).
+    const deadline = Date.now() + 5 * 60_000;
+    for (;;) {
+      const jobs = await fetchJson({ baseUrl, path: `/api/bounties/${encodeURIComponent(bountyId)}/jobs`, headers: authHeader });
+      if (!jobs.ok) throw new Error(`bounty_jobs_poll_failed:${jobs.status}`);
+      const row = (jobs.json?.jobs ?? []).find((j: any) => String(j?.id ?? '') === jobId);
+      const status = String(row?.status ?? '');
+      const verdict = String(row?.finalVerdict ?? '');
+      const reason = String(row?.finalReason ?? '');
+      const subId = String(row?.currentSubmissionId ?? '');
+      if (status === 'done' && verdict === 'pass') break;
+      if (status === 'done' && verdict && verdict !== 'pass') {
+        throw new Error(`job_failed:verdict=${verdict}${reason ? `:reason=${reason}` : ''}${subId ? `:submission=${subId}` : ''}`);
       }
-      const amountCents = Number(process.env.SMOKE_TOPUP_CENTS ?? 10_000);
-      const top = await fetchJson({
-        baseUrl,
-        path: `/api/admin/billing/orgs/${encodeURIComponent(orgId)}/topup`,
-        method: 'POST',
-        headers: { authorization: `Bearer ${adminToken}` },
-        body: { amountCents },
-      });
-      if (!top.ok) throw new Error(`admin_topup_failed:${top.status}`);
-      pub = await fetchJson({ baseUrl, path: `/api/bounties/${encodeURIComponent(bountyId)}/publish`, method: 'POST', headers: authHeader });
+      if (Date.now() > deadline) throw new Error(`timeout_waiting_for_done:status=${status}:verdict=${verdict}`);
+      await sleep(2000);
+    }
+
+    console.log('[smoke] OK');
+  } finally {
+    // Always close the bounty (best-effort) to avoid accumulating published work in shared environments.
+    if (buyerToken && bountyId) {
+      try {
+        await fetchJson({ baseUrl, path: `/api/bounties/${encodeURIComponent(bountyId)}/close`, method: 'POST', headers: authHeader });
+      } catch {
+        // ignore
+      }
     }
   }
-  if (!pub.ok) throw new Error(`bounty_publish_failed:${pub.status}:${pub.json?.error?.code ?? ''}`);
-
-  // Ensure job exists.
-  const jobs0 = await fetchJson({ baseUrl, path: `/api/bounties/${encodeURIComponent(bountyId)}/jobs`, headers: authHeader });
-  if (!jobs0.ok) throw new Error(`bounty_jobs_failed:${jobs0.status}`);
-  const jobId = String(jobs0.json?.jobs?.[0]?.id ?? '');
-  if (!jobId) throw new Error('missing_job_id_after_publish');
-
-  console.log(`[smoke] base_url=${baseUrl}`);
-  console.log(`[smoke] bounty_id=${bountyId}`);
-  console.log(`[smoke] job_id=${jobId}`);
-
-  // Run a real Universal Worker against this environment (claims job + uploads artifacts + submits).
-  await runUniversalWorkerOnce({ baseUrl, requireTaskType: smokeTaskType });
-
-  // Poll until job is done/pass (buyer view).
-  const deadline = Date.now() + 5 * 60_000;
-  for (;;) {
-    const jobs = await fetchJson({ baseUrl, path: `/api/bounties/${encodeURIComponent(bountyId)}/jobs`, headers: authHeader });
-    if (!jobs.ok) throw new Error(`bounty_jobs_poll_failed:${jobs.status}`);
-    const row = (jobs.json?.jobs ?? []).find((j: any) => String(j?.id ?? '') === jobId);
-    const status = String(row?.status ?? '');
-    const verdict = String(row?.finalVerdict ?? '');
-    if (status === 'done' && verdict === 'pass') break;
-    if (Date.now() > deadline) throw new Error(`timeout_waiting_for_done:status=${status}:verdict=${verdict}`);
-    await sleep(2000);
-  }
-
-  // Close bounty to avoid accumulating open work.
-  await fetchJson({ baseUrl, path: `/api/bounties/${encodeURIComponent(bountyId)}/close`, method: 'POST', headers: authHeader });
-
-  console.log('[smoke] OK');
 }
 
 main().catch((err) => {

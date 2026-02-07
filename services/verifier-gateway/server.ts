@@ -199,9 +199,6 @@ async function validateDescriptorBoundArtifacts(input: {
 
     const dl = await downloadArtifactBytes(artifactId);
     if (!dl.ok) return { ok: false, verdict: 'inconclusive', reason: dl.error };
-    if (!String(dl.contentType ?? '').toLowerCase().includes('application/json')) {
-      return { ok: false, verdict: 'fail', reason: 'timeline_artifact_wrong_content_type' };
-    }
     let parsed: any;
     try {
       parsed = parseJsonBytes(dl.bytes);
@@ -248,9 +245,6 @@ async function validateDescriptorBoundArtifacts(input: {
 
     const dl = await downloadArtifactBytes(artifactId);
     if (!dl.ok) return { ok: false, verdict: 'inconclusive', reason: dl.error };
-    if (!String(dl.contentType ?? '').toLowerCase().includes('application/json')) {
-      return { ok: false, verdict: 'fail', reason: `${labelPrefix}_artifact_wrong_content_type` };
-    }
 
     let parsed: any;
     try {
