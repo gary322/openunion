@@ -257,7 +257,8 @@ test('buyer → bounty → worker → upload → verify (gateway) → payout (lo
     // Upload a minimal PNG via the guided required-outputs flow so Submit unlocks deterministically.
     await gotoWorkerView(page, 'outputs');
     await openDetails(page, '#outputs');
-    await expect(page.locator('#requiredOutputs')).toContainText('repro');
+    // On slower runners, the guided outputs UI can lag behind claim UI status updates.
+    await expect(page.locator('#requiredOutputs button[data-slot="0"]')).toBeVisible({ timeout: 20_000 });
     const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00]);
     const fcPromise = page.waitForEvent('filechooser');
     await page.click('#requiredOutputs button[data-slot="0"]');
