@@ -35,8 +35,8 @@ test('create + publish via a vertical app page (github)', async ({ page }) => {
     await page.click('#btnCreateKey');
     await expect(page.locator('#keyStatus')).toContainText('token created');
 
+    await expect(page.locator('#buyerToken')).toHaveValue(/^pw_bu_/);
     const buyerToken = await page.locator('#buyerToken').inputValue();
-    expect(buyerToken).toMatch(/^pw_bu_/);
     // Ensure the app page can connect without relying on Dev-only token UI.
     await page.evaluate((t) => localStorage.setItem('pw_buyer_token', String(t || '')), buyerToken);
 
