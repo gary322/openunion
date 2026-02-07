@@ -36,6 +36,46 @@ describe('jobs/next filters + lease release', () => {
     expect(String(job2.jobId)).not.toBe(String(job1.jobId));
   });
 
+  it('supports require_job_id on /api/jobs/next', async () => {
+    const reg = await request(app.server).post('/api/workers/register').send({ displayName: 'A', capabilities: { browser: true } });
+    expect(reg.status).toBe(200);
+    const token = reg.body.token as string;
+
+    const first = await request(app.server).get('/api/jobs/next').set('Authorization', `Bearer ${token}`);
+    expect(first.status).toBe(200);
+    expect(first.body.state).toBe('claimable');
+    const job1 = first.body.data.job;
+    expect(job1?.jobId).toBeTruthy();
+
+    const required = await request(app.server)
+      .get('/api/jobs/next')
+      .query({ require_job_id: String(job1.jobId) })
+      .set('Authorization', `Bearer ${token}`);
+    expect(required.status).toBe(200);
+    expect(required.body.state).toBe('claimable');
+    expect(String(required.body.data.job.jobId)).toBe(String(job1.jobId));
+  });
+
+  it('supports require_bounty_id on /api/jobs/next', async () => {
+    const reg = await request(app.server).post('/api/workers/register').send({ displayName: 'A', capabilities: { browser: true } });
+    expect(reg.status).toBe(200);
+    const token = reg.body.token as string;
+
+    const first = await request(app.server).get('/api/jobs/next').set('Authorization', `Bearer ${token}`);
+    expect(first.status).toBe(200);
+    expect(first.body.state).toBe('claimable');
+    const job1 = first.body.data.job;
+    expect(job1?.bountyId).toBeTruthy();
+
+    const required = await request(app.server)
+      .get('/api/jobs/next')
+      .query({ require_bounty_id: String(job1.bountyId) })
+      .set('Authorization', `Bearer ${token}`);
+    expect(required.status).toBe(200);
+    expect(required.body.state).toBe('claimable');
+    expect(String(required.body.data.job.bountyId)).toBe(String(job1.bountyId));
+  });
+
   it('allows a worker to release a claimed lease early', async () => {
     const reg = await request(app.server).post('/api/workers/register').send({ displayName: 'A', capabilities: { browser: true } });
     expect(reg.status).toBe(200);
@@ -82,4 +122,3 @@ describe('jobs/next filters + lease release', () => {
     expect(last).toBe(429);
   });
 });
-
