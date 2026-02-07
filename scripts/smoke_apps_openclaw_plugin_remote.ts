@@ -38,6 +38,14 @@ function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+function parseBoolEnv(name: string, fallback: boolean): boolean {
+  const raw = String(process.env[name] ?? '').trim().toLowerCase();
+  if (!raw) return fallback;
+  if (['1', 'true', 'yes', 'y', 'on'].includes(raw)) return true;
+  if (['0', 'false', 'no', 'n', 'off'].includes(raw)) return false;
+  return fallback;
+}
+
 function mustEnv(name: string, fallback?: string): string {
   const v = (process.env[name] ?? fallback ?? '').toString().trim();
   if (!v) throw new Error(`missing_${name}`);
@@ -93,6 +101,37 @@ async function fetchJson(input: {
     json = null;
   }
   return { status: resp.status, ok: resp.ok, headers: resp.headers, json, text };
+}
+
+async function resolveBrowserExecutablePath(): Promise<string | null> {
+  const explicit = String(process.env.SMOKE_BROWSER_EXECUTABLE_PATH ?? '').trim();
+  if (explicit) return explicit;
+
+  // If the repo has Playwright installed, prefer its pinned Chromium binary (no system browser install required).
+  try {
+    const mod: any = await import('playwright');
+    const p = typeof mod?.chromium?.executablePath === 'function' ? String(mod.chromium.executablePath() ?? '').trim() : '';
+    if (p && fs.existsSync(p)) return p;
+  } catch {
+    // ignore
+  }
+
+  // Fall back to common macOS locations if present.
+  const candidates = [
+    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+    '/Applications/Chromium.app/Contents/MacOS/Chromium',
+    '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser',
+    '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
+  ];
+  for (const c of candidates) {
+    try {
+      if (fs.existsSync(c)) return c;
+    } catch {
+      // ignore
+    }
+  }
+
+  return null;
 }
 
 async function runCommandChecked(
@@ -370,6 +409,17 @@ async function main() {
   // Install plugin into the isolated OpenClaw state.
   await runCommandChecked(openclawBin, ['plugins', 'install', pluginSpec], { timeoutMs: 5 * 60_000, env: ocEnv });
 
+  // Configure OpenClaw browser execution to avoid requiring a system-installed browser and to avoid opening windows.
+  const headless = parseBoolEnv('SMOKE_BROWSER_HEADLESS', true);
+  const exePath = await resolveBrowserExecutablePath();
+  if (exePath) {
+    console.log(`[smoke_apps_plugin] openclaw_browser_executable_path=${exePath}`);
+    await runCommandChecked(openclawBin, ['config', 'set', '--json', 'browser.executablePath', JSON.stringify(exePath)], { timeoutMs: 15_000, env: ocEnv });
+  } else {
+    console.log('[smoke_apps_plugin] openclaw_browser_executable_path not set (auto-detect). If browser jobs fail, set SMOKE_BROWSER_EXECUTABLE_PATH.');
+  }
+  await runCommandChecked(openclawBin, ['config', 'set', '--json', 'browser.headless', JSON.stringify(headless)], { timeoutMs: 15_000, env: ocEnv });
+
   // Minimal gateway config.
   await runCommandChecked(openclawBin, ['config', 'set', '--json', 'gateway.mode', JSON.stringify('local')], { timeoutMs: 15_000, env: ocEnv });
   await runCommandChecked(openclawBin, ['config', 'set', '--json', 'gateway.auth.mode', JSON.stringify('token')], { timeoutMs: 15_000, env: ocEnv });
@@ -457,6 +507,9 @@ async function main() {
         await sleep(500);
       }
     }
+
+    // Ensure browser can start for the configured profile (fails fast rather than timing out later).
+    await runCommandChecked(openclawBin, ['browser', '--browser-profile', browserProfile, 'start', '--json'], { timeoutMs: 60_000, env: ocEnv });
 
     // Ensure system apps expose the smoke origin for determinism (Marketplace/Clips at minimum).
     const apps = await fetchJson({ baseUrl, path: '/api/apps' });
@@ -595,4 +648,3 @@ main().catch((err) => {
   console.error(String(err?.message ?? err));
   process.exitCode = 1;
 });
-
