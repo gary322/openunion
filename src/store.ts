@@ -782,7 +782,13 @@ export async function seedBuiltInApps() {
   //
   // IMPORTANT: do not add a marketplace "supported origin" unless we also ship a template for
   // it in `marketplace_origin_templates`. The UX contract is "it works by default".
-  const marketplaceOrigins = ['https://www.ebay.com', 'https://store.steampowered.com'];
+  const marketplaceOrigins = [
+    'https://www.ebay.com',
+    'https://www.newegg.com',
+    'https://store.steampowered.com',
+    'https://www.humblebundle.com',
+    'https://www.gog.com',
+  ];
   for (const o of marketplaceOrigins) addSupported('app_marketplace', o, 'marketplace_supported');
 
   const clipsOrigins = [
