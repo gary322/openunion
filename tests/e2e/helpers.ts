@@ -113,3 +113,14 @@ export async function fillBuyerDemoLogin(page: Page, opts: { email?: string; pas
   await page.fill('#email', String(opts.email ?? 'buyer@example.com'));
   await page.fill('#password', String(opts.password ?? 'password'));
 }
+
+export async function openBuyerApiKeysTab(page: Page) {
+  await openDetails(page, '#foldAccess');
+  // Access is now tabbed to reduce scroll + cognitive load.
+  await page.click('#tabAccessKeys');
+}
+
+export async function openBuyerCreateOrgTab(page: Page) {
+  await openDetails(page, '#foldAccess');
+  await page.click('#tabAccessRegister');
+}

@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import http from 'http';
-import { fillBuyerDemoLogin, fillRequiredAppForm, openDetails } from './helpers';
+import { fillBuyerDemoLogin, fillRequiredAppForm, openBuyerApiKeysTab, openDetails } from './helpers';
 
 test('create + publish via a vertical app page (github)', async ({ page }) => {
   test.setTimeout(90_000);
@@ -32,6 +32,7 @@ test('create + publish via a vertical app page (github)', async ({ page }) => {
     await page.click('#btnLogin');
     await expect(page.locator('#loginStatus')).toContainText('ok');
 
+    await openBuyerApiKeysTab(page);
     await page.click('#btnCreateKey');
     await expect(page.locator('#keyStatus')).toContainText('token created');
 

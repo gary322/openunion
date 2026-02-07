@@ -6,7 +6,7 @@ import { fileURLToPath } from 'url';
 import { readFile } from 'fs/promises';
 import { Contract, ContractFactory, HDNodeWallet, JsonRpcProvider, Wallet, getAddress } from 'ethers';
 import pg from 'pg';
-import { fillBuyerDemoLogin, openDetails } from './helpers.js';
+import { fillBuyerDemoLogin, openBuyerApiKeysTab, openDetails } from './helpers.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -161,6 +161,7 @@ test('buyer → bounty → worker → upload → verify (gateway) → payout (lo
     await page.click('#btnSetPlatformFee');
     await expect(page.locator('#pfStatus')).toContainText('saved');
 
+    await openBuyerApiKeysTab(page);
     await page.click('#btnCreateKey');
     await expect(page.locator('#keyStatus')).toContainText('token created');
     await expect(page.locator('#buyerToken')).toHaveValue(/^pw_bu_/);
