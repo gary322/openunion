@@ -6,7 +6,7 @@
     <title>Proofwork • Worker Console</title>
     <link rel="stylesheet" href="/ui/ui.css" />
   </head>
-  <body class="theme-worker" data-portal="worker">
+  <body class="theme-worker pw-has-actionbar" data-portal="worker">
     <header class="pw-topbar">
       <div class="pw-topbar-inner">
         <a class="pw-brand" href="/apps/" aria-label="Proofwork home">
@@ -335,6 +335,20 @@
         </section>
       </div>
     </main>
+
+    <div class="pw-actionbar" id="workerActionbar" aria-label="Next action">
+      <div class="pw-actionbar-inner">
+        <div class="pw-actionbar-card">
+          <div class="pw-actionbar-meta">
+            <div class="pw-actionbar-title" id="workerActionbarTitle">Next: get a worker token</div>
+            <div class="pw-actionbar-sub" id="workerActionbarSub">Register once or paste a token. We store it locally in your browser.</div>
+          </div>
+          <div class="pw-actions">
+            <button class="pw-btn primary" id="btnWorkerActionbar" type="button">Set up</button>
+          </div>
+        </div>
+      </div>
+    </div>
 
     <script type="module" src="/worker/app.js"></script>
     <script type="module" src="/ui/shell.js"></script>
