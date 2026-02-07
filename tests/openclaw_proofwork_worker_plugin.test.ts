@@ -30,6 +30,24 @@ async function readJsonEventually(p: string, opts: { timeoutMs?: number; interva
   }
 }
 
+async function readJsonEventuallyUntil(p: string, pred: (j: any) => boolean, opts: { timeoutMs?: number; intervalMs?: number } = {}) {
+  const timeoutMs = opts.timeoutMs ?? 3000;
+  const intervalMs = opts.intervalMs ?? 50;
+  const start = Date.now();
+  let last: any = null;
+  for (;;) {
+    try {
+      const raw = await readFile(p, 'utf8');
+      last = raw ? JSON.parse(raw) : null;
+    } catch {
+      last = null;
+    }
+    if (pred(last)) return last;
+    if (Date.now() - start > timeoutMs) return last;
+    await sleep(intervalMs);
+  }
+}
+
 async function makeStubWorker(params: { dir: string; kind: 'stay_alive' | 'exit_1' }): Promise<string> {
   const p = join(params.dir, `stub-worker-${params.kind}.mjs`);
   const code = `import fs from "node:fs/promises";
@@ -316,9 +334,7 @@ describe('OpenClaw Proofwork Worker plugin (service + commands)', () => {
 
     const resumed = await command.handler({ args: 'resume' });
     expect(String(resumed.text)).toContain('resumed');
-    await sleep(200);
-
-    const statusAfter = JSON.parse(await readFile(statusFile, 'utf8'));
+    const statusAfter = await readJsonEventuallyUntil(statusFile, (s) => Number(s?.runCount ?? 0) >= 2, { timeoutMs: 3000, intervalMs: 60 });
     expect(Number(statusAfter.runCount ?? 0)).toBeGreaterThanOrEqual(2);
 
     const rotated = await command.handler({ args: 'token rotate' });

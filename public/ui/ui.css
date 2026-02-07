@@ -590,8 +590,14 @@ a:hover {
 .pw-status.good {
   color: rgba(21, 128, 61, 0.92);
 }
+.pw-status.warn {
+  color: rgba(234, 88, 12, 0.92);
+}
 .pw-status.bad {
   color: rgba(220, 38, 38, 0.92);
+}
+.pw-status.faint {
+  color: rgba(11, 15, 25, 0.52);
 }
 
 .pw-codeblock {
@@ -627,6 +633,9 @@ a:hover {
 }
 .pw-table tr:hover td {
   background: rgba(255, 255, 255, 0.45);
+}
+.pw-table tr.pw-row-selected td {
+  background: linear-gradient(135deg, rgba(11, 15, 25, 0.02), var(--accent-soft));
 }
 .pw-table .pw-btn {
   padding: 7px 10px;
@@ -1368,6 +1377,11 @@ body.pw-dev-on .pw-not-dev {
   border: 1px solid rgba(11, 15, 25, 0.12);
   background: rgba(255, 255, 255, 0.65);
 }
+.pw-step.active {
+  border-color: rgba(11, 15, 25, 0.18);
+  background: linear-gradient(135deg, var(--accent-soft), rgba(255, 255, 255, 0.78));
+  box-shadow: var(--shadow-soft);
+}
 .pw-step-dot {
   width: 22px;
   height: 22px;
@@ -1385,6 +1399,10 @@ body.pw-dev-on .pw-not-dev {
   background: rgba(21, 128, 61, 0.16);
   border-color: rgba(21, 128, 61, 0.24);
   color: rgba(21, 128, 61, 0.95);
+}
+.pw-step.active .pw-step-dot {
+  border-color: rgba(11, 15, 25, 0.18);
+  background: rgba(255, 255, 255, 0.76);
 }
 .pw-step-title {
   font-weight: 800;

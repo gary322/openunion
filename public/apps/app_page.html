@@ -58,21 +58,21 @@
             </div>
 
             <div class="pw-stepper">
-              <div class="pw-step">
+              <div class="pw-step" id="stepConnect">
                 <div class="pw-step-dot">1</div>
                 <div>
                   <div class="pw-step-title">Connect</div>
-                  <div class="pw-step-desc">Sign in (recommended) or paste a buyer token once. We store credentials locally in your browser.</div>
+                  <div class="pw-step-desc">Sign in (recommended) or paste a buyer token once. Passwords are never stored; interactive sessions use cookies + CSRF.</div>
                 </div>
               </div>
-              <div class="pw-step">
+              <div class="pw-step" id="stepDescribe">
                 <div class="pw-step-dot">2</div>
                 <div>
                   <div class="pw-step-title">Describe</div>
                   <div class="pw-step-desc">Fill a simple form; we generate the descriptor automatically.</div>
                 </div>
               </div>
-              <div class="pw-step">
+              <div class="pw-step" id="stepPublish">
                 <div class="pw-step-dot">3</div>
                 <div>
                   <div class="pw-step-title">Publish</div>
@@ -106,12 +106,12 @@
                 <span class="pw-pill warn" id="pillConnect">Required</span>
               </summary>
               <div class="pw-fold-body">
-                <div class="pw-card soft" id="connectRow">
-                  <div class="pw-card-title">
-                    <h3>Connect</h3>
-                    <span class="pw-kicker">Required</span>
-                  </div>
-                  <p class="pw-muted">Sign in (recommended) or paste an API token. We store credentials locally in your browser.</p>
+                  <div class="pw-card soft" id="connectRow">
+                    <div class="pw-card-title">
+                      <h3>Connect</h3>
+                      <span class="pw-kicker">Required</span>
+                    </div>
+                  <p class="pw-muted">Sign in (recommended) or paste an API token. Passwords are never stored; interactive sessions use cookies + CSRF.</p>
 
                   <div class="pw-tabs" role="tablist" aria-label="Connect options">
                     <button class="pw-tab" id="tabSignIn" type="button" role="tab" aria-selected="true" aria-controls="panelSignIn">Sign in</button>
@@ -136,6 +136,35 @@
                         <a class="pw-btn" href="/buyer/" rel="noreferrer">Platform console</a>
                       </div>
                       <div id="loginStatus" class="pw-status" role="status"></div>
+
+                      <details class="pw-details" id="registerFold">
+                        <summary>New platform? Create an org</summary>
+                        <div class="pw-details-body">
+                          <p class="pw-muted">
+                            Creates your org and an initial API key, then signs you in. Uses the Email and Password fields above.
+                          </p>
+                          <div class="pw-row">
+                            <div class="pw-field">
+                              <label for="regOrgName">Org name</label>
+                              <input class="pw-input" id="regOrgName" placeholder="My Platform" />
+                            </div>
+                            <div class="pw-field">
+                              <label for="regApiKeyName">API key name</label>
+                              <input class="pw-input" id="regApiKeyName" value="default" />
+                            </div>
+                          </div>
+                          <div class="pw-actions">
+                            <button class="pw-btn primary" id="btnRegisterOrg" type="button">Create org + sign in</button>
+                          </div>
+                          <div id="regStatus" class="pw-status" role="status"></div>
+                          <details class="pw-details pw-dev">
+                            <summary>Developer response</summary>
+                            <div class="pw-details-body">
+                              <pre class="pw-codeblock" id="regOut">{}</pre>
+                            </div>
+                          </details>
+                        </div>
+                      </details>
                     </div>
 
                     <div class="pw-tabpanel pw-dev" id="panelToken" role="tabpanel" aria-labelledby="tabToken" hidden>
@@ -271,7 +300,8 @@
                     </div>
                   </div>
 
-                  <div id="preflightStatus" class="pw-muted" role="status"></div>
+                  <div id="preflightStatus" class="pw-status" role="status"></div>
+                  <div class="pw-actions" id="preflightActions" aria-label="Next action"></div>
                   <div id="createStatus" class="pw-status" role="status"></div>
 
                   <details class="pw-details pw-dev" id="advanced">
