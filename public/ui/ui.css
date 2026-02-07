@@ -459,17 +459,21 @@ a:hover {
 }
 .pw-card-title h2 {
   margin: 0;
-  font-size: 14px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: rgba(11, 15, 25, 0.64);
+  font-family: var(--font-serif);
+  font-size: 22px;
+  line-height: 1.12;
+  letter-spacing: 0.2px;
+  text-transform: none;
+  color: rgba(11, 15, 25, 0.92);
 }
 .pw-card-title h3 {
   margin: 0;
-  font-size: 14px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: rgba(11, 15, 25, 0.64);
+  font-family: var(--font-serif);
+  font-size: 18px;
+  line-height: 1.2;
+  letter-spacing: 0.1px;
+  text-transform: none;
+  color: rgba(11, 15, 25, 0.9);
 }
 .pw-card-title .pw-kicker {
   font-size: 12px;
