@@ -416,6 +416,595 @@ function renderAppPreview(uiSchema) {
   }
 }
 
+const APP_DESIGNER_FIELD_TYPES = [
+  ['text', 'Text'],
+  ['textarea', 'Long text'],
+  ['url', 'URL'],
+  ['number', 'Number'],
+  ['select', 'Select'],
+  ['boolean', 'Yes/No'],
+  ['date', 'Date'],
+];
+const APP_DESIGNER_STORES = [
+  ['input_spec', 'Input'],
+  ['site_profile', 'Site profile'],
+];
+const APP_DESIGNER_CAPS = [
+  ['browser', 'Browser'],
+  ['http', 'HTTP'],
+  ['ffmpeg', 'FFmpeg'],
+  ['llm_summarize', 'LLM summarize'],
+  ['screenshot', 'Screenshot'],
+];
+const APP_DESIGNER_ARTIFACT_KINDS = [
+  ['log', 'Log'],
+  ['screenshot', 'Screenshot'],
+  ['snapshot', 'Snapshot'],
+  ['pdf', 'PDF'],
+  ['video', 'Video'],
+  ['other', 'Other'],
+];
+
+let appDesignerWired = false;
+let appDesignerSyncTimer = 0;
+
+function optionsTextFromArray(options) {
+  const opts = Array.isArray(options) ? options : [];
+  const lines = [];
+  for (const o of opts) {
+    const label = String(o?.label ?? '').trim();
+    const value = String(o?.value ?? '').trim();
+    if (!label && !value) continue;
+    if (!label || label === value) lines.push(value || label);
+    else lines.push(`${label}: ${value}`);
+  }
+  return lines.join('\n');
+}
+
+function parseOptionsText(text) {
+  const raw = String(text ?? '');
+  const out = [];
+  for (const line of raw.split('\n')) {
+    const s = String(line).trim();
+    if (!s) continue;
+    const idx = s.indexOf(':');
+    if (idx === -1) {
+      out.push({ label: s, value: s });
+      continue;
+    }
+    const label = s.slice(0, idx).trim();
+    const value = s.slice(idx + 1).trim();
+    if (!label && !value) continue;
+    out.push({ label: label || value, value: value || label });
+  }
+  return out;
+}
+
+function ensureAppDesignerScaffolding() {
+  if (!generatedAppUiSchema || typeof generatedAppUiSchema !== 'object') return;
+  if (!generatedAppDefaultDescriptor || typeof generatedAppDefaultDescriptor !== 'object') return;
+
+  if (!Array.isArray(generatedAppUiSchema.sections) || !generatedAppUiSchema.sections.length) {
+    generatedAppUiSchema.sections = [
+      {
+        id: 'request',
+        title: 'Request',
+        description: '',
+        fields: [],
+      },
+    ];
+  }
+  const sec = generatedAppUiSchema.sections[0];
+  if (!sec.id) sec.id = 'request';
+  if (!sec.title) sec.title = 'Request';
+  if (!Array.isArray(sec.fields)) sec.fields = [];
+
+  if (!Array.isArray(generatedAppDefaultDescriptor.capability_tags) || generatedAppDefaultDescriptor.capability_tags.length < 1) {
+    generatedAppDefaultDescriptor.capability_tags = ['http'];
+  }
+  if (!generatedAppDefaultDescriptor.input_spec || typeof generatedAppDefaultDescriptor.input_spec !== 'object') {
+    generatedAppDefaultDescriptor.input_spec = {};
+  }
+  if (!generatedAppDefaultDescriptor.output_spec || typeof generatedAppDefaultDescriptor.output_spec !== 'object') {
+    generatedAppDefaultDescriptor.output_spec = {};
+  }
+}
+
+function syncGeneratedToDevJson() {
+  const dd = $('appDefaultDescriptor');
+  const us = $('appUiSchema');
+  if (dd && generatedAppDefaultDescriptor) dd.value = pretty(generatedAppDefaultDescriptor);
+  if (us && generatedAppUiSchema) us.value = pretty(generatedAppUiSchema);
+  renderAppPreview(generatedAppUiSchema);
+}
+
+function scheduleAppDesignerSync() {
+  if (appDesignerSyncTimer) clearTimeout(appDesignerSyncTimer);
+  appDesignerSyncTimer = setTimeout(() => {
+    appDesignerSyncTimer = 0;
+    syncAppDesignerFromDom();
+  }, 160);
+}
+
+function flushAppDesignerSync() {
+  if (appDesignerSyncTimer) {
+    clearTimeout(appDesignerSyncTimer);
+    appDesignerSyncTimer = 0;
+  }
+  syncAppDesignerFromDom();
+}
+
+function syncAppDesignerFromDom() {
+  if (!generatedAppUiSchema || !generatedAppDefaultDescriptor) return;
+  ensureAppDesignerScaffolding();
+
+  const sec = generatedAppUiSchema.sections[0];
+  const prevFields = Array.isArray(sec.fields) ? sec.fields : [];
+
+  const category = $('appCategory')?.value?.trim?.() || '';
+  if (category) generatedAppUiSchema.category = category;
+  else delete generatedAppUiSchema.category;
+
+  const title = $('appSectionTitle')?.value?.trim?.() || '';
+  sec.title = title || 'Request';
+
+  const payoutRaw = $('appDefaultPayoutCents')?.value;
+  const proofsRaw = $('appDefaultRequiredProofs')?.value;
+  const payoutCents = payoutRaw === undefined || payoutRaw === null || String(payoutRaw).trim() === '' ? null : Math.max(0, Math.floor(Number(payoutRaw)));
+  const requiredProofs = proofsRaw === undefined || proofsRaw === null || String(proofsRaw).trim() === '' ? null : Math.max(0, Math.floor(Number(proofsRaw)));
+  if (payoutCents !== null || requiredProofs !== null) {
+    generatedAppUiSchema.bounty_defaults = generatedAppUiSchema.bounty_defaults && typeof generatedAppUiSchema.bounty_defaults === 'object' ? generatedAppUiSchema.bounty_defaults : {};
+    if (payoutCents !== null) generatedAppUiSchema.bounty_defaults.payout_cents = payoutCents;
+    else delete generatedAppUiSchema.bounty_defaults.payout_cents;
+    if (requiredProofs !== null) generatedAppUiSchema.bounty_defaults.required_proofs = requiredProofs;
+    else delete generatedAppUiSchema.bounty_defaults.required_proofs;
+  } else {
+    delete generatedAppUiSchema.bounty_defaults;
+  }
+
+  const freshnessRaw = $('appFreshnessSla')?.value;
+  const freshness = freshnessRaw === undefined || freshnessRaw === null || String(freshnessRaw).trim() === '' ? null : Math.max(1, Math.floor(Number(freshnessRaw)));
+  if (freshness) generatedAppDefaultDescriptor.freshness_sla_sec = freshness;
+  else delete generatedAppDefaultDescriptor.freshness_sla_sec;
+
+  const tbody = $('appFieldsTbody');
+  const rows = tbody ? Array.from(tbody.querySelectorAll('tr[data-field-row="1"]')) : [];
+  const nextFields = [];
+  for (let i = 0; i < rows.length; i++) {
+    const tr = rows[i];
+    const keyIn = tr.querySelector('[data-col="key"]');
+    const labelIn = tr.querySelector('[data-col="label"]');
+    const typeSel = tr.querySelector('[data-col="type"]');
+    const storeSel = tr.querySelector('[data-col="store"]');
+    const reqIn = tr.querySelector('[data-col="required"]');
+    const phIn = tr.querySelector('[data-col="placeholder"]');
+    const optIn = tr.querySelector('[data-col="options"]');
+
+    const key = String(keyIn?.value ?? '').trim();
+    if (!key) continue;
+    const label = String(labelIn?.value ?? '').trim() || key;
+    const type = String(typeSel?.value ?? 'text').trim() || 'text';
+    const store = String(storeSel?.value ?? 'input_spec').trim() === 'site_profile' ? 'site_profile' : 'input_spec';
+    const required = Boolean(reqIn?.checked);
+    const placeholder = String(phIn?.value ?? '').trim();
+    const optionsText = String(optIn?.value ?? '');
+
+    const prev = prevFields[i] && typeof prevFields[i] === 'object' ? prevFields[i] : {};
+    const prevTarget = String(prev?.target ?? '').trim();
+    const prevKey = String(prev?.key ?? '').trim();
+    const prevStore = prevTarget.startsWith('site_profile.') ? 'site_profile' : 'input_spec';
+
+    let target = prevTarget;
+    if (!target || prevKey !== key || prevStore !== store) target = `${store}.${key}`;
+
+    const next = { ...prev };
+    next.key = key;
+    next.label = label;
+    next.type = type;
+    next.required = required ? true : undefined;
+    if (placeholder) next.placeholder = placeholder;
+    else delete next.placeholder;
+    next.target = target;
+
+    if (type === 'select') {
+      const opts = parseOptionsText(optionsText);
+      if (opts.length) next.options = opts;
+      else delete next.options;
+    } else {
+      delete next.options;
+    }
+
+    if (type !== 'textarea') delete next.format;
+    if (type !== 'number') {
+      delete next.min;
+      delete next.max;
+    }
+
+    nextFields.push(next);
+  }
+
+  if (!nextFields.length) {
+    nextFields.push({
+      key: 'instructions',
+      label: 'Instructions',
+      type: 'textarea',
+      placeholder: 'Describe the task in a few sentences.',
+      target: 'input_spec.instructions',
+    });
+  }
+  sec.fields = nextFields;
+
+  const outTbody = $('appOutputsTbody');
+  const outRows = outTbody ? Array.from(outTbody.querySelectorAll('tr[data-output-row="1"]')) : [];
+  const reqArtifacts = [];
+  for (const tr of outRows) {
+    const kindSel = tr.querySelector('[data-col="kind"]');
+    const labelIn = tr.querySelector('[data-col="label"]');
+    const countIn = tr.querySelector('[data-col="count"]');
+    const kind = String(kindSel?.value ?? 'log').trim() || 'log';
+    const label = String(labelIn?.value ?? '').trim();
+    const countRaw = String(countIn?.value ?? '').trim();
+    const count = countRaw ? Math.max(1, Math.floor(Number(countRaw))) : undefined;
+    const row = { kind };
+    if (label) row.label = label;
+    else row.label = kind;
+    if (count !== undefined) row.count = count;
+    reqArtifacts.push(row);
+  }
+  if (reqArtifacts.length) {
+    if (!generatedAppDefaultDescriptor.output_spec || typeof generatedAppDefaultDescriptor.output_spec !== 'object') generatedAppDefaultDescriptor.output_spec = {};
+    generatedAppDefaultDescriptor.output_spec.required_artifacts = reqArtifacts;
+  } else if (generatedAppDefaultDescriptor.output_spec && typeof generatedAppDefaultDescriptor.output_spec === 'object') {
+    delete generatedAppDefaultDescriptor.output_spec.required_artifacts;
+  }
+
+  syncGeneratedToDevJson();
+}
+
+function renderAppDesigner() {
+  const card = $('appDesignerCard');
+  const tbody = $('appFieldsTbody');
+  const outTbody = $('appOutputsTbody');
+  const capsWrap = $('appCapsWrap');
+  if (!card || !tbody || !outTbody || !capsWrap) return;
+
+  if (!appDesignerWired) {
+    appDesignerWired = true;
+
+    $('appCategory')?.addEventListener?.('input', scheduleAppDesignerSync);
+    $('appSectionTitle')?.addEventListener?.('input', scheduleAppDesignerSync);
+    $('appFreshnessSla')?.addEventListener?.('input', scheduleAppDesignerSync);
+    $('appDefaultPayoutCents')?.addEventListener?.('input', scheduleAppDesignerSync);
+    $('appDefaultRequiredProofs')?.addEventListener?.('input', scheduleAppDesignerSync);
+
+    $('btnAppAddField')?.addEventListener?.('click', () => {
+      if (!generatedAppUiSchema) return toast('Name your app first', 'bad');
+      flushAppDesignerSync();
+      ensureAppDesignerScaffolding();
+      const sec = generatedAppUiSchema.sections[0];
+      const existing = new Set((sec.fields || []).map((f) => String(f?.key || '').trim()).filter(Boolean));
+      let base = 'field';
+      let n = 1;
+      let key = base;
+      while (existing.has(key)) {
+        n += 1;
+        key = `${base}_${n}`;
+      }
+      sec.fields.push({ key, label: 'Field', type: 'text', target: `input_spec.${key}` });
+      renderAppDesigner();
+      syncGeneratedToDevJson();
+    });
+
+    $('btnAppAddOutput')?.addEventListener?.('click', () => {
+      if (!generatedAppDefaultDescriptor) return toast('Name your app first', 'bad');
+      flushAppDesignerSync();
+      ensureAppDesignerScaffolding();
+      if (!generatedAppDefaultDescriptor.output_spec || typeof generatedAppDefaultDescriptor.output_spec !== 'object') generatedAppDefaultDescriptor.output_spec = {};
+      const cur = Array.isArray(generatedAppDefaultDescriptor.output_spec.required_artifacts)
+        ? generatedAppDefaultDescriptor.output_spec.required_artifacts
+        : [];
+      cur.push({ kind: 'log', label: 'report' });
+      generatedAppDefaultDescriptor.output_spec.required_artifacts = cur;
+      renderAppDesigner();
+      syncGeneratedToDevJson();
+    });
+
+    // Field table event delegation
+    tbody.addEventListener('input', (ev) => {
+      const t = ev.target;
+      if (!t) return;
+      if (t.matches('[data-col="key"],[data-col="label"],[data-col="placeholder"],[data-col="options"],[data-col="required"]')) scheduleAppDesignerSync();
+    });
+    tbody.addEventListener('change', (ev) => {
+      const t = ev.target;
+      if (!t) return;
+      if (t.matches('[data-col="type"]')) {
+        const tr = t.closest('tr');
+        const opt = tr?.querySelector?.('[data-col="options"]');
+        if (opt) opt.disabled = String(t.value) !== 'select';
+        scheduleAppDesignerSync();
+      }
+      if (t.matches('[data-col="store"]')) scheduleAppDesignerSync();
+    });
+    tbody.addEventListener('blur', (ev) => {
+      const t = ev.target;
+      if (!t) return;
+      if (t.matches('[data-col="key"]')) {
+        const next = toSnake(String(t.value || ''));
+        if (next && next !== String(t.value || '')) t.value = next;
+        scheduleAppDesignerSync();
+      }
+    }, true);
+    tbody.addEventListener('click', (ev) => {
+      const btn = ev.target?.closest?.('button[data-action="remove-field"]');
+      if (!btn) return;
+      if (!generatedAppUiSchema) return;
+      flushAppDesignerSync();
+      ensureAppDesignerScaffolding();
+      const idx = Number(btn.dataset.idx || '0');
+      const sec = generatedAppUiSchema.sections[0];
+      if (!Array.isArray(sec.fields)) sec.fields = [];
+      sec.fields.splice(idx, 1);
+      if (!sec.fields.length) {
+        sec.fields.push({
+          key: 'instructions',
+          label: 'Instructions',
+          type: 'textarea',
+          placeholder: 'Describe the task in a few sentences.',
+          target: 'input_spec.instructions',
+        });
+      }
+      renderAppDesigner();
+      syncGeneratedToDevJson();
+    });
+
+    // Outputs table
+    outTbody.addEventListener('input', (ev) => {
+      const t = ev.target;
+      if (!t) return;
+      if (t.matches('[data-col="label"],[data-col="count"]')) scheduleAppDesignerSync();
+    });
+    outTbody.addEventListener('change', (ev) => {
+      const t = ev.target;
+      if (!t) return;
+      if (t.matches('[data-col="kind"]')) scheduleAppDesignerSync();
+    });
+    outTbody.addEventListener('click', (ev) => {
+      const btn = ev.target?.closest?.('button[data-action="remove-output"]');
+      if (!btn) return;
+      if (!generatedAppDefaultDescriptor) return;
+      flushAppDesignerSync();
+      ensureAppDesignerScaffolding();
+      if (!generatedAppDefaultDescriptor.output_spec || typeof generatedAppDefaultDescriptor.output_spec !== 'object') generatedAppDefaultDescriptor.output_spec = {};
+      const cur = Array.isArray(generatedAppDefaultDescriptor.output_spec.required_artifacts)
+        ? generatedAppDefaultDescriptor.output_spec.required_artifacts
+        : [];
+      const idx = Number(btn.dataset.idx || '0');
+      cur.splice(idx, 1);
+      generatedAppDefaultDescriptor.output_spec.required_artifacts = cur;
+      renderAppDesigner();
+      syncGeneratedToDevJson();
+    });
+
+    // Capabilities chip toggles
+    capsWrap.addEventListener('click', (ev) => {
+      const btn = ev.target?.closest?.('button[data-cap]');
+      if (!btn) return;
+      if (!generatedAppDefaultDescriptor) return;
+      flushAppDesignerSync();
+      ensureAppDesignerScaffolding();
+      const cap = String(btn.dataset.cap || '').trim();
+      if (!cap) return;
+      const cur = new Set(Array.isArray(generatedAppDefaultDescriptor.capability_tags) ? generatedAppDefaultDescriptor.capability_tags : []);
+      if (cur.has(cap)) {
+        if (cur.size <= 1) return toast('At least one capability tag is required', 'bad');
+        cur.delete(cap);
+      } else {
+        cur.add(cap);
+      }
+      generatedAppDefaultDescriptor.capability_tags = Array.from(cur);
+      renderAppDesigner();
+      syncGeneratedToDevJson();
+    });
+  }
+
+  // No app named yet: keep it calm and non-interactive.
+  if (!generatedAppUiSchema || !generatedAppDefaultDescriptor) {
+    tbody.innerHTML = '<tr><td class="pw-muted" colspan="8">Name your app and pick a template to start designing.</td></tr>';
+    outTbody.innerHTML = '<tr><td class="pw-muted" colspan="4">Optional: set required outputs after you add fields.</td></tr>';
+    capsWrap.replaceChildren();
+    return;
+  }
+
+  ensureAppDesignerScaffolding();
+
+  const sec = generatedAppUiSchema.sections[0];
+  $('appCategory').value = String(generatedAppUiSchema.category || '');
+  $('appSectionTitle').value = String(sec.title || 'Request');
+
+  const freshness = generatedAppDefaultDescriptor.freshness_sla_sec;
+  $('appFreshnessSla').value = freshness ? String(freshness) : '';
+
+  const payoutCents = generatedAppUiSchema?.bounty_defaults?.payout_cents;
+  const requiredProofs = generatedAppUiSchema?.bounty_defaults?.required_proofs;
+  $('appDefaultPayoutCents').value = payoutCents === undefined || payoutCents === null ? '' : String(payoutCents);
+  $('appDefaultRequiredProofs').value = requiredProofs === undefined || requiredProofs === null ? '' : String(requiredProofs);
+
+  // Caps
+  const caps = new Set(Array.isArray(generatedAppDefaultDescriptor.capability_tags) ? generatedAppDefaultDescriptor.capability_tags : []);
+  capsWrap.replaceChildren(
+    ...APP_DESIGNER_CAPS.map(([id, label]) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'pw-chip pw-chip-btn';
+      btn.dataset.cap = id;
+      btn.setAttribute('aria-pressed', caps.has(id) ? 'true' : 'false');
+      btn.title = 'Toggle capability tag';
+      btn.textContent = label;
+      return btn;
+    })
+  );
+
+  // Fields
+  tbody.innerHTML = '';
+  const fields = Array.isArray(sec.fields) ? sec.fields : [];
+  for (let i = 0; i < fields.length; i++) {
+    const f = fields[i] || {};
+    const tr = document.createElement('tr');
+    tr.dataset.fieldRow = '1';
+
+    const target = String(f?.target || '').trim();
+    const store = target.startsWith('site_profile.') ? 'site_profile' : 'input_spec';
+
+    const tdKey = document.createElement('td');
+    const inKey = document.createElement('input');
+    inKey.className = 'pw-input';
+    inKey.value = String(f?.key || '');
+    inKey.placeholder = 'field_key';
+    inKey.setAttribute('data-col', 'key');
+    tdKey.appendChild(inKey);
+
+    const tdLabel = document.createElement('td');
+    const inLabel = document.createElement('input');
+    inLabel.className = 'pw-input';
+    inLabel.value = String(f?.label || '');
+    inLabel.placeholder = 'Label';
+    inLabel.setAttribute('data-col', 'label');
+    tdLabel.appendChild(inLabel);
+
+    const tdType = document.createElement('td');
+    const selType = document.createElement('select');
+    selType.className = 'pw-select';
+    selType.setAttribute('data-col', 'type');
+    for (const [id, label] of APP_DESIGNER_FIELD_TYPES) {
+      const o = document.createElement('option');
+      o.value = id;
+      o.textContent = label;
+      selType.appendChild(o);
+    }
+    selType.value = String(f?.type || 'text');
+    tdType.appendChild(selType);
+
+    const tdStore = document.createElement('td');
+    const selStore = document.createElement('select');
+    selStore.className = 'pw-select';
+    selStore.setAttribute('data-col', 'store');
+    for (const [id, label] of APP_DESIGNER_STORES) {
+      const o = document.createElement('option');
+      o.value = id;
+      o.textContent = label;
+      selStore.appendChild(o);
+    }
+    selStore.value = store;
+    tdStore.appendChild(selStore);
+
+    const tdReq = document.createElement('td');
+    const inReq = document.createElement('input');
+    inReq.type = 'checkbox';
+    inReq.checked = Boolean(f?.required);
+    inReq.setAttribute('data-col', 'required');
+    tdReq.appendChild(inReq);
+
+    const tdPh = document.createElement('td');
+    const inPh = document.createElement('input');
+    inPh.className = 'pw-input';
+    inPh.value = String(f?.placeholder || '');
+    inPh.placeholder = 'Optional';
+    inPh.setAttribute('data-col', 'placeholder');
+    tdPh.appendChild(inPh);
+
+    const tdOpt = document.createElement('td');
+    const inOpt = document.createElement('textarea');
+    inOpt.className = 'pw-textarea';
+    inOpt.rows = 1;
+    inOpt.value = optionsTextFromArray(f?.options);
+    inOpt.placeholder = 'one per line';
+    inOpt.setAttribute('data-col', 'options');
+    inOpt.disabled = String(selType.value) !== 'select';
+    tdOpt.appendChild(inOpt);
+
+    const tdAct = document.createElement('td');
+    const btnRm = document.createElement('button');
+    btnRm.type = 'button';
+    btnRm.className = 'pw-btn danger';
+    btnRm.textContent = 'Remove';
+    btnRm.dataset.action = 'remove-field';
+    btnRm.dataset.idx = String(i);
+    tdAct.appendChild(btnRm);
+
+    tr.appendChild(tdKey);
+    tr.appendChild(tdLabel);
+    tr.appendChild(tdType);
+    tr.appendChild(tdStore);
+    tr.appendChild(tdReq);
+    tr.appendChild(tdPh);
+    tr.appendChild(tdOpt);
+    tr.appendChild(tdAct);
+    tbody.appendChild(tr);
+  }
+
+  // Outputs
+  outTbody.innerHTML = '';
+  const reqArtifacts = Array.isArray(generatedAppDefaultDescriptor?.output_spec?.required_artifacts)
+    ? generatedAppDefaultDescriptor.output_spec.required_artifacts
+    : [];
+  if (!reqArtifacts.length) {
+    outTbody.innerHTML = '<tr><td class="pw-muted" colspan="4">Optional. Add at least one output to guide worker uploads.</td></tr>';
+  } else {
+    for (let i = 0; i < reqArtifacts.length; i++) {
+      const a = reqArtifacts[i] || {};
+      const tr = document.createElement('tr');
+      tr.dataset.outputRow = '1';
+
+      const tdKind = document.createElement('td');
+      const selKind = document.createElement('select');
+      selKind.className = 'pw-select';
+      selKind.setAttribute('data-col', 'kind');
+      for (const [id, label] of APP_DESIGNER_ARTIFACT_KINDS) {
+        const o = document.createElement('option');
+        o.value = id;
+        o.textContent = label;
+        selKind.appendChild(o);
+      }
+      selKind.value = String(a?.kind || 'log');
+      tdKind.appendChild(selKind);
+
+      const tdLab = document.createElement('td');
+      const inLab = document.createElement('input');
+      inLab.className = 'pw-input';
+      inLab.value = String(a?.label || '');
+      inLab.placeholder = 'e.g. report';
+      inLab.setAttribute('data-col', 'label');
+      tdLab.appendChild(inLab);
+
+      const tdCount = document.createElement('td');
+      const inCount = document.createElement('input');
+      inCount.className = 'pw-input';
+      inCount.type = 'number';
+      inCount.min = '1';
+      inCount.value = a?.count ? String(a.count) : '';
+      inCount.placeholder = '1';
+      inCount.setAttribute('data-col', 'count');
+      tdCount.appendChild(inCount);
+
+      const tdAct = document.createElement('td');
+      const btnRm = document.createElement('button');
+      btnRm.type = 'button';
+      btnRm.className = 'pw-btn danger';
+      btnRm.textContent = 'Remove';
+      btnRm.dataset.action = 'remove-output';
+      btnRm.dataset.idx = String(i);
+      tdAct.appendChild(btnRm);
+
+      tr.appendChild(tdKind);
+      tr.appendChild(tdLab);
+      tr.appendChild(tdCount);
+      tr.appendChild(tdAct);
+      outTbody.appendChild(tr);
+    }
+  }
+}
+
 function appPageHrefFor(app) {
   const slug = String(app?.slug ?? '').trim();
   if (!slug) return '/apps/';
@@ -524,6 +1113,39 @@ function buildAppTemplate(templateId, { taskType }) {
     output_spec: { required_artifacts: [{ kind: 'log', label: 'report' }] },
     freshness_sla_sec: 3600,
   };
+
+  if (templateId === 'custom') {
+    const blank = { ...base };
+    // Custom should feel like a blank canvas, not a hidden opinionated template.
+    delete blank.freshness_sla_sec;
+    return {
+      defaultDescriptor: {
+        ...blank,
+        capability_tags: ['http'],
+      },
+      uiSchema: {
+        schema_version: 'v1',
+        bounty_defaults: { payout_cents: 1000, required_proofs: 1 },
+        templates: [{ id: 'blank', name: 'Blank', preset: {} }],
+        sections: [
+          {
+            id: 'request',
+            title: 'Request',
+            description: 'What should the worker do?',
+            fields: [
+              {
+                key: 'instructions',
+                label: 'Instructions',
+                type: 'textarea',
+                placeholder: 'Describe the task in a few sentences.',
+                target: 'input_spec.instructions',
+              },
+            ],
+          },
+        ],
+      },
+    };
+  }
 
   if (templateId === 'github_scan') {
     return {
@@ -651,6 +1273,7 @@ function buildAppTemplate(templateId, { taskType }) {
 let appLastAutoSlug = '';
 let appLastAutoTaskType = '';
 let appLastAutoDash = '';
+let appLastTemplateId = '';
 let generatedAppDefaultDescriptor = null;
 let generatedAppUiSchema = null;
 
@@ -688,23 +1311,40 @@ function applySelectedAppTemplate() {
   if (!name) {
     generatedAppDefaultDescriptor = null;
     generatedAppUiSchema = null;
+    appLastTemplateId = '';
     renderAppPreview(null);
+    renderAppDesigner();
     return;
   }
 
   const templateId = String($('appTemplate')?.value ?? 'custom');
+  const templateChanged = templateId !== appLastTemplateId;
   autoFillAppIds();
 
   const taskType = $('appTaskType')?.value?.trim?.() || '';
-  const built = buildAppTemplate(templateId, { taskType });
-  generatedAppDefaultDescriptor = built.defaultDescriptor;
-  generatedAppUiSchema = built.uiSchema;
+  if (generatedAppDefaultDescriptor && generatedAppUiSchema && !templateChanged) {
+    // Don't wipe the user's edits (designer or Dev JSON) just because they typed in the name
+    // field again. Only update the task type.
+    try {
+      generatedAppDefaultDescriptor.type = taskType || generatedAppDefaultDescriptor.type;
+    } catch {
+      // ignore
+    }
+  } else {
+    const built = buildAppTemplate(templateId, { taskType });
+    generatedAppDefaultDescriptor = built.defaultDescriptor;
+    generatedAppUiSchema = built.uiSchema;
+    appLastTemplateId = templateId;
+  }
 
   const dd = $('appDefaultDescriptor');
   const us = $('appUiSchema');
   if (dd) dd.value = pretty(generatedAppDefaultDescriptor);
   if (us) us.value = pretty(generatedAppUiSchema);
   renderAppPreview(generatedAppUiSchema);
+  // Only re-render the form designer when the template changes; otherwise we'd clobber focus
+  // while the user is typing in the table inputs.
+  if (templateChanged) renderAppDesigner();
 }
 
 function renderOriginGuide(origin) {
