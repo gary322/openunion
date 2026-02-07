@@ -1391,6 +1391,61 @@ process.exit(0);
     expect(c?.currentSubmissionId).toBeTruthy();
   });
 
+  it('honors PROOFWORK_REQUIRE_JOB_ID and claims only the requested job', async () => {
+    const reg = await request(app.server).post('/api/workers/register').send({ displayName: 'A', capabilities: { openclaw: true } });
+    const workerToken = reg.body.token as string;
+
+    const idsRes = await pool.query<{ id: string }>('SELECT id FROM jobs ORDER BY created_at ASC LIMIT 2');
+    expect(idsRes.rows.length).toBeGreaterThanOrEqual(2);
+    const [jobA, jobB] = idsRes.rows.map((r) => r.id);
+    await pool.query('DELETE FROM jobs WHERE id <> $1 AND id <> $2', [jobA, jobB]);
+
+    const good = {
+      schema_version: 'v1',
+      type: 'require_job_id_test',
+      capability_tags: ['screenshot', 'llm_summarize'],
+      input_spec: { url: 'https://example.com' },
+      output_spec: { required_artifacts: [{ kind: 'screenshot', count: 1 }, { kind: 'log', count: 1, label_prefix: 'report' }] },
+      freshness_sla_sec: 3600,
+    };
+
+    await pool.query('UPDATE jobs SET task_descriptor=$1 WHERE id=$2', [JSON.stringify(good), jobA]);
+    await pool.query('UPDATE jobs SET task_descriptor=$1 WHERE id=$2', [JSON.stringify(good), jobB]);
+
+    const mockOpenClaw = await makeMockOpenClawBin();
+    const profile = 'pw-test-profile';
+    const scriptPath = 'integrations/openclaw/skills/proofwork-universal-worker/scripts/proofwork_worker.mjs';
+    const run = await runNodeScript({
+      scriptPath,
+      cwd: process.cwd(),
+      env: {
+        ONCE: 'true',
+        PROOFWORK_API_BASE_URL: baseUrl,
+        PROOFWORK_WORKER_TOKEN: workerToken,
+        PROOFWORK_SUPPORTED_CAPABILITY_TAGS: 'browser,http,screenshot,llm_summarize',
+        PROOFWORK_CANARY_PERCENT: '100',
+        PROOFWORK_REQUIRE_JOB_ID: jobB,
+        OPENCLAW_BIN: mockOpenClaw,
+        OPENCLAW_BROWSER_PROFILE: profile,
+        MOCK_OPENCLAW_EXPECT_PROFILE: profile,
+      },
+    });
+    if (run.code !== 0) {
+      // eslint-disable-next-line no-console
+      console.log('openclaw worker stdout:\n', run.stdout);
+      // eslint-disable-next-line no-console
+      console.log('openclaw worker stderr:\n', run.stderr);
+    }
+    expect(run.code).toBe(0);
+
+    const a = await getJob(jobA);
+    const b = await getJob(jobB);
+    expect(a?.status).toBe('open');
+    expect(a?.leaseWorkerId).toBeUndefined();
+    expect(b?.status).toBe('verifying');
+    expect(b?.currentSubmissionId).toBeTruthy();
+  });
+
   it('releases a claimed job early when the browser redirects off allowed origins', async () => {
     const reg = await request(app.server).post('/api/workers/register').send({ displayName: 'A', capabilities: { openclaw: true } });
     const workerToken = reg.body.token as string;

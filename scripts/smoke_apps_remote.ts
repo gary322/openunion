@@ -621,7 +621,11 @@ async function main() {
         browserProfile,
         supportedCapabilityTags: s.supportedCapabilityTags,
         requireTaskType: s.taskType,
-        extraEnv: s.extraWorkerEnv,
+        extraEnv: {
+          ...(s.extraWorkerEnv ?? {}),
+          PROOFWORK_REQUIRE_BOUNTY_ID: bountyId,
+          PROOFWORK_REQUIRE_JOB_ID: jobId,
+        },
         timeoutMs: workerTimeoutMs,
       });
 

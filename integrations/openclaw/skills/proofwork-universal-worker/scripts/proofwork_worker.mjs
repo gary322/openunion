@@ -82,6 +82,12 @@ const PROOFWORK_WORKER_TOKEN_FILE = String(process.env.PROOFWORK_WORKER_TOKEN_FI
 const PROOFWORK_STATUS_FILE = String(process.env.PROOFWORK_STATUS_FILE ?? "").trim() || null;
 const PROOFWORK_PAUSE_FILE = String(process.env.PROOFWORK_PAUSE_FILE ?? "").trim() || null;
 
+// Optional: used by smoke tests and debugging to force the worker to only claim jobs from a specific
+// bounty/job. This prevents "claim some other job of the same task type" flakiness when the global
+// pool has other open jobs.
+const REQUIRE_BOUNTY_ID = String(process.env.PROOFWORK_REQUIRE_BOUNTY_ID ?? "").trim() || null;
+const REQUIRE_JOB_ID = String(process.env.PROOFWORK_REQUIRE_JOB_ID ?? "").trim() || null;
+
 const ORIGIN_ENFORCEMENT = String(process.env.PROOFWORK_ORIGIN_ENFORCEMENT ?? "").trim().toLowerCase() === "off" ? "off" : "strict";
 const NO_LOGIN = parseBool(process.env.PROOFWORK_NO_LOGIN, true);
 const VALUE_ENV_ALLOWLIST = new Set(parseCsv(process.env.PROOFWORK_VALUE_ENV_ALLOWLIST));
@@ -2640,6 +2646,20 @@ async function loop() {
     if (!jobId) {
       await writeStatus({ lastErrorAt: Date.now(), lastError: "jobs_next_missing_job_id" });
       await sleep(ERROR_BACKOFF_MS);
+      continue;
+    }
+
+    const bountyId = String(job?.bountyId ?? job?.bounty_id ?? "");
+    if (REQUIRE_JOB_ID && jobId !== REQUIRE_JOB_ID) {
+      addRefusal(refuseCache, jobId, `require_job_id_mismatch:${REQUIRE_JOB_ID}`, 2 * 60_000);
+      await writeStatus({ lastRefuseAt: Date.now(), lastJobId: jobId, lastErrorAt: Date.now(), lastError: "require_job_id_mismatch" });
+      await sleep(250);
+      continue;
+    }
+    if (REQUIRE_BOUNTY_ID && bountyId !== REQUIRE_BOUNTY_ID) {
+      addRefusal(refuseCache, jobId, `require_bounty_id_mismatch:${REQUIRE_BOUNTY_ID}`, 2 * 60_000);
+      await writeStatus({ lastRefuseAt: Date.now(), lastJobId: jobId, lastErrorAt: Date.now(), lastError: "require_bounty_id_mismatch" });
+      await sleep(250);
       continue;
     }
 
