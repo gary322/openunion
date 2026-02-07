@@ -1,7 +1,19 @@
-import { copyToClipboard, el, fetchJson, formatAgo, storageGet, storageSet, toast, LS } from '/ui/pw.js';
+import { copyToClipboard, el, fetchJson, formatAgo, formatBps, formatCents, storageGet, storageSet, toast, LS } from '/ui/pw.js';
 
 function $(id) {
   return document.getElementById(id);
+}
+
+let refreshQueue = Promise.resolve();
+let refreshSeq = 0;
+
+function setRefreshing(on) {
+  try {
+    if (on) document.body.dataset.refreshing = '1';
+    else delete document.body.dataset.refreshing;
+  } catch {
+    // ignore
+  }
 }
 
 function safeNextPath() {
@@ -43,6 +55,99 @@ function normalizeLines(raw) {
     .split('\n')
     .map((s) => s.trim())
     .filter(Boolean);
+}
+
+let descriptorSchemaPromise = null;
+async function loadDescriptorSchema() {
+  if (!descriptorSchemaPromise) {
+    descriptorSchemaPromise = fetch('/contracts/task_descriptor.schema.json', { credentials: 'omit' }).then((r) => r.json());
+  }
+  return descriptorSchemaPromise;
+}
+
+function bytesOf(obj) {
+  return new Blob([JSON.stringify(obj)]).size;
+}
+
+function safeClone(obj) {
+  return JSON.parse(JSON.stringify(obj ?? {}));
+}
+
+function setDeep(obj, path, value) {
+  const parts = String(path || '').split('.').filter(Boolean);
+  if (parts.length < 2) return;
+  let cur = obj;
+  for (let i = 0; i < parts.length - 1; i++) {
+    const k = parts[i];
+    if (!cur[k] || typeof cur[k] !== 'object') cur[k] = {};
+    cur = cur[k];
+  }
+  cur[parts[parts.length - 1]] = value;
+}
+
+function getDeep(obj, path) {
+  const parts = String(path || '').split('.').filter(Boolean);
+  if (parts.length < 2) return undefined;
+  let cur = obj;
+  for (const k of parts) {
+    if (!cur || typeof cur !== 'object') return undefined;
+    cur = cur[k];
+  }
+  return cur;
+}
+
+function deleteDeep(obj, path) {
+  const parts = String(path || '').split('.').filter(Boolean);
+  if (parts.length < 2) return;
+  let cur = obj;
+  for (let i = 0; i < parts.length - 1; i++) {
+    const k = parts[i];
+    if (!cur[k] || typeof cur[k] !== 'object') return;
+    cur = cur[k];
+  }
+  delete cur[parts[parts.length - 1]];
+}
+
+function normalizeOriginClient(raw) {
+  const s = String(raw ?? '').trim();
+  if (!s) return '';
+  let u;
+  try {
+    u = new URL(s);
+  } catch {
+    return '';
+  }
+  if (!['http:', 'https:'].includes(String(u.protocol))) return '';
+  if (u.username || u.password) return '';
+  return `${u.protocol}//${u.host}`;
+}
+
+function validateDescriptorShallow(schema, desc) {
+  const errs = [];
+  if (!desc || typeof desc !== 'object') return ['descriptor must be an object'];
+  const req = schema?.required || [];
+  for (const k of req) {
+    if (desc[k] === undefined) errs.push(`missing ${k}`);
+  }
+  if (schema?.properties?.schema_version?.const && desc.schema_version !== schema.properties.schema_version.const) {
+    errs.push(`schema_version must be ${schema.properties.schema_version.const}`);
+  }
+  if (typeof desc.type !== 'string' || desc.type.length < 1 || desc.type.length > 120) {
+    errs.push('type must be 1..120 chars');
+  }
+  const enumTags = schema?.properties?.capability_tags?.items?.enum || [];
+  if (!Array.isArray(desc.capability_tags) || desc.capability_tags.length < 1) {
+    errs.push('capability_tags must be a non-empty array');
+  } else {
+    for (const t of desc.capability_tags) {
+      if (!enumTags.includes(t)) errs.push(`unknown capability tag: ${t}`);
+    }
+  }
+  if (desc.freshness_sla_sec !== undefined) {
+    const v = Number(desc.freshness_sla_sec);
+    if (!Number.isFinite(v) || v < 1 || v > 86400) errs.push('freshness_sla_sec must be 1..86400');
+  }
+  return errs;
 }
 
 function toKebab(raw) {
@@ -436,13 +541,558 @@ function renderOriginsTable(origins, { onCheck, onRevoke, onPick }) {
   }
 }
 
+// Publish step: render an app-defined friendly form directly inside the onboarding wizard.
+// This keeps the "first publish" path low-effort and avoids sending users to a separate page.
+const publishUi = {
+  appBySlug: new Map(), // slug -> app record
+  selectedSlug: '',
+  renderedSlug: '',
+  schema: null,
+  fieldEls: new Map(), // key -> { field, input }
+  touchedKeys: new Set(),
+  originTouched: false,
+  verifiedOriginsCount: 0,
+  platformFeeBps: 0,
+  availableOrigins: [],
+  publicOrigins: [],
+};
+
+function isMissingValue(v) {
+  if (v === undefined || v === null) return true;
+  if (typeof v === 'string') return v.trim().length === 0;
+  if (Array.isArray(v)) return v.length === 0;
+  if (typeof v === 'number') return !Number.isFinite(v);
+  return false;
+}
+
+function validateRequiredFields(fieldEls, descriptor) {
+  const missing = [];
+  for (const { field, input } of fieldEls.values()) {
+    if (!field?.required) {
+      input?.removeAttribute?.('aria-invalid');
+      continue;
+    }
+    const target = String(field.target || '').trim();
+    if (!target) continue;
+    if (String(field.type) === 'boolean') {
+      input?.removeAttribute?.('aria-invalid');
+      continue;
+    }
+    const v = getDeep(descriptor, target);
+    const missingThis = isMissingValue(v);
+    if (missingThis) {
+      missing.push({ key: String(field.key || ''), label: String(field.label || field.key || ''), input });
+      input?.setAttribute?.('aria-invalid', 'true');
+    } else {
+      input?.removeAttribute?.('aria-invalid');
+    }
+  }
+  return missing;
+}
+
+function focusFirstMissing(missing) {
+  const first = missing?.[0]?.input;
+  if (!first) return;
+  try {
+    first.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+  } catch {
+    // ignore
+  }
+  try {
+    first.focus?.({ preventScroll: true });
+  } catch {
+    first.focus?.();
+  }
+}
+
+function moneyDefaultsFromUiSchema(uiSchema) {
+  const b = uiSchema?.bounty_defaults ?? null;
+  return {
+    payoutCents: Number.isFinite(Number(b?.payout_cents)) ? Number(b.payout_cents) : null,
+    requiredProofs: Number.isFinite(Number(b?.required_proofs)) ? Number(b.required_proofs) : null,
+  };
+}
+
+function computeWorkerNetCents(payoutCents, platformFeeBps) {
+  const pc = Math.max(0, Math.floor(Number(payoutCents || 0)));
+  const platformCutCents = Math.round((pc * Number(platformFeeBps || 0)) / 10000);
+  const workerPortionCents = Math.max(0, pc - platformCutCents);
+  const proofworkFeeCents = Math.round(workerPortionCents * 0.01);
+  return {
+    platformCutCents,
+    proofworkFeeCents,
+    workerNetCents: Math.max(0, workerPortionCents - proofworkFeeCents),
+  };
+}
+
+const publishPayoutPresets = { defs: [], btns: new Map() };
+
+function roundCents(n) {
+  const v = Math.max(0, Math.floor(Number(n || 0)));
+  return Math.max(100, Math.round(v / 50) * 50);
+}
+
+function renderPublishPayoutPresets(uiSchema) {
+  const root = $('publishPayoutPresets');
+  const payoutInput = $('publishPayoutCents');
+  if (!root || !payoutInput) return;
+
+  publishPayoutPresets.btns.clear();
+  publishPayoutPresets.defs = [];
+
+  const money = moneyDefaultsFromUiSchema(uiSchema);
+  const base = money.payoutCents !== null ? Number(money.payoutCents) : Number(payoutInput.value ?? 1000);
+  const standard = roundCents(Number.isFinite(base) && base > 0 ? base : 1200);
+  publishPayoutPresets.defs.push(
+    { id: 'small', label: 'Small', cents: roundCents(standard * 0.6) },
+    { id: 'standard', label: 'Standard', cents: standard },
+    { id: 'premium', label: 'Premium', cents: roundCents(standard * 1.5) }
+  );
+
+  const nodes = [];
+  for (const def of publishPayoutPresets.defs) {
+    const { workerNetCents } = computeWorkerNetCents(def.cents, publishUi.platformFeeBps);
+    const btn = el('button', { type: 'button', class: 'pw-preset', 'aria-pressed': 'false' }, [
+      `${def.label} · ${formatCents(def.cents)}`,
+      el('small', { text: `Net ${formatCents(workerNetCents)}` }),
+    ]);
+    btn.addEventListener('click', () => {
+      payoutInput.value = String(def.cents);
+      refreshPublishPreview();
+    });
+    publishPayoutPresets.btns.set(def.id, btn);
+    nodes.push(btn);
+  }
+
+  root.replaceChildren(...nodes);
+  updatePublishPayoutPresetsUi();
+}
+
+function updatePublishPayoutPresetsUi() {
+  const payoutInput = $('publishPayoutCents');
+  if (!payoutInput) return;
+  const cur = roundCents(Number(payoutInput.value ?? 0));
+  for (const [id, btn] of publishPayoutPresets.btns.entries()) {
+    const def = publishPayoutPresets.defs.find((d) => d.id === id);
+    if (!def) continue;
+    const pressed = roundCents(def.cents) === cur;
+    btn.setAttribute('aria-pressed', pressed ? 'true' : 'false');
+  }
+}
+
+function inferOriginCandidateFromDescriptor(descriptor) {
+  const d = descriptor ?? {};
+  const inputSpec = d?.input_spec ?? {};
+
+  const vodUrl = typeof inputSpec?.vod_url === 'string' ? inputSpec.vod_url.trim() : '';
+  if (vodUrl) return normalizeOriginClient(vodUrl);
+
+  const explicitUrl = typeof inputSpec?.url === 'string' ? inputSpec.url.trim() : '';
+  if (explicitUrl) return normalizeOriginClient(explicitUrl);
+
+  const sites = inputSpec?.sites;
+  const firstSite = Array.isArray(sites) ? String(sites[0] ?? '').trim() : typeof sites === 'string' ? normalizeLines(sites)[0] ?? '' : '';
+  if (firstSite) return normalizeOriginClient(firstSite);
+
+  return '';
+}
+
+function renderPublishDeliverables(descriptor) {
+  const list = $('publishDeliverablesList');
+  if (!list) return;
+  const sub = $('publishDeliverablesSub');
+  const help = $('publishDeliverablesHelp');
+
+  const req = descriptor?.output_spec?.required_artifacts;
+  const items = Array.isArray(req) ? req : [];
+  if (!items.length) {
+    list.replaceChildren(el('span', { class: 'pw-chip faint' }, ['No required artifacts']));
+    if (sub) sub.textContent = 'Workers can submit any artifacts. Consider requiring a minimal proof.';
+    if (help) help.textContent = 'Tip: require a screenshot or log so verifiers can be deterministic.';
+    return;
+  }
+
+  list.replaceChildren(
+    ...items.map((a) => {
+      const kind = String(a?.kind || 'artifact');
+      const label = String(a?.label || '').trim();
+      const parts = [el('span', { class: 'pw-mono', text: kind })];
+      if (label && label !== kind) parts.push(el('span', { text: label }));
+      return el('span', { class: 'pw-chip' }, parts);
+    })
+  );
+  if (sub) sub.textContent = 'What workers must submit for this app.';
+  if (help) help.textContent = 'Tip: keep required artifacts minimal. Proofs are enforced separately.';
+}
+
+function buildDescriptorFromPublishForm(appRec) {
+  const taskType = String(appRec?.taskType ?? appRec?.task_type ?? '').trim();
+  const defaultDescriptor = appRec?.defaultDescriptor ?? appRec?.default_descriptor ?? {};
+  const caps = Array.isArray(defaultDescriptor?.capability_tags) ? defaultDescriptor.capability_tags : [];
+
+  const base = defaultDescriptor && typeof defaultDescriptor === 'object' ? safeClone(defaultDescriptor) : {};
+  base.schema_version = 'v1';
+  if (taskType) base.type = taskType;
+  if (!Array.isArray(base.capability_tags) || base.capability_tags.length === 0) base.capability_tags = caps;
+  if (!base.input_spec || typeof base.input_spec !== 'object') base.input_spec = {};
+  if (!base.output_spec || typeof base.output_spec !== 'object') base.output_spec = {};
+
+  for (const { field, input } of publishUi.fieldEls.values()) {
+    const target = String(field.target || '');
+    if (!target) continue;
+    let value;
+    if (String(field.type) === 'boolean') value = Boolean(input.checked);
+    else if (String(field.type) === 'number') {
+      const raw = String(input.value || '').trim();
+      value = raw ? Number(raw) : undefined;
+      if (value !== undefined && !Number.isFinite(value)) value = undefined;
+    } else {
+      const raw = String(input.value || '');
+      value = raw.trim();
+      if (String(field.type) === 'textarea' && String(field.format || '') === 'lines') value = normalizeLines(raw);
+      if (value === '') value = undefined;
+    }
+    if (value === undefined) deleteDeep(base, target);
+    else setDeep(base, target, value);
+  }
+
+  return base;
+}
+
+function renderPublishField(field, { onChange }) {
+  const type = String(field.type || 'text');
+  const key = String(field.key || '');
+  const label = String(field.label || key);
+  const required = Boolean(field.required);
+  const placeholder = field.placeholder ? String(field.placeholder) : '';
+  const help = field.help ? String(field.help) : '';
+  const advanced = Boolean(field.advanced);
+  const hasDefault = field.default !== undefined && field.default !== null;
+
+  const wrap = document.createElement('div');
+  wrap.className = `pw-field ${advanced ? 'pw-dev' : ''}`.trim();
+
+  const lab = document.createElement('label');
+  lab.textContent = label + (required ? ' *' : '');
+  wrap.appendChild(lab);
+
+  let input;
+  if (type === 'textarea') {
+    input = document.createElement('textarea');
+    input.className = 'pw-textarea';
+    if (placeholder) input.placeholder = placeholder;
+  } else if (type === 'select') {
+    input = document.createElement('select');
+    input.className = 'pw-select';
+    const opts = Array.isArray(field.options) ? field.options : [];
+    input.appendChild(el('option', { value: '' }, ['—']));
+    for (const o of opts) input.appendChild(el('option', { value: String(o.value ?? '') }, [String(o.label ?? o.value)]));
+  } else if (type === 'number') {
+    input = document.createElement('input');
+    input.className = 'pw-input';
+    input.type = 'number';
+    if (field.min !== undefined) input.min = String(field.min);
+    if (field.max !== undefined) input.max = String(field.max);
+    if (placeholder) input.placeholder = placeholder;
+  } else if (type === 'boolean') {
+    input = document.createElement('input');
+    input.type = 'checkbox';
+  } else if (type === 'date') {
+    input = document.createElement('input');
+    input.className = 'pw-input';
+    input.type = 'date';
+  } else {
+    input = document.createElement('input');
+    input.className = 'pw-input';
+    input.type = type === 'url' ? 'url' : 'text';
+    if (placeholder) input.placeholder = placeholder;
+  }
+
+  input.id = `pub_f_${key}`;
+  if (required && type !== 'boolean') {
+    try {
+      input.required = true;
+    } catch {
+      // ignore
+    }
+    input.setAttribute('aria-required', 'true');
+  }
+
+  if (hasDefault) {
+    const dv = field.default;
+    if (type === 'boolean') input.checked = Boolean(dv);
+    else {
+      const v = Array.isArray(dv) ? dv.join('\n') : String(dv);
+      if (!String(input.value || '').trim()) input.value = v;
+    }
+  }
+
+  wrap.appendChild(input);
+  if (help) wrap.appendChild(el('div', { class: 'pw-muted', text: help }));
+
+  publishUi.fieldEls.set(key, { field, input });
+  const markTouched = () => {
+    if (key) publishUi.touchedKeys.add(key);
+  };
+  const onAny = () => {
+    markTouched();
+    onChange();
+  };
+  input.addEventListener('input', onAny);
+  input.addEventListener('change', onAny);
+  return wrap;
+}
+
+function renderPublishForm(appRec) {
+  const root = $('publishForm');
+  if (!root) return;
+
+  publishUi.fieldEls.clear();
+  publishUi.touchedKeys.clear();
+  publishUi.originTouched = false;
+
+  // Used by E2E and to avoid user confusion about which app is currently rendered.
+  try {
+    root.dataset.renderedSlug = String(publishUi.selectedSlug || '').trim();
+  } catch {
+    // ignore
+  }
+
+  const uiSchema = appRec?.uiSchema ?? appRec?.ui_schema ?? {};
+  const sections = Array.isArray(uiSchema?.sections) ? uiSchema.sections : [];
+  if (!sections.length) {
+    root.replaceChildren(
+      el('div', { class: 'pw-card soft' }, [
+        el('div', { class: 'pw-kicker', text: 'No friendly form configured for this app.' }),
+        el('div', { class: 'pw-muted', text: 'Ask the app owner to add an app.ui_schema, or use the app page in Dev mode to view the raw descriptor preview.' }),
+      ])
+    );
+    refreshPublishPreview();
+    return;
+  }
+
+  const nodes = [];
+  for (const sec of sections) {
+    const card = document.createElement('div');
+    card.className = 'pw-card soft';
+    const title = el('div', { class: 'pw-card-title' }, [
+      el('h3', { text: String(sec.title || '') }),
+      el('span', { class: 'pw-kicker', text: String(sec.description || '') }),
+    ]);
+    card.appendChild(title);
+
+    const grid = document.createElement('div');
+    grid.className = 'pw-grid';
+    const fields = Array.isArray(sec.fields) ? sec.fields : [];
+    for (const f of fields) grid.appendChild(renderPublishField(f, { onChange: refreshPublishPreview }));
+    card.appendChild(grid);
+    nodes.push(card);
+  }
+  root.replaceChildren(...nodes);
+
+  // Smart defaults: payout/proofs + title from app schema.
+  const money = moneyDefaultsFromUiSchema(uiSchema);
+  const payoutInput = $('publishPayoutCents');
+  const proofsInput = $('publishRequiredProofs');
+  if (payoutInput && money.payoutCents !== null) payoutInput.value = String(money.payoutCents);
+  if (proofsInput && money.requiredProofs !== null) proofsInput.value = String(money.requiredProofs);
+  renderPublishPayoutPresets(uiSchema);
+
+  const titleInput = $('publishTitle');
+  if (titleInput && !String(titleInput.value || '').trim()) titleInput.value = `${String(appRec?.name || appRec?.slug || 'App')} bounty`;
+
+  publishUi.renderedSlug = publishUi.selectedSlug;
+  refreshPublishPreview();
+}
+
+function renderPublishOriginsSelect() {
+  const sel = $('publishOriginSelect');
+  const wrap = $('publishOriginSelectWrap');
+  const singleWrap = $('publishOriginSingle');
+  const singleText = $('publishOriginSingleText');
+  if (!sel) return;
+
+  const preserve = String(sel.value || '').trim();
+  const saved = String(storageGet('pw_onboarding_publish_origin', '') || '').trim();
+
+  sel.replaceChildren(el('option', { value: '' }, ['— auto —']), ...publishUi.availableOrigins.map((o) => el('option', { value: String(o) }, [String(o)])));
+
+  let chosen = '';
+  if (preserve && publishUi.availableOrigins.includes(preserve)) chosen = preserve;
+  else if (saved && publishUi.availableOrigins.includes(saved)) chosen = saved;
+  else if (!publishUi.originTouched) {
+    const inferred = inferOriginCandidateFromDescriptor(buildDescriptorFromPublishForm(publishUi.appBySlug.get(publishUi.selectedSlug)));
+    if (inferred && publishUi.availableOrigins.includes(inferred)) chosen = inferred;
+    else if (publishUi.availableOrigins.length === 1) chosen = publishUi.availableOrigins[0];
+  }
+
+  if (chosen) {
+    sel.value = chosen;
+    storageSet('pw_onboarding_publish_origin', chosen);
+  } else {
+    sel.value = '';
+  }
+
+  const single = publishUi.availableOrigins.length === 1 && Boolean(chosen);
+  if (wrap) wrap.hidden = single;
+  if (singleWrap) singleWrap.hidden = !single;
+  if (singleText) singleText.textContent = single ? chosen.replace(/^https?:\/\//, '') : '—';
+}
+
+function refreshPublishPreview() {
+  const appRec = publishUi.appBySlug.get(publishUi.selectedSlug);
+  const preflight = $('publishPreflight');
+  const btn = $('btnPublishNow');
+
+  if (!appRec) {
+    if (btn) btn.disabled = true;
+    if (preflight) preflight.textContent = 'Pick an app to publish.';
+    return;
+  }
+
+  const schema = publishUi.schema;
+  const d = buildDescriptorFromPublishForm(appRec);
+  const descriptorOut = $('publishDescriptorOut');
+  if (descriptorOut) descriptorOut.textContent = JSON.stringify(d, null, 2);
+  renderPublishDeliverables(d);
+
+  const payoutInput = $('publishPayoutCents');
+  const proofsInput = $('publishRequiredProofs');
+  const payoutCents = Math.max(0, Math.floor(Number(payoutInput?.value ?? 0)));
+  const requiredProofs = Math.max(1, Math.floor(Number(proofsInput?.value ?? 1)));
+
+  const pubOrigins = Array.isArray(appRec?.publicAllowedOrigins) ? appRec.publicAllowedOrigins : [];
+  publishUi.publicOrigins = Array.from(new Set(pubOrigins.map((o) => normalizeOriginClient(o)).filter(Boolean))).sort();
+
+  // Origins list is populated from refreshAll. If it is missing, keep the UI safe and disable publishing.
+  renderPublishOriginsSelect();
+  const originSelected = String($('publishOriginSelect')?.value ?? '').trim();
+  const hasPublicOrigins = publishUi.publicOrigins.length > 0;
+  const originOk = hasPublicOrigins || Boolean(originSelected);
+
+  const missing = validateRequiredFields(publishUi.fieldEls, d);
+  const errs = schema ? validateDescriptorShallow(schema, d) : [];
+
+  let msg = '';
+  let kind = '';
+  const firstMissingLabel = String(missing?.[0]?.label || missing?.[0]?.key || '').trim();
+  if (!publishUi.availableOrigins.length && !hasPublicOrigins) {
+    msg = 'Next: verify an origin (or pick a built-in app).';
+    kind = 'warn';
+  } else if (!originOk) {
+    msg = 'Next: pick an origin.';
+    kind = 'warn';
+  } else if (missing.length) {
+    msg = firstMissingLabel ? `Next: fill "${firstMissingLabel}".` : 'Next: fill required fields.';
+    kind = 'bad';
+  } else if (errs.length) {
+    msg = `Descriptor invalid: ${String(errs[0] || '').trim()}`;
+    kind = 'bad';
+  } else {
+    msg = 'Ready. Create + publish.';
+    kind = 'good';
+  }
+
+  if (preflight) {
+    preflight.textContent = msg;
+    preflight.classList.remove('good', 'bad', 'warn');
+    if (kind) preflight.classList.add(kind);
+  }
+
+  const pill = $('publishPayoutPill');
+  const breakdown = $('publishPayoutBreakdown');
+  const { platformCutCents, proofworkFeeCents, workerNetCents } = computeWorkerNetCents(payoutCents, publishUi.platformFeeBps);
+  if (pill) pill.textContent = `${formatCents(payoutCents)} • ${requiredProofs} proof${requiredProofs === 1 ? '' : 's'}`;
+  if (breakdown) breakdown.textContent = `Net to worker ${formatCents(workerNetCents)} (platform ${formatBps(publishUi.platformFeeBps)} then Proofwork 1%)`;
+  updatePublishPayoutPresetsUi();
+
+  const ready = originOk && missing.length === 0 && errs.length === 0 && payoutCents > 0;
+  if (btn) btn.disabled = !ready;
+
+  // Hide the result card on edits; it should represent the latest publish action only.
+  const resultCard = $('publishResultCard');
+  if (resultCard) resultCard.hidden = true;
+}
+
+async function createAndPublishFromWizard() {
+  const appRec = publishUi.appBySlug.get(publishUi.selectedSlug);
+  if (!appRec) return toast('Pick an app first', 'bad');
+
+  if (!publishUi.schema) publishUi.schema = await loadDescriptorSchema();
+
+  const schema = publishUi.schema;
+  const descriptor = buildDescriptorFromPublishForm(appRec);
+  const missing = validateRequiredFields(publishUi.fieldEls, descriptor);
+  if (missing.length) {
+    setStatus('publishPreflight', `Missing required: ${String(missing?.[0]?.label || 'field')}`, 'bad');
+    focusFirstMissing(missing);
+    return;
+  }
+  const errs = validateDescriptorShallow(schema, descriptor);
+  if (errs.length) {
+    setStatus('publishPreflight', `Descriptor invalid: ${errs.join('; ')}`, 'bad');
+    return;
+  }
+
+  const origin = String($('publishOriginSelect')?.value ?? '').trim();
+  const pubOrigins = Array.isArray(appRec?.publicAllowedOrigins) ? appRec.publicAllowedOrigins : [];
+  const hasPublicOrigins = pubOrigins.length > 0;
+  if (!origin && !hasPublicOrigins) {
+    setStatus('publishPreflight', 'Pick a verified origin (or verify one first)', 'bad');
+    return;
+  }
+
+  const payoutCents = Math.max(0, Math.floor(Number($('publishPayoutCents')?.value ?? 0)));
+  const requiredProofs = Math.max(1, Math.floor(Number($('publishRequiredProofs')?.value ?? 1)));
+  const title = String($('publishTitle')?.value ?? '').trim() || `${String(appRec?.name || appRec?.slug || 'App')} bounty`;
+  const description = String(appRec?.description || '').trim() || `${String(appRec?.name || appRec?.slug || 'App')} work`;
+
+  const payload = {
+    title,
+    description,
+    allowedOrigins: origin ? [origin] : [],
+    payoutCents,
+    requiredProofs,
+    fingerprintClassesRequired: ['desktop_us'],
+    taskDescriptor: descriptor,
+  };
+
+  setStatus('publishPreflight', `Creating… (descriptor ${bytesOf(descriptor)} B)`, 'warn');
+  const res = await buyerFetch('/api/bounties', { method: 'POST', csrf: csrfToken(), body: payload });
+  if (!res.ok) {
+    setStatus('publishPreflight', `Create failed (${res.status}): ${res.json?.error?.message || ''}`, 'bad');
+    return;
+  }
+  const bountyId = String(res.json?.id ?? '');
+
+  const pub = await buyerFetch(`/api/bounties/${encodeURIComponent(bountyId)}/publish`, { method: 'POST', csrf: csrfToken(), body: {} });
+  if (!pub.ok) {
+    setStatus('publishPreflight', `Publish failed (${pub.status}): ${pub.json?.error?.message || ''}`, 'bad');
+    return;
+  }
+
+  toast('Published', 'good');
+  setStatus('publishPreflight', `Published ${bountyId}`, 'good');
+
+  const resultCard = $('publishResultCard');
+  if (resultCard) resultCard.hidden = false;
+  const resultText = $('publishResultText');
+  if (resultText) resultText.textContent = `Bounty ${bountyId} is live. Bots can start claiming jobs immediately.`;
+
+  const monitorLink = $('publishResultMonitorLink');
+  const slug = publishUi.selectedSlug;
+  if (monitorLink) monitorLink.setAttribute('href', slug ? `/apps/app/${encodeURIComponent(slug)}/#monitor` : '/apps/');
+
+  await refreshAll();
+}
+
 async function probeSession() {
   // Any buyer-auth GET works as a session probe.
   const res = await buyerFetch('/api/org/platform-fee', { method: 'GET' });
   return res.ok;
 }
 
-async function refreshAll() {
+async function refreshAllImpl() {
   const nextPath = safeNextPath();
   const nextSlug = nextSlugFromPath(nextPath);
   const dismissedNext = storageGet('pw_onboarding_next_dismissed', '') === '1';
@@ -501,25 +1151,35 @@ async function refreshAll() {
   }
 
   badge('badgeConnect', 'Done', 'good');
+  if (!publishUi.schema) publishUi.schema = await loadDescriptorSchema();
 
   // Parallel fetches for the remaining status.
-  const [originsRes, corsRes, feeRes, appsRes] = await Promise.all([
+  const [originsRes, corsRes, feeRes, appsRes, publicAppsRes] = await Promise.all([
     buyerFetch('/api/origins', { method: 'GET' }),
     buyerFetch('/api/org/cors-allow-origins', { method: 'GET' }),
     buyerFetch('/api/org/platform-fee', { method: 'GET' }),
     buyerFetch('/api/org/apps?page=1&limit=50', { method: 'GET' }),
+    buyerFetch('/api/apps?page=1&limit=200', { method: 'GET' }),
   ]);
 
   const origins = Array.isArray(originsRes.json?.origins) ? originsRes.json.origins : [];
-  const verifiedOrigins = origins.filter((o) => String(o?.status ?? '') === 'verified').length;
+  const verifiedOriginsList = origins
+    .filter((o) => String(o?.status ?? '') === 'verified')
+    .map((o) => String(o?.origin ?? '').trim())
+    .filter(Boolean);
+  const verifiedOrigins = verifiedOriginsList.length;
   badge('badgeOrigin', verifiedOrigins > 0 ? 'Done' : '!', verifiedOrigins > 0 ? 'good' : 'warn');
+  publishUi.verifiedOriginsCount = verifiedOrigins;
 
   const feeBps = Number(feeRes.json?.platformFeeBps ?? 0);
   const feeWallet = String(feeRes.json?.platformFeeWalletAddress ?? '').trim();
   const feeOk = Number.isFinite(feeBps) && (feeBps <= 0 || feeWallet.length > 0);
   badge('badgeFees', feeOk ? 'Done' : '!', feeOk ? 'good' : 'warn');
+  publishUi.platformFeeBps = Number.isFinite(feeBps) && feeBps >= 0 ? Math.floor(feeBps) : 0;
 
   const apps = Array.isArray(appsRes.json?.apps) ? appsRes.json.apps : [];
+  const publicAppsAll = Array.isArray(publicAppsRes.json?.apps) ? publicAppsRes.json.apps : [];
+  const systemApps = publicAppsAll.filter((a) => String(a?.ownerOrgId ?? '') === 'org_system');
   if (apps.length > 0) badge('badgeApp', 'Done', 'good');
   else if (nextPath) badge('badgeApp', 'Optional', 'faint');
   else badge('badgeApp', '!', 'warn');
@@ -552,20 +1212,73 @@ async function refreshAll() {
 
   renderAppsTable(apps);
 
-  // Populate publish app select.
+  // Populate publish app select (your apps first; then built-in apps).
+  publishUi.appBySlug.clear();
+  for (const a of apps) {
+    const slug = String(a?.slug ?? '').trim();
+    if (!slug) continue;
+    publishUi.appBySlug.set(slug, a);
+  }
+  for (const a of systemApps) {
+    const slug = String(a?.slug ?? '').trim();
+    if (!slug) continue;
+    if (!publishUi.appBySlug.has(slug)) publishUi.appBySlug.set(slug, a);
+  }
+
   const publishApp = $('publishApp');
   if (publishApp) {
-    const cur = String(publishApp.value || '');
+    const cur = String(publishApp.value || '').trim();
+    const remembered = String(storageGet('pw_onboarding_publish_slug', '') || '').trim();
+    const nextPreferred = nextSlug ? nextSlug : '';
     clearNode(publishApp);
+
+    const groupMine = document.createElement('optgroup');
+    groupMine.label = 'Your apps';
     for (const a of apps) {
+      const slug = String(a?.slug ?? '').trim();
+      if (!slug) continue;
       const opt = document.createElement('option');
-      opt.value = String(a?.id ?? '');
-      opt.textContent = String(a?.name ?? a?.slug ?? 'app');
-      opt.dataset.slug = String(a?.slug ?? '');
+      opt.value = slug;
+      opt.textContent = String(a?.name ?? slug);
+      opt.dataset.slug = slug;
       opt.dataset.taskType = String(a?.taskType ?? '');
-      publishApp.appendChild(opt);
+      groupMine.appendChild(opt);
     }
-    if (cur) publishApp.value = cur;
+    if (groupMine.children.length) publishApp.appendChild(groupMine);
+
+    const groupBuiltIn = document.createElement('optgroup');
+    groupBuiltIn.label = 'Built-in apps';
+    for (const a of systemApps) {
+      const slug = String(a?.slug ?? '').trim();
+      if (!slug) continue;
+      const opt = document.createElement('option');
+      opt.value = slug;
+      opt.textContent = String(a?.name ?? slug);
+      opt.dataset.slug = slug;
+      opt.dataset.taskType = String(a?.taskType ?? '');
+      groupBuiltIn.appendChild(opt);
+    }
+  if (groupBuiltIn.children.length) publishApp.appendChild(groupBuiltIn);
+
+    // Preserve selection.
+    const candidates = [cur, remembered, nextPreferred, apps[0]?.slug, systemApps.find((x) => String(x?.slug) === 'github')?.slug, systemApps[0]?.slug]
+      .map((s) => String(s ?? '').trim())
+      .filter(Boolean);
+    const first = candidates.find((s) => publishUi.appBySlug.has(s)) || '';
+    if (first) publishApp.value = first;
+    publishUi.selectedSlug = String(publishApp.value || '').trim();
+    if (publishUi.selectedSlug) storageSet('pw_onboarding_publish_slug', publishUi.selectedSlug);
+  }
+  {
+    const slug = publishUi.selectedSlug;
+    const link = slug ? `/apps/app/${encodeURIComponent(slug)}/` : '/apps/';
+    const a = $('btnOpenAppPage');
+    if (a) a.setAttribute('href', link);
+  }
+  {
+    const selectedApp = publishUi.appBySlug.get(publishUi.selectedSlug);
+    const hasPublicOrigins = Array.isArray(selectedApp?.publicAllowedOrigins) && selectedApp.publicAllowedOrigins.length > 0;
+    if (verifiedOrigins <= 0 && hasPublicOrigins) badge('badgeOrigin', 'Optional', 'faint');
   }
 
   // Fee UI prefill (don't fight the user: only fill if empty or default).
@@ -594,7 +1307,10 @@ async function refreshAll() {
 
   // Determine next required step.
   let next = 'publish';
-  if (verifiedOrigins <= 0) next = 'origin';
+  const selectedAppForNext = publishUi.appBySlug.get(publishUi.selectedSlug);
+  const selectedHasPublicOrigins =
+    Array.isArray(selectedAppForNext?.publicAllowedOrigins) && selectedAppForNext.publicAllowedOrigins.length > 0;
+  if (verifiedOrigins <= 0 && !selectedHasPublicOrigins) next = 'origin';
   else if (!feeOk) next = 'fees';
   else if (apps.length <= 0 && !nextPath) next = 'app';
   else next = 'publish';
@@ -627,6 +1343,43 @@ async function refreshAll() {
   badge('badgePublish', publishedCount > 0 ? 'Done' : '!', publishedCount > 0 ? 'good' : 'warn');
   const pubStatus = $('publishStatus');
   if (pubStatus) pubStatus.textContent = publishedCount > 0 ? `Published bounties: ${publishedCount}` : 'No published bounties yet.';
+
+  // Keep publish-step origin choices up to date.
+  const normalizedVerified = verifiedOriginsList.map((o) => normalizeOriginClient(o)).filter(Boolean);
+  const currentApp = publishUi.appBySlug.get(publishUi.selectedSlug);
+  const publicOriginsRaw = Array.isArray(currentApp?.publicAllowedOrigins) ? currentApp.publicAllowedOrigins : [];
+  const publicOrigins = Array.from(new Set(publicOriginsRaw.map((o) => normalizeOriginClient(o)).filter(Boolean))).sort();
+  publishUi.publicOrigins = publicOrigins;
+  publishUi.availableOrigins = Array.from(new Set([...normalizedVerified, ...publicOrigins])).filter(Boolean).sort();
+
+  // Render/refresh the publish form for the selected app.
+  if (currentApp && publishUi.renderedSlug !== publishUi.selectedSlug) renderPublishForm(currentApp);
+  refreshPublishPreview();
+}
+
+async function refreshAll() {
+  // Serialize refreshes to avoid races where a late refresh re-renders UI after the user has
+  // started interacting (especially on the publish step).
+  const seq = ++refreshSeq;
+  refreshQueue = refreshQueue.then(
+    async () => {
+      setRefreshing(true);
+      try {
+        await refreshAllImpl();
+      } finally {
+        if (seq === refreshSeq) setRefreshing(false);
+      }
+    },
+    async () => {
+      setRefreshing(true);
+      try {
+        await refreshAllImpl();
+      } finally {
+        if (seq === refreshSeq) setRefreshing(false);
+      }
+    }
+  );
+  return refreshQueue;
 }
 
 function wire() {
@@ -871,12 +1624,42 @@ function wire() {
 
   // Publish
   $('publishApp')?.addEventListener('change', async () => {
-    const sel = $('publishApp')?.selectedOptions?.[0];
-    const slug = sel?.dataset?.slug ? String(sel.dataset.slug) : '';
+    const slug = String($('publishApp')?.value ?? '').trim();
+    publishUi.selectedSlug = slug;
+    publishUi.renderedSlug = '';
+    if (slug) storageSet('pw_onboarding_publish_slug', slug);
     const link = slug ? `/apps/app/${encodeURIComponent(slug)}/` : '/apps/';
     const a = $('btnOpenAppPage');
     if (a) a.setAttribute('href', link);
     await refreshAll();
+  });
+
+  $('publishOriginSelect')?.addEventListener('change', () => {
+    const v = String($('publishOriginSelect')?.value ?? '').trim();
+    publishUi.originTouched = true;
+    if (v) storageSet('pw_onboarding_publish_origin', v);
+    refreshPublishPreview();
+  });
+
+  $('btnRefreshPublishOrigins')?.addEventListener('click', async () => {
+    await refreshAll();
+  });
+
+  $('btnJumpToOrigin')?.addEventListener('click', () => {
+    try {
+      window.location.hash = '#origin';
+    } catch {
+      // ignore
+    }
+    showStep('origin');
+  });
+
+  $('publishPayoutCents')?.addEventListener('input', refreshPublishPreview);
+  $('publishRequiredProofs')?.addEventListener('input', refreshPublishPreview);
+  $('publishTitle')?.addEventListener('input', refreshPublishPreview);
+
+  $('btnPublishNow')?.addEventListener('click', async () => {
+    await createAndPublishFromWizard();
   });
 
   $('btnDismissNextApp')?.addEventListener('click', () => {
