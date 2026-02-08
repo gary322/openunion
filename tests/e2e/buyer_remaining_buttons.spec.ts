@@ -131,7 +131,8 @@ test('buyer portal: exercise remaining buttons (fee get, quotas, origins list/re
     const appName = `Buyer Buttons App ${Date.now()}`;
     await page.fill('#appName', appName);
     // Normal UX path: pick a template and let slug/taskType/defaultDescriptor be generated.
-    await page.selectOption('#appTemplate', 'generic_http');
+    await expect(page.locator('#appTemplateGrid')).toBeVisible();
+    await page.locator('#appTemplateGrid').getByRole('button', { name: /Generic HTTP/i }).click();
     await expect(page.locator('#appDashboardUrl')).toHaveValue(/\/apps\/app\//);
     await page.click('#btnCreateOrgApp');
     await expect(page.locator('#appsStatus')).toContainText('created app');

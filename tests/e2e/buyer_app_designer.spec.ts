@@ -44,7 +44,8 @@ test('buyer can design an app form without JSON (app designer) and publish from 
 
     const appName = `Designer App ${Date.now()}`;
     await page.fill('#appName', appName);
-    await page.selectOption('#appTemplate', 'custom');
+    await expect(page.locator('#appTemplateGrid')).toBeVisible();
+    await page.locator('#appTemplateGrid').getByRole('button', { name: /^Custom/i }).click();
 
     // Wait for the friendly-form builder to appear.
     await expect(page.locator('#appFieldsList')).toBeVisible();

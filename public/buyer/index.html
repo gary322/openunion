@@ -469,8 +469,8 @@
                   <label for="appName">App name</label>
                   <input class="pw-input" id="appName" placeholder="e.g. Flight deals monitor" />
                 </div>
-                <div class="pw-field">
-                  <label for="appTemplate">Template</label>
+                <div class="pw-field pw-dev">
+                  <label for="appTemplate">Developer: template</label>
                   <select class="pw-select" id="appTemplate">
                     <option value="github_scan">GitHub scan (http + summarize + screenshot)</option>
                     <option value="research_arxiv">Research plan (arXiv, http + summarize)</option>
@@ -479,6 +479,15 @@
                     <option value="custom" selected>Custom (start blank)</option>
                   </select>
                 </div>
+              </div>
+
+              <div class="pw-card soft" id="appTemplateCard">
+                <div class="pw-card-title">
+                  <h3>Pick a template</h3>
+                  <span class="pw-kicker">Fast start</span>
+                </div>
+                <div class="pw-muted">Templates set capabilities, a starter form, and defaults. Customize later only if you need to.</div>
+                <div class="pw-template-grid pw-mt-10" id="appTemplateGrid" role="list" aria-label="App templates"></div>
               </div>
 
               <div class="pw-row">

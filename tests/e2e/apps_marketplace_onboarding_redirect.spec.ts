@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 
-test('apps marketplace: unconnected users get a choice (sign in or onboarding)', async ({ page }) => {
+test('apps marketplace: unconnected users are routed to onboarding with a safe return link', async ({ page }) => {
   await page.goto('/apps/');
 
   const card = page.locator('.card').filter({ hasText: 'GitHub Scan' }).first();
@@ -8,13 +8,7 @@ test('apps marketplace: unconnected users get a choice (sign in or onboarding)',
 
   await card.getByRole('link', { name: 'Create work' }).click();
 
-  // We show a choice modal so already-onboarded platforms can sign in directly on the app page.
-  await expect(page.getByRole('dialog')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Sign in' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Start onboarding' })).toBeVisible();
-
   // New platforms should be guided through onboarding (with a return link).
-  await page.getByRole('button', { name: 'Start onboarding' }).click();
   await expect(page).toHaveURL(/\/buyer\/onboarding\.html\?next=%2Fapps%2Fapp%2Fgithub%2F/);
 
   // Onboarding should surface a "continue" CTA back to the app page even before connecting.
@@ -32,10 +26,10 @@ test('apps marketplace: unconnected users get a choice (sign in or onboarding)',
   expect(dbg.hidden).toBe(false);
   expect(dbg.href).toBe('/apps/app/github/');
 
-  // Returning platforms should be able to choose sign-in and go straight to the app page.
+  // If the browser already has Proofwork state (e.g. CSRF/session), catalog links go straight to app pages.
   await page.goto('/apps/');
+  await page.evaluate(() => window.localStorage.setItem('pw_csrf_token', 'csrf_dummy'));
   await card.getByRole('link', { name: 'Create work' }).click();
-  await page.getByRole('button', { name: 'Sign in' }).click();
   await expect(page).toHaveURL(/\/apps\/app\/github\/$/);
   await expect(page.locator('#connectRow')).toBeVisible();
 });
