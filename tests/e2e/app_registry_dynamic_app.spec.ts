@@ -60,7 +60,8 @@ test('org can register an app and use the dynamic app page to create+publish', a
     const name = `E2E App ${Date.now()}`;
     await page.fill('#appName', name);
     // Use a template to avoid requiring any JSON edits or identifier typing.
-    await page.selectOption('#appTemplate', 'generic_http');
+    await expect(page.locator('#appTemplateGrid')).toBeVisible();
+    await page.locator('#appTemplateGrid').getByRole('button', { name: /Generic HTTP/i }).click();
     await expect(page.locator('#appDashboardUrl')).toHaveValue(/\/apps\/app\//);
 
     const createAppRespPromise = page.waitForResponse((r) => r.url().endsWith('/api/org/apps') && r.request().method() === 'POST');

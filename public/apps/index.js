@@ -1,4 +1,4 @@
-import { el, formatCents, toast, storageGet, storageSet, LS } from '/ui/pw.js';
+import { el, formatCents, toast, storageGet, LS } from '/ui/pw.js';
 
 const statusEl = document.getElementById('status');
 const statsEl = document.getElementById('stats');
@@ -15,8 +15,6 @@ const btnCloseFilters = document.getElementById('btnCloseFilters');
 const filtersBackdrop = document.getElementById('filtersBackdrop');
 
 const UNIVERSAL_CAPS = new Set(['browser', 'http', 'ffmpeg', 'llm_summarize', 'screenshot']);
-
-const LS_CREATEWORK_FLOW = 'pw_apps_creatework_flow'; // '', 'signin', 'onboarding'
 
 function hasBuyerCreds() {
   const token = String(storageGet(LS.buyerToken, '') || '').trim();
@@ -39,76 +37,6 @@ function getCategory(app) {
 function getCaps(app) {
   const caps = app?.defaultDescriptor?.capability_tags;
   return Array.isArray(caps) ? caps.map(String) : [];
-}
-
-function showCreateWorkChoice({ appName, appPath }) {
-  const backdrop = el('div', { class: 'pw-modal-backdrop', 'data-modal': '1' });
-  const modal = el('div', { class: 'pw-modal', role: 'dialog', 'aria-modal': 'true' }, [
-    el('h3', { text: 'Publish work' }),
-    el('p', { class: 'pw-modal-sub' }, [
-      `You're about to publish a bounty for `,
-      el('span', { class: 'pw-mono', text: String(appName || 'this app') }),
-      `. If you're already onboarded, sign in and continue. If you're new, start onboarding first.`,
-    ]),
-  ]);
-
-  const remember = el('label', { class: 'pw-check' }, [
-    el('input', { type: 'checkbox', id: 'pwRememberChoice' }),
-    el('span', { text: 'Remember my choice' }),
-  ]);
-
-  const btnSignIn = el('button', { type: 'button', class: 'pw-btn primary', id: 'pwChoiceSignin' }, ['Sign in']);
-  const btnOnboarding = el('button', { type: 'button', class: 'pw-btn', id: 'pwChoiceOnboarding' }, ['Start onboarding']);
-  const btnCancel = el('button', { type: 'button', class: 'pw-btn', id: 'pwChoiceCancel' }, ['Cancel']);
-
-  const actions = el('div', { class: 'pw-modal-actions' }, [btnSignIn, btnOnboarding, btnCancel]);
-  const footer = el('div', { class: 'pw-modal-footer' }, [
-    remember,
-    el('div', { class: 'pw-muted' }, ['Tip: Onboarding is required to verify your domain and set your fee cut.']),
-  ]);
-
-  modal.appendChild(actions);
-  modal.appendChild(footer);
-
-  function close() {
-    try {
-      backdrop.remove();
-      modal.remove();
-    } catch {
-      // ignore
-    }
-    document.removeEventListener('keydown', onKeyDown);
-  }
-
-  function saveChoice(flow) {
-    const on = Boolean((remember.querySelector('input') || {}).checked);
-    if (on) storageSet(LS_CREATEWORK_FLOW, String(flow));
-  }
-
-  function go(href) {
-    close();
-    window.location.assign(href);
-  }
-
-  function onKeyDown(ev) {
-    if (ev.key === 'Escape') close();
-  }
-
-  btnCancel.addEventListener('click', () => close());
-  backdrop.addEventListener('click', () => close());
-  btnSignIn.addEventListener('click', () => {
-    saveChoice('signin');
-    go(appPath);
-  });
-  btnOnboarding.addEventListener('click', () => {
-    saveChoice('onboarding');
-    go(onboardingHrefFor(appPath));
-  });
-
-  document.addEventListener('keydown', onKeyDown);
-  document.body.appendChild(backdrop);
-  document.body.appendChild(modal);
-  btnSignIn.focus();
 }
 
 function isUniversalCompatible(app) {
@@ -181,14 +109,10 @@ function renderCard(app) {
   const open = el('a', { class: 'pw-btn primary', href: appPath }, ['Create work']);
   open.addEventListener('click', (ev) => {
     if (hasBuyerCreds()) return;
-    const pref = String(storageGet(LS_CREATEWORK_FLOW, '') || '').trim();
-    if (pref === 'signin') return; // Follow the link (app page can sign in).
     ev.preventDefault();
-    if (pref === 'onboarding') {
-      window.location.assign(onboardingHrefFor(appPath));
-      return;
-    }
-    showCreateWorkChoice({ appName: title, appPath });
+    // Low-effort default: onboarding is the safest path for new platforms.
+    // Returning platforms can sign in on the wizard and continue to the app page via `next=...`.
+    window.location.assign(onboardingHrefFor(appPath));
   });
   actions.appendChild(open);
   const learn = el('a', { class: 'pw-btn', href }, ['Details']);

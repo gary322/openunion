@@ -1472,6 +1472,99 @@ let appLastTemplateId = '';
 let generatedAppDefaultDescriptor = null;
 let generatedAppUiSchema = null;
 
+const APP_TEMPLATE_CATALOG = [
+  {
+    id: 'github_scan',
+    title: 'GitHub scan',
+    sub: 'Search GitHub for similar repos and produce a structured report.',
+  },
+  {
+    id: 'research_arxiv',
+    title: 'Research plan (arXiv)',
+    sub: 'Turn an idea into an arXiv-backed research plan with citations.',
+  },
+  {
+    id: 'marketplace_watch',
+    title: 'Marketplace watch',
+    sub: 'Monitor pages for price and availability changes with screenshots.',
+  },
+  {
+    id: 'generic_http',
+    title: 'Generic HTTP',
+    sub: 'Call an API, summarize, and return a structured result.',
+  },
+  {
+    id: 'custom',
+    title: 'Custom',
+    sub: 'Start blank and add only the fields your job creators need.',
+  },
+];
+
+let appTemplateButtonsWired = false;
+const appTemplateButtons = new Map();
+
+function renderAppTemplateGrid() {
+  const root = $('appTemplateGrid');
+  const select = $('appTemplate');
+  const name = $('appName')?.value?.trim?.() || '';
+  if (!root || !select) return;
+
+  // Render once; after that we only update selection state.
+  if (!appTemplateButtonsWired) {
+    appTemplateButtonsWired = true;
+
+    const nodes = [];
+    for (const t of APP_TEMPLATE_CATALOG) {
+      const tid = String(t.id || '').trim();
+      if (!tid) continue;
+
+      let caps = [];
+      try {
+        const built = buildAppTemplate(tid, { taskType: 'tmp' });
+        const c = built?.defaultDescriptor?.capability_tags;
+        if (Array.isArray(c)) caps = c.map((x) => String(x)).filter(Boolean);
+      } catch {
+        // ignore
+      }
+
+      const btn = el('button', { type: 'button', class: 'pw-choice', 'aria-pressed': 'false', 'data-template-id': tid }, [
+        el('div', { class: 'pw-choice-title' }, [
+          el('span', { text: String(t.title || tid) }),
+          el('span', { class: 'pw-pill faint', text: tid === 'custom' ? 'Blank' : 'Template' }),
+        ]),
+        el('div', { class: 'pw-choice-sub', text: String(t.sub || '') }),
+      ]);
+
+      if (caps.length) {
+        const chips = el('div', { class: 'pw-chips pw-mt-10' }, caps.slice(0, 6).map((c) => el('span', { class: 'pw-chip faint pw-mono', text: c })));
+        btn.appendChild(chips);
+      }
+
+      btn.addEventListener('click', () => {
+        // Allow picking the template first; we'll apply it once the name exists.
+        select.value = tid;
+        const curName = $('appName')?.value?.trim?.() || '';
+        if (!curName) {
+          toast('Name your app to generate the form', 'warn');
+          $('appName')?.focus?.();
+          renderAppTemplateGrid();
+          return;
+        }
+        applySelectedAppTemplate();
+      });
+
+      appTemplateButtons.set(tid, btn);
+      nodes.push(btn);
+    }
+    root.replaceChildren(...nodes);
+  }
+
+  const selected = String(select.value || 'custom').trim() || 'custom';
+  for (const [tid, btn] of appTemplateButtons.entries()) {
+    btn.setAttribute('aria-pressed', tid === selected ? 'true' : 'false');
+  }
+}
+
 function autoFillAppIds() {
   const name = $('appName')?.value?.trim?.() || '';
   if (!name) return;
@@ -1503,10 +1596,11 @@ function autoFillAppIds() {
 
 function applySelectedAppTemplate() {
   const name = $('appName')?.value?.trim?.() || '';
+  // Keep template choices visible even before the user types a name.
+  renderAppTemplateGrid();
   if (!name) {
     generatedAppDefaultDescriptor = null;
     generatedAppUiSchema = null;
-    appLastTemplateId = '';
     renderAppPreview(null);
     renderAppDesigner();
     return;
@@ -1553,6 +1647,7 @@ function applySelectedAppTemplate() {
   // Only re-render the form designer when the template changes; otherwise we'd clobber focus
   // while the user is typing in the table inputs.
   if (templateChanged) renderAppDesigner();
+  renderAppTemplateGrid();
 }
 
 function renderOriginGuide(origin) {
