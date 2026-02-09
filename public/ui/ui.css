@@ -284,6 +284,35 @@ a:hover {
   gap: 10px;
   align-items: center;
 }
+.pw-hero-actions.pw-hero-actions-stack {
+  grid-template-columns: 1fr;
+  align-items: start;
+}
+
+/* Role cards (used on the catalog landing). */
+.pw-role-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+@media (max-width: 980px) {
+  .pw-role-grid {
+    grid-template-columns: 1fr;
+  }
+}
+.pw-role-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+.pw-role-title {
+  font-family: var(--font-serif);
+  font-size: 20px;
+  line-height: 1.1;
+  letter-spacing: 0.2px;
+  color: rgba(11, 15, 25, 0.92);
+}
 
 .pw-card {
   background: var(--panel);
