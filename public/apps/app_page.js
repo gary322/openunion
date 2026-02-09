@@ -184,6 +184,16 @@ export async function initAppPage(cfg) {
   const originSingleText = qs('#originSingleText');
   const btnRefreshOrigins = qs('#btnRefreshOrigins');
   const linkVerifyOrigins = qs('#linkVerifyOrigins');
+  const originVerifyDetails = qs('#originVerifyDetails');
+  const originVerifyUrl = qs('#originVerifyUrl');
+  const originVerifyMethod = qs('#originVerifyMethod');
+  const btnOriginVerifyAdd = qs('#btnOriginVerifyAdd');
+  const btnOriginVerifyCheck = qs('#btnOriginVerifyCheck');
+  const btnOriginVerifyCopyToken = qs('#btnOriginVerifyCopyToken');
+  const originVerifyTokenRow = qs('#originVerifyTokenRow');
+  const originVerifyToken = qs('#originVerifyToken');
+  const originVerifyInstructionsWrap = qs('#originVerifyInstructionsWrap');
+  const originVerifyInstructions = qs('#originVerifyInstructions');
   const payoutInput = qs('#payoutCents');
   const proofsInput = qs('#requiredProofs');
   const payoutPill = qs('#payoutPill');
@@ -605,6 +615,12 @@ export async function initAppPage(cfg) {
   let platformFeeBps = 0;
   let templateAutoApplied = false;
 
+  // Inline origin verification (optional UI). This keeps the "publish work" flow self-contained
+  // for new platforms. Production still enforces public-network-only verification.
+  let originVerifyId = '';
+  let originVerifyTokenValue = '';
+  let originVerifyOriginValue = '';
+
   function isMissingValue(v) {
     if (v === undefined || v === null) return true;
     if (typeof v === 'string') return v.trim().length === 0;
@@ -671,6 +687,143 @@ export async function initAppPage(cfg) {
     const csrf = csrfToken();
     if (csrf && sessionOk) return { mode: 'session', token: '', csrf };
     return { mode: 'none', token: '', csrf: csrf || '' };
+  }
+
+  function originVerifyInstructionsText({ origin, method, token }) {
+    const o = String(origin || '').trim();
+    const m = String(method || '').trim();
+    const t = String(token || '').trim();
+    if (!o || !m || !t) return '—';
+
+    let u;
+    try {
+      u = new URL(o);
+    } catch {
+      return 'Invalid origin URL.';
+    }
+
+    if (m === 'dns_txt') {
+      return [
+        'Add a TXT record:',
+        `Name: _proofwork.${u.hostname}`,
+        `Value: ${t}`,
+        '',
+        'Wait for DNS to propagate, then click Check.',
+      ].join('\n');
+    }
+
+    if (m === 'http_file') {
+      return [
+        'Serve a file at:',
+        `${new URL('/.well-known/proofwork-verify.txt', o).toString()}`,
+        '',
+        'File contents must include the token:',
+        t,
+        '',
+        'Then click Check.',
+      ].join('\n');
+    }
+
+    if (m === 'header') {
+      return [
+        'Respond to a HEAD request to:',
+        `${new URL('/', o).toString()}`,
+        '',
+        'Include one of these headers containing the token:',
+        `X-Proofwork-Verify: ${t}`,
+        'X-Proofwork-Verification: <token>',
+        'X-Proofwork-Verify-Token: <token>',
+        '',
+        'Then click Check.',
+      ].join('\n');
+    }
+
+    return 'Unknown method.';
+  }
+
+  function renderOriginVerifyUi({ origin, method, token }) {
+    originVerifyOriginValue = String(origin || '').trim();
+    originVerifyTokenValue = String(token || '').trim();
+    if (originVerifyToken) originVerifyToken.textContent = originVerifyTokenValue || '—';
+    if (originVerifyTokenRow) originVerifyTokenRow.hidden = !originVerifyTokenValue;
+    if (originVerifyInstructionsWrap) originVerifyInstructionsWrap.hidden = !originVerifyTokenValue;
+    if (originVerifyInstructions) originVerifyInstructions.textContent = originVerifyInstructionsText({ origin, method, token });
+    if (btnOriginVerifyCheck) btnOriginVerifyCheck.disabled = !(originVerifyId && originVerifyTokenValue);
+    if (btnOriginVerifyCopyToken) btnOriginVerifyCopyToken.disabled = !originVerifyTokenValue;
+  }
+
+  async function addOriginInline() {
+    const auth = effectiveBuyerAuth();
+    if (auth.mode === 'none') {
+      toast('Connect first', 'bad');
+      return;
+    }
+    const raw = String(originVerifyUrl?.value ?? '').trim();
+    const norm = normalizeOriginClient(raw);
+    if (!norm) {
+      setStatus('originVerifyStatus', 'Enter a valid origin URL (https://example.com)', 'bad');
+      try {
+        originVerifyUrl?.focus?.();
+      } catch {
+        // ignore
+      }
+      return;
+    }
+    const method = String(originVerifyMethod?.value ?? 'dns_txt').trim() || 'dns_txt';
+
+    setStatus('originVerifyStatus', 'Creating verification token…');
+    const res = await buyerApi('/api/origins', { method: 'POST', token: auth.token, csrf: auth.csrf, body: { origin: norm, method } });
+    if (!res.ok) {
+      setStatus('originVerifyStatus', `Create failed (${res.status}): ${res.json?.error?.message || ''}`, 'bad');
+      return;
+    }
+    const rec = res.json?.origin ?? {};
+    originVerifyId = String(rec?.id ?? '').trim();
+    const token = String(rec?.token ?? '').trim();
+    const origin = String(rec?.origin ?? norm).trim();
+    if (!originVerifyId || !token) {
+      setStatus('originVerifyStatus', 'Create succeeded but response is missing token/id', 'bad');
+      return;
+    }
+    renderOriginVerifyUi({ origin, method, token });
+    setStatus('originVerifyStatus', 'Token created. Add the proof, then click Check.', 'good');
+    toast('Verification token created', 'good');
+  }
+
+  async function checkOriginInline() {
+    const auth = effectiveBuyerAuth();
+    if (auth.mode === 'none') return;
+    if (!originVerifyId) return;
+
+    setStatus('originVerifyStatus', 'Checking…');
+    const res = await buyerApi(`/api/origins/${encodeURIComponent(originVerifyId)}/check`, { method: 'POST', token: auth.token, csrf: auth.csrf });
+    if (!res.ok) {
+      setStatus('originVerifyStatus', `Check failed (${res.status})`, 'bad');
+      return;
+    }
+    const rec = res.json?.origin ?? {};
+    const status = String(rec?.status ?? '').trim();
+    const reason = String(rec?.failureReason ?? rec?.failure_reason ?? '').trim();
+    if (status === 'verified') {
+      setStatus('originVerifyStatus', 'Verified. Refreshing origins…', 'good');
+      toast('Origin verified', 'good');
+      originTouched = true;
+      await refreshOrigins();
+      try {
+        if (originSelect && originVerifyOriginValue) originSelect.value = originVerifyOriginValue;
+      } catch {
+        // ignore
+      }
+      refreshPreview();
+      try {
+        if (originVerifyDetails && originVerifyDetails.tagName?.toLowerCase?.() === 'details') originVerifyDetails.open = false;
+      } catch {
+        // ignore
+      }
+      return;
+    }
+    const extra = reason ? ` (${reason})` : '';
+    setStatus('originVerifyStatus', `Not verified yet${extra}`, 'warn');
   }
 
   function renderField(field) {
@@ -1145,6 +1298,11 @@ export async function initAppPage(cfg) {
     const hasSupportedOrigins = publicAllowedOrigins.length > 0;
     const ready = auth.mode !== 'none' && (Boolean(origin) || hasSupportedOrigins) && missing.length === 0 && descErrs.length === 0;
 
+    // Keep the pinned actionbar single-action by default: show only what matters now.
+    if (btnActionbarConnect) btnActionbarConnect.hidden = auth.mode !== 'none';
+    if (btnCreatePublish) btnCreatePublish.hidden = auth.mode === 'none';
+    if (btnCreateDraft) btnCreateDraft.hidden = auth.mode === 'none';
+
     if (btnCreateDraft) btnCreateDraft.disabled = !ready;
     if (btnCreatePublish) btnCreatePublish.disabled = !ready;
 
@@ -1182,7 +1340,9 @@ export async function initAppPage(cfg) {
       msg = 'Next: sign in (recommended).';
       kind = 'warn';
     } else if (!origin && !hasSupportedOrigins && verifiedOriginsCount <= 0) {
-      msg = 'Next: verify an origin in the Platform console.';
+      msg = originVerifyDetails
+        ? 'Next: verify an origin (get a token, add the proof, then Check).'
+        : 'Next: verify an origin in the Platform console.';
       kind = 'warn';
     } else if (!origin && !hasSupportedOrigins && verifiedOriginsCount > 0) {
       msg = 'Next: pick a verified origin.';
@@ -1215,9 +1375,35 @@ export async function initAppPage(cfg) {
         btn.addEventListener('click', () => btnActionbarConnect?.click());
         nodes.push(btn);
       } else if (!origin && !hasSupportedOrigins && verifiedOriginsCount <= 0) {
-        // No verified origins yet: guide to onboarding origin step.
-        const href = String(linkVerifyOrigins?.getAttribute?.('href') || '/buyer/onboarding.html').trim() || '/buyer/onboarding.html';
-        nodes.push(el('a', { class: 'pw-btn primary', href }, ['Verify origin']));
+        // No verified origins yet: verify inline (lowest effort), with onboarding as a fallback.
+        if (originVerifyDetails) {
+          const btn = el('button', { type: 'button', class: 'pw-btn primary' }, ['Verify origin']);
+          btn.addEventListener('click', () => {
+            setFoldOpen(settingsFold, true, { force: true });
+            try {
+              originVerifyDetails.open = true;
+            } catch {
+              // ignore
+            }
+            try {
+              originVerifyDetails.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+            } catch {
+              // ignore
+            }
+            try {
+              originVerifyUrl?.focus?.();
+            } catch {
+              // ignore
+            }
+          });
+          nodes.push(btn);
+        } else {
+          const href = String(linkVerifyOrigins?.getAttribute?.('href') || '/buyer/onboarding.html').trim() || '/buyer/onboarding.html';
+          nodes.push(el('a', { class: 'pw-btn primary', href }, ['Verify origin']));
+        }
+
+        const href = String(linkVerifyOrigins?.getAttribute?.('href') || '').trim();
+        if (href) nodes.push(el('a', { class: 'pw-btn', href }, ['Onboarding']));
       } else if (!origin && !hasSupportedOrigins && verifiedOriginsCount > 0) {
         const btn = el('button', { type: 'button', class: 'pw-btn primary' }, ['Pick origin']);
         btn.addEventListener('click', () => {
@@ -1391,6 +1577,10 @@ export async function initAppPage(cfg) {
     if (v) storageSet(appStorageKey('origin'), v);
     refreshPreview();
   });
+
+  btnOriginVerifyAdd?.addEventListener('click', () => addOriginInline().catch((e) => setStatus('originVerifyStatus', String(e), 'bad')));
+  btnOriginVerifyCheck?.addEventListener('click', () => checkOriginInline().catch((e) => setStatus('originVerifyStatus', String(e), 'bad')));
+  btnOriginVerifyCopyToken?.addEventListener('click', () => copyToClipboard(originVerifyTokenValue || ''));
 
   // Create bounty
   async function createBounty(publish) {

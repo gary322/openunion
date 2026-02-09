@@ -258,6 +258,52 @@
                           <button class="pw-btn" id="btnRefreshOrigins" type="button">Refresh</button>
                           <a class="pw-btn" id="linkVerifyOrigins" href="/buyer/onboarding.html" rel="noreferrer">Verify origin</a>
                         </div>
+
+                        <details class="pw-details" id="originVerifyDetails">
+                          <summary>Add and verify a new origin</summary>
+                          <div class="pw-details-body">
+                            <div class="pw-muted">
+                              Use this if you are publishing work for your own domain. For system apps, supported origins may already be available.
+                            </div>
+
+                            <div class="pw-row pw-mt-10">
+                              <div class="pw-field">
+                                <label for="originVerifyUrl">Origin URL</label>
+                                <input class="pw-input" id="originVerifyUrl" placeholder="https://app.yourdomain.com" />
+                              </div>
+                              <div class="pw-field">
+                                <label for="originVerifyMethod">Method</label>
+                                <select class="pw-select" id="originVerifyMethod">
+                                  <option value="dns_txt" selected>DNS TXT (recommended)</option>
+                                  <option value="http_file">HTTP file</option>
+                                  <option value="header">Header</option>
+                                </select>
+                              </div>
+                            </div>
+
+                            <div class="pw-actions">
+                              <button class="pw-btn primary" id="btnOriginVerifyAdd" type="button">Get token</button>
+                              <button class="pw-btn" id="btnOriginVerifyCheck" type="button" disabled>Check</button>
+                              <button class="pw-btn" id="btnOriginVerifyCopyToken" type="button" disabled>Copy token</button>
+                            </div>
+
+                            <div id="originVerifyStatus" class="pw-status" role="status"></div>
+
+                            <div class="pw-row" id="originVerifyTokenRow" hidden>
+                              <div class="pw-field">
+                                <div class="pw-badge">
+                                  Token: <span class="pw-mono" id="originVerifyToken">—</span>
+                                </div>
+                              </div>
+                            </div>
+
+                            <div id="originVerifyInstructionsWrap" hidden>
+                              <div class="pw-kicker pw-mt-10">Instructions</div>
+                              <pre class="pw-codeblock" id="originVerifyInstructions">—</pre>
+                              <div class="pw-help">After you add the proof, click Check. When verified, it will appear in the origin picker.</div>
+                            </div>
+                          </div>
+                        </details>
                       </div>
 
                         <div class="pw-card soft">

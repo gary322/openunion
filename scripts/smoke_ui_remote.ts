@@ -22,15 +22,45 @@ function normalizeBaseUrl(raw: string): string {
 async function main() {
   const baseUrl = normalizeBaseUrl(argValue('--base-url') ?? process.env.BASE_URL ?? 'http://localhost:3000');
 
-  const checks: Array<{ path: string; titleIncludes: string; minBodyTextLen?: number }> = [
+  const checks: Array<{
+    path: string;
+    titleIncludes: string;
+    minBodyTextLen?: number;
+    actions?: (page: any) => Promise<void>;
+  }> = [
     // /buyer/ is now the low-effort entrypoint (onboarding). Keep the full console as /buyer/index.html.
-    { path: '/buyer/', titleIncludes: 'Platform Onboarding' },
+    {
+      path: '/buyer/',
+      titleIncludes: 'Platform Onboarding',
+      actions: async (page) => {
+        // Ensure the wizard nav renders and at least one step is visible.
+        await page.waitForSelector('#navConnect', { timeout: 15_000 });
+        await page.getByRole('heading', { name: /Connect/i }).waitFor({ timeout: 15_000 });
+      },
+    },
     { path: '/buyer/index.html', titleIncludes: 'Platform Console' },
-    { path: '/worker/', titleIncludes: 'Worker Console' },
+    {
+      path: '/worker/',
+      titleIncludes: 'Worker Console',
+      actions: async (page) => {
+        // Hash-view routing should be active: navigating to Find work should show that view.
+        await page.getByRole('link', { name: /Find work/i }).first().click();
+        await page.waitForSelector('#find:not([hidden])', { timeout: 15_000 });
+      },
+    },
     { path: '/admin/', titleIncludes: 'Admin Console' },
     { path: '/admin/apps.html', titleIncludes: 'Apps Dashboard' },
-    { path: '/admin/descriptor-builder.html', titleIncludes: 'Descriptor Builder' },
-    { path: '/apps/', titleIncludes: 'Apps' },
+    { path: '/admin/descriptor-builder.html', titleIncludes: 'Task Descriptor Builder' },
+    {
+      path: '/apps/',
+      titleIncludes: 'Apps',
+      actions: async (page) => {
+        // The catalog loads dynamically; ensure cards render (not just skeletons).
+        await page.waitForSelector('#grid h3', { timeout: 20_000 });
+        const gridText = await page.locator('#grid').textContent();
+        if (!String(gridText || '').includes('GitHub')) throw new Error('apps_catalog_missing_expected_card');
+      },
+    },
     // Built-in /apps/<slug>/ pages meta-refresh to the canonical dynamic app page. Smoke should
     // hit the canonical page directly to avoid timing flakes during the redirect.
     { path: '/apps/app/github/', titleIncludes: 'GitHub' },
@@ -58,6 +88,7 @@ async function main() {
       if (!title.includes(c.titleIncludes)) {
         throw new Error(`ui_smoke_failed:${c.path}:expected_title_includes:${c.titleIncludes}:got:${title}`);
       }
+      if (c.actions) await c.actions(page);
       if (c.minBodyTextLen) {
         await page.waitForFunction(
           (minLen) => {
