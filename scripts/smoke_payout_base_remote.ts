@@ -229,8 +229,20 @@ async function main() {
   const payoutCentsRaw = Number(process.env.SMOKE_PAYOUT_CENTS ?? 100);
   const payoutCents = Number.isFinite(payoutCentsRaw) ? Math.max(100, Math.min(5_000, Math.floor(payoutCentsRaw))) : 100;
 
-  const smokeTaskType = `smoke_payout_${tsSuffix()}`;
-  const smokeOrigin = process.env.SMOKE_ORIGIN ?? 'https://example.com';
+  // Use a built-in system app task type by default so staging/prod can run this smoke without
+  // requiring buyer-controlled origin verification. System apps have operator-curated public
+  // allowed origins seeded from `PUBLIC_BASE_URL` (CloudFront front door), enabling deterministic
+  // /__smoke/* targets.
+  const smokeTaskType = String(process.env.SMOKE_TASK_TYPE ?? 'github_scan').trim() || 'github_scan';
+  const smokeOrigin =
+    process.env.SMOKE_ORIGIN ??
+    (() => {
+      try {
+        return new URL(baseUrl).origin;
+      } catch {
+        return 'https://example.com';
+      }
+    })();
   let bountyId: string | null = null;
 
   // Health
@@ -258,29 +270,7 @@ async function main() {
   const buyerToken = auth.buyerToken;
   const authHeader = { authorization: `Bearer ${buyerToken}` };
 
-  // Ensure origin verified for bounty creation.
-  await ensureVerifiedOrigin({ baseUrl, buyerToken, origin: smokeOrigin });
-
   try {
-    // Register smoke task type in the app registry (required for taskDescriptor.type).
-    const appReg = await fetchJson({
-      baseUrl,
-      path: '/api/org/apps',
-      method: 'POST',
-      headers: authHeader,
-      body: {
-        slug: `smoke-${Date.now()}`,
-        taskType: smokeTaskType,
-        name: 'Smoke Payout App',
-        description: 'auto-created by smoke_payout_base_remote.ts',
-        public: false,
-        dashboardUrl: '/apps/',
-      },
-    });
-    if (!appReg.ok && appReg.status !== 409) {
-      throw new Error(`app_register_failed:${appReg.status}:${appReg.json?.error?.code ?? ''}`);
-    }
-
     // Register a dedicated worker token so we can configure payout address up front.
     const regWorker = await fetchJson({
       baseUrl,
@@ -323,7 +313,6 @@ async function main() {
       body: {
         title: `Smoke payout bounty ${new Date().toISOString()}`,
         description: 'Smoke test bounty for Base USDC payouts.',
-        allowedOrigins: [smokeOrigin],
         // Ensure payouts execute immediately (no dispute hold) so this smoke is deterministic.
         disputeWindowSec: 0,
         requiredProofs: 1,
@@ -335,7 +324,10 @@ async function main() {
           // Isolation tag: most workers will not opt into ffmpeg jobs.
           // This smoke does not provide a vod_url, so ffmpeg is never executed.
           capability_tags: ['ffmpeg', 'http', 'llm_summarize'],
-          input_spec: { url: 'https://example.com', query: 'example' },
+          input_spec: {
+            url: `${smokeOrigin}/__smoke/github/search/repositories`,
+            query: 'example',
+          },
           output_spec: {
             http_response: true,
             required_artifacts: [{ kind: 'log', label: 'report_summary' }],
