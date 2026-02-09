@@ -84,6 +84,50 @@ async function explainEvmRevert(input: { provider: ethers.JsonRpcProvider; txHas
   }
 }
 
+async function describePayoutSignerContext(input: {
+  provider: ethers.JsonRpcProvider;
+  usdc: ethers.Contract;
+  txHash: string;
+  decimals: number;
+  requiredGrossCents?: number;
+}): Promise<string> {
+  try {
+    const tx = await input.provider.getTransaction(input.txHash);
+    if (!tx) return '';
+
+    const from = tx.from ? ethers.getAddress(tx.from) : null;
+    const to = tx.to ? ethers.getAddress(tx.to) : null;
+    if (!from) return '';
+
+    const [ethBal, usdcBalRaw] = await Promise.all([
+      input.provider.getBalance(from),
+      input.usdc.balanceOf(from) as Promise<bigint>,
+    ]);
+    const usdcBal = BigInt(usdcBalRaw ?? 0);
+
+    let allowanceStr = '';
+    if (to) {
+      try {
+        const allowance = (await input.usdc.allowance(from, to)) as bigint;
+        allowanceStr = ` usdc_allowance_to_splitter=${ethers.formatUnits(allowance, input.decimals)}`;
+      } catch {
+        // ignore
+      }
+    }
+
+    let requiredStr = '';
+    if (Number.isFinite(input.requiredGrossCents as any) && (input.requiredGrossCents as number) >= 0) {
+      // 1 cent = $0.01. USDC has 6 decimals, so cents * 10^(6-2) = cents * 10,000.
+      const requiredUnits = BigInt(Math.trunc(Number(input.requiredGrossCents))) * 10_000n;
+      requiredStr = ` required_gross_usdc=${ethers.formatUnits(requiredUnits, input.decimals)}`;
+    }
+
+    return ` signer=${from} signer_eth=${ethers.formatEther(ethBal)} signer_usdc=${ethers.formatUnits(usdcBal, input.decimals)}${allowanceStr}${requiredStr}`;
+  } catch {
+    return '';
+  }
+}
+
 async function runUniversalWorkerOnce(input: {
   baseUrl: string;
   workerToken: string;
@@ -255,7 +299,15 @@ async function main() {
   const feeWallet = String(process.env.PROOFWORK_FEE_WALLET_BASE ?? '0xC9862D6326E93b818d7C735Dc8af6eBddD066bDF').trim();
 
   const provider = new ethers.JsonRpcProvider(baseRpcUrl);
-  const usdc = new ethers.Contract(usdcAddr, ['function balanceOf(address) view returns (uint256)', 'function decimals() view returns (uint8)'], provider);
+  const usdc = new ethers.Contract(
+    usdcAddr,
+    [
+      'function balanceOf(address) view returns (uint256)',
+      'function decimals() view returns (uint8)',
+      'function allowance(address owner,address spender) view returns (uint256)',
+    ],
+    provider
+  );
   const decimals = Number(await usdc.decimals());
 
   // Worker payout address (local ephemeral wallet)
@@ -425,6 +477,14 @@ async function main() {
           if (providerRef.startsWith('0x')) {
             const revertReason = await explainEvmRevert({ provider, txHash: providerRef });
             if (revertReason) extra = ` revert_reason=${revertReason}`;
+            const signerCtx = await describePayoutSignerContext({
+              provider,
+              usdc,
+              txHash: providerRef,
+              decimals,
+              requiredGrossCents: payout?.amountCents ?? payoutCents,
+            });
+            if (signerCtx) extra += signerCtx;
           }
           throw new Error(`payout_failed:${JSON.stringify(payout)}${extra}`);
         }
