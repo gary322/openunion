@@ -223,7 +223,7 @@ async function validateDescriptorBoundArtifacts(input: {
     if (!o) return false;
     if (String(o.kind ?? '') !== 'other') return false;
     const lp = typeof o.label_prefix === 'string' ? o.label_prefix : '';
-    return ['results', 'deals', 'rows', 'repos', 'references'].includes(lp);
+    return ['results', 'deals', 'rows', 'repos', 'references', 'ingest'].includes(lp);
   });
 
   for (const _r of jsonOtherReqs) {
@@ -268,6 +268,14 @@ async function validateDescriptorBoundArtifacts(input: {
     } else if (labelPrefix === 'references') {
       const err = ensureJsonArray(parsed, 'references', { minItems: 1, itemKeys: ['id', 'url'] });
       if (err) return { ok: false, verdict: 'fail', reason: `references_artifact_${err}` };
+    } else if (labelPrefix === 'ingest') {
+      const schema = String(parsed?.schema ?? '');
+      if (schema !== 'github_ingest.v1') return { ok: false, verdict: 'fail', reason: 'ingest_artifact_invalid_schema' };
+      const fetched = Number(parsed?.fetched_events ?? 0);
+      if (!Number.isFinite(fetched) || fetched < 1) return { ok: false, verdict: 'fail', reason: 'ingest_artifact_missing_events' };
+      const ingest = asObject(parsed?.ingest);
+      if (!ingest) return { ok: false, verdict: 'fail', reason: 'ingest_artifact_missing_ingest' };
+      if (ingest.ok !== true) return { ok: false, verdict: 'fail', reason: 'ingest_artifact_ingest_not_ok' };
     }
   }
 

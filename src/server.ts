@@ -88,6 +88,12 @@ import {
   resolveIdAdmin,
   resolveIdOrg,
   resolveIdWorker,
+  createSimilarityQuery,
+  putSimilarityResults,
+  upsertGithubRepo,
+  upsertProvenanceManifest,
+  putGithubEventRaw,
+  upsertGithubSource,
 } from './store.js';
 import { db } from './db/client.js';
 import { runMigrations } from './db/migrate.js';
@@ -130,6 +136,9 @@ import {
   adminPayoutMarkSchema,
   blockedDomainCreateSchema,
   adminArtifactQuarantineSchema,
+  intelSimilarRequestSchema,
+  workerGithubIngestEventsSchema,
+  intelReusePlanRequestSchema,
 } from './schemas.js';
 import { Envelope, Submission, Verification, Worker } from './types.js';
 import { nanoid } from 'nanoid';
@@ -161,6 +170,8 @@ import {
   verifyStripeWebhookSignature,
 } from './payments/stripe.js';
 import { csrfToken, getSession, verifySessionCookie } from './auth/sessions.js';
+import { buildGithubSearchQuery, fetchGithubRepoSearch } from './intel/githubSearch.js';
+import { decideRepoPolicy, readPolicyVersion } from './intel/policy.js';
 
 const LEASE_TTL_MS = 20 * 60 * 1000;
 const VERIFIER_TOKEN = process.env.VERIFIER_TOKEN || 'pw_vf_internal';
@@ -197,6 +208,57 @@ function maxOutboxPendingAgeSec() {
 
 function maxArtifactScanBacklogAgeSec() {
   return Number(process.env.MAX_ARTIFACT_SCAN_BACKLOG_AGE_SEC ?? 0);
+}
+
+function sanitizeIntelTokens(input: string): string[] {
+  const s = String(input ?? '').trim().toLowerCase();
+  if (!s) return [];
+  return s
+    .replace(/[^\w\s-]/g, ' ')
+    .split(/\s+/g)
+    .map((t) => t.trim())
+    .filter(Boolean)
+    .slice(0, 10);
+}
+
+function computeRepoBaselineScore(input: {
+  tokens: string[];
+  fullName: string;
+  description: string | null;
+  topics: string[];
+  stars: number;
+  pushedAt: Date | null;
+}): { score: number; explanation: string } {
+  const hayFull = String(input.fullName ?? '').toLowerCase();
+  const hayDesc = String(input.description ?? '').toLowerCase();
+  const hayTopics = (Array.isArray(input.topics) ? input.topics : []).map((t) => String(t).toLowerCase());
+
+  let tokenHits = 0;
+  const matched: string[] = [];
+  for (const t of input.tokens) {
+    if (!t) continue;
+    const hit = hayFull.includes(t) || hayDesc.includes(t) || hayTopics.some((x) => x.includes(t));
+    if (hit) {
+      tokenHits += 1;
+      matched.push(t);
+    }
+  }
+
+  // Lexical match dominates; stars/freshness are tie-breakers.
+  const lexicalScore = tokenHits / Math.max(1, input.tokens.length);
+  const starsScore = Math.log10(Math.max(1, Math.floor(input.stars) + 1)) / 10; // ~0..0.7
+
+  let freshnessScore = 0;
+  if (input.pushedAt) {
+    const ageDays = (Date.now() - input.pushedAt.getTime()) / (24 * 3600 * 1000);
+    freshnessScore = Math.max(0, Math.min(1, (365 - ageDays) / 365));
+  }
+
+  const score = Number((lexicalScore * 0.65 + starsScore * 0.25 + freshnessScore * 0.1).toFixed(6));
+  const explanation = `lexical=${lexicalScore.toFixed(3)} stars=${starsScore.toFixed(3)} fresh=${freshnessScore.toFixed(3)} matched=${matched
+    .slice(0, 6)
+    .join(',')}`;
+  return { score, explanation };
 }
 
 function forwardedProtoFromHeaders(headers: Record<string, any>): string {
@@ -779,6 +841,28 @@ export function buildServer(opts: { taskDescriptorBrowserFlowValidationGate?: bo
     });
   });
 
+  app.get('/__smoke/github/events', async (_req, reply) => {
+    reply.header('content-type', 'application/json; charset=utf-8');
+    return reply.send([
+      {
+        id: '9001',
+        type: 'PushEvent',
+        created_at: '2026-02-09T00:00:00Z',
+        actor: { login: 'smoke' },
+        repo: { id: 99001, name: 'proofwork/smoke-ingest-one' },
+        payload: { distinct_size: 1 },
+      },
+      {
+        id: '9002',
+        type: 'WatchEvent',
+        created_at: '2026-02-09T00:01:00Z',
+        actor: { login: 'smoke2' },
+        repo: { id: 99002, name: 'proofwork/smoke-ingest-two' },
+        payload: { action: 'started' },
+      },
+    ]);
+  });
+
   app.get('/__smoke/arxiv/api/query', async (req: any, reply) => {
     const q = typeof req.query?.search_query === 'string' ? req.query.search_query : '';
     const nowIso = new Date().toISOString();
@@ -1026,6 +1110,517 @@ export function buildServer(opts: { taskDescriptorBrowserFlowValidationGate?: bo
       taskDescriptorBrowserFlowValidationGate,
     },
   }));
+
+  // Intel APIs (developer-facing retrieval for Codex/Claude skills and app builders).
+  app.post(
+    '/api/intel/similar',
+    { preHandler: (app as any).authenticateBuyer, schema: { body: intelSimilarRequestSchema } },
+    async (request: any, reply: any) => {
+      const start = Date.now();
+      const body = (request.body ?? {}) as any;
+      const idea = String(body.idea ?? '').trim();
+      const constraints = (body.constraints ?? {}) as any;
+      const tool = body.tool ? String(body.tool).trim() : null;
+
+      const tokens = sanitizeIntelTokens(idea);
+      if (!tokens.length) return reply.code(400).send({ error: { code: 'invalid', message: 'idea required' } });
+
+      const limitRaw = Number(constraints.limit ?? 10);
+      const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(20, Math.floor(limitRaw))) : 10;
+      const mode = constraints.mode === 'auto_apply' ? 'auto_apply' : 'suggest';
+
+      const githubBaseUrl = String(process.env.GITHUB_API_BASE_URL ?? 'https://api.github.com')
+        .trim()
+        .replace(/\/$/, '');
+      const githubToken = String(process.env.GITHUB_TOKEN ?? '').trim() || null;
+
+      const policyVersion = readPolicyVersion();
+
+      const searchQ = buildGithubSearchQuery({
+        query: idea,
+        minStars: constraints.minStars,
+        languages: constraints.languages,
+        licenseAllow: constraints.licenseAllow,
+      });
+      if (!searchQ) return reply.code(400).send({ error: { code: 'invalid', message: 'idea is too short' } });
+
+      let snapshots: Awaited<ReturnType<typeof fetchGithubRepoSearch>> = [];
+      try {
+        snapshots = await fetchGithubRepoSearch({
+          baseUrl: githubBaseUrl,
+          q: searchQ,
+          perPage: Math.min(50, Math.max(10, limit * 5)),
+          token: githubToken,
+          timeoutMs: 25_000,
+        });
+      } catch (err: any) {
+        const msg = String(err?.message ?? err);
+        return reply.code(502).send({ error: { code: 'github_search_failed', message: msg } });
+      }
+
+      const blocked: Array<{ fullName: string; code: string; message: string }> = [];
+      const candidates: Array<{
+        repoId: number;
+        fullName: string;
+        htmlUrl: string;
+        description: string | null;
+        language: string | null;
+        topics: string[];
+        licenseSpdx: string | null;
+        stars: number;
+        forks: number;
+        archived: boolean;
+        pushedAt: Date | null;
+        updatedAt: Date | null;
+        score: number;
+        explanation: string;
+      }> = [];
+
+      for (const s of snapshots) {
+        await upsertGithubRepo({
+          repoId: s.repoId,
+          fullName: s.fullName,
+          htmlUrl: s.htmlUrl,
+          description: s.description,
+          language: s.language,
+          topics: s.topics,
+          licenseSpdx: s.licenseSpdx,
+          licenseKey: s.licenseKey,
+          stars: s.stars,
+          forks: s.forks,
+          archived: s.archived,
+          pushedAt: s.pushedAt,
+          updatedAt: s.updatedAt,
+        });
+
+        const decision = decideRepoPolicy({
+          mode,
+          licenseSpdx: s.licenseSpdx,
+          archived: s.archived,
+          stars: s.stars,
+          requestLicenseAllow: constraints.licenseAllow ?? null,
+          requestMinStars: constraints.minStars ?? null,
+        });
+        if (!decision.allowed) {
+          blocked.push({ fullName: s.fullName, code: decision.code, message: decision.message });
+          continue;
+        }
+
+        const scored = computeRepoBaselineScore({
+          tokens,
+          fullName: s.fullName,
+          description: s.description,
+          topics: s.topics,
+          stars: s.stars,
+          pushedAt: s.pushedAt,
+        });
+
+        candidates.push({
+          repoId: s.repoId,
+          fullName: s.fullName,
+          htmlUrl: s.htmlUrl,
+          description: s.description,
+          language: s.language,
+          topics: s.topics,
+          licenseSpdx: s.licenseSpdx,
+          stars: s.stars,
+          forks: s.forks,
+          archived: s.archived,
+          pushedAt: s.pushedAt,
+          updatedAt: s.updatedAt,
+          score: scored.score,
+          explanation: scored.explanation,
+        });
+      }
+
+      candidates.sort((a, b) => {
+        if (b.score !== a.score) return b.score - a.score;
+        // Deterministic tie-breakers.
+        if (a.stars !== b.stars) return b.stars - a.stars;
+        if (a.repoId !== b.repoId) return a.repoId - b.repoId;
+        return a.fullName.localeCompare(b.fullName);
+      });
+
+      const selected = candidates.slice(0, limit);
+
+      const queryId = `simq_${nanoid(12)}`;
+      const latencyMs = Date.now() - start;
+      const actorType = request.userId ? 'buyer_user' : request.apiKeyId ? 'buyer_api_key' : 'buyer';
+      const actorId = request.userId ?? request.apiKeyId ?? null;
+
+      await createSimilarityQuery({
+        id: queryId,
+        queryText: idea,
+        tool,
+        orgId: request.orgId,
+        actorType,
+        actorId,
+        context: {
+          mode,
+          limit,
+          minStars: constraints.minStars ?? null,
+          languages: constraints.languages ?? null,
+          licenseAllow: constraints.licenseAllow ?? null,
+          codeContextSha256: body.codeContext ? sha256(String(body.codeContext)).slice(0, 16) : null,
+          codeContextBytes: body.codeContext ? Buffer.byteLength(String(body.codeContext), 'utf8') : 0,
+        },
+        policyVersion,
+        latencyMs,
+      });
+
+      await putSimilarityResults({
+        queryId,
+        results: selected.map((r, i) => ({
+          id: `simr_${nanoid(12)}`,
+          rank: i + 1,
+          itemKind: 'repo',
+          itemKey: r.fullName,
+          score: r.score,
+          explanation: r.explanation,
+          data: {
+            repoId: r.repoId,
+            fullName: r.fullName,
+            htmlUrl: r.htmlUrl,
+            description: r.description,
+            language: r.language,
+            topics: r.topics,
+            licenseSpdx: r.licenseSpdx,
+            stars: r.stars,
+            forks: r.forks,
+            archived: r.archived,
+            pushedAt: r.pushedAt ? r.pushedAt.toISOString() : null,
+            updatedAt: r.updatedAt ? r.updatedAt.toISOString() : null,
+          },
+        })),
+      });
+
+      await upsertProvenanceManifest({
+        id: `prov_sim_${queryId}`,
+        kind: 'similarity',
+        refId: queryId,
+        manifest: {
+          kind: 'similarity',
+          queryId,
+          createdAt: new Date().toISOString(),
+          policyVersion,
+          githubBaseUrl,
+          searchQuery: searchQ,
+          mode,
+          results: selected.map((r) => ({
+            repoId: r.repoId,
+            fullName: r.fullName,
+            htmlUrl: r.htmlUrl,
+            licenseSpdx: r.licenseSpdx,
+            score: r.score,
+          })),
+          blockedCount: blocked.length,
+        },
+      });
+
+      return {
+        ok: true,
+        queryId,
+        policyVersion,
+        results: selected.map((r) => ({
+          repoId: r.repoId,
+          fullName: r.fullName,
+          htmlUrl: r.htmlUrl,
+          description: r.description,
+          language: r.language,
+          topics: r.topics,
+          licenseSpdx: r.licenseSpdx,
+          stars: r.stars,
+          forks: r.forks,
+          pushedAt: r.pushedAt ? r.pushedAt.toISOString() : null,
+          updatedAt: r.updatedAt ? r.updatedAt.toISOString() : null,
+          score: r.score,
+          explanation: r.explanation,
+        })),
+        blocked: {
+          count: blocked.length,
+          sample: blocked.slice(0, 10),
+        },
+      };
+    }
+  );
+
+  app.post(
+    '/api/intel/reuse-plan',
+    { preHandler: (app as any).authenticateBuyer, schema: { body: intelReusePlanRequestSchema } },
+    async (request: any, reply: any) => {
+      const start = Date.now();
+      const body = (request.body ?? {}) as any;
+      const idea = String(body.idea ?? '').trim();
+      const constraints = (body.constraints ?? {}) as any;
+      const tool = body.tool ? String(body.tool).trim() : null;
+
+      const tokens = sanitizeIntelTokens(idea);
+      if (!tokens.length) return reply.code(400).send({ error: { code: 'invalid', message: 'idea required' } });
+
+      const limitRaw = Number(constraints.limit ?? 5);
+      const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(10, Math.floor(limitRaw))) : 5;
+
+      const githubBaseUrl = String(process.env.GITHUB_API_BASE_URL ?? 'https://api.github.com')
+        .trim()
+        .replace(/\/$/, '');
+      const githubToken = String(process.env.GITHUB_TOKEN ?? '').trim() || null;
+
+      const policyVersion = readPolicyVersion();
+
+      const searchQ = buildGithubSearchQuery({
+        query: idea,
+        minStars: constraints.minStars,
+        languages: constraints.languages,
+        licenseAllow: constraints.licenseAllow,
+      });
+      if (!searchQ) return reply.code(400).send({ error: { code: 'invalid', message: 'idea is too short' } });
+
+      let snapshots: Awaited<ReturnType<typeof fetchGithubRepoSearch>> = [];
+      try {
+        snapshots = await fetchGithubRepoSearch({
+          baseUrl: githubBaseUrl,
+          q: searchQ,
+          perPage: Math.min(50, Math.max(10, limit * 5)),
+          token: githubToken,
+          timeoutMs: 25_000,
+        });
+      } catch (err: any) {
+        const msg = String(err?.message ?? err);
+        return reply.code(502).send({ error: { code: 'github_search_failed', message: msg } });
+      }
+
+      const blocked: Array<{ fullName: string; code: string; message: string }> = [];
+      const candidates: Array<{
+        repoId: number;
+        fullName: string;
+        htmlUrl: string;
+        description: string | null;
+        language: string | null;
+        topics: string[];
+        licenseSpdx: string | null;
+        stars: number;
+        forks: number;
+        archived: boolean;
+        pushedAt: Date | null;
+        updatedAt: Date | null;
+        score: number;
+        explanation: string;
+      }> = [];
+
+      for (const s of snapshots) {
+        await upsertGithubRepo({
+          repoId: s.repoId,
+          fullName: s.fullName,
+          htmlUrl: s.htmlUrl,
+          description: s.description,
+          language: s.language,
+          topics: s.topics,
+          licenseSpdx: s.licenseSpdx,
+          licenseKey: s.licenseKey,
+          stars: s.stars,
+          forks: s.forks,
+          archived: s.archived,
+          pushedAt: s.pushedAt,
+          updatedAt: s.updatedAt,
+        });
+
+        const decision = decideRepoPolicy({
+          mode: 'suggest',
+          licenseSpdx: s.licenseSpdx,
+          archived: s.archived,
+          stars: s.stars,
+          requestLicenseAllow: constraints.licenseAllow ?? null,
+          requestMinStars: constraints.minStars ?? null,
+        });
+        if (!decision.allowed) {
+          blocked.push({ fullName: s.fullName, code: decision.code, message: decision.message });
+          continue;
+        }
+
+        const scored = computeRepoBaselineScore({
+          tokens,
+          fullName: s.fullName,
+          description: s.description,
+          topics: s.topics,
+          stars: s.stars,
+          pushedAt: s.pushedAt,
+        });
+        candidates.push({
+          repoId: s.repoId,
+          fullName: s.fullName,
+          htmlUrl: s.htmlUrl,
+          description: s.description,
+          language: s.language,
+          topics: s.topics,
+          licenseSpdx: s.licenseSpdx,
+          stars: s.stars,
+          forks: s.forks,
+          archived: s.archived,
+          pushedAt: s.pushedAt,
+          updatedAt: s.updatedAt,
+          score: scored.score,
+          explanation: scored.explanation,
+        });
+      }
+
+      candidates.sort((a, b) => {
+        if (b.score !== a.score) return b.score - a.score;
+        if (a.stars !== b.stars) return b.stars - a.stars;
+        if (a.repoId !== b.repoId) return a.repoId - b.repoId;
+        return a.fullName.localeCompare(b.fullName);
+      });
+      const selected = candidates.slice(0, limit);
+
+      const planId = `plan_${nanoid(12)}`;
+      const latencyMs = Date.now() - start;
+      const actorType = request.userId ? 'buyer_user' : request.apiKeyId ? 'buyer_api_key' : 'buyer';
+      const actorId = request.userId ?? request.apiKeyId ?? null;
+
+      await createSimilarityQuery({
+        id: planId,
+        queryText: idea,
+        tool: tool || 'reuse_plan',
+        orgId: request.orgId,
+        actorType,
+        actorId,
+        context: {
+          kind: 'reuse_plan',
+          limit,
+          minStars: constraints.minStars ?? null,
+          languages: constraints.languages ?? null,
+          licenseAllow: constraints.licenseAllow ?? null,
+        },
+        policyVersion,
+        latencyMs,
+      });
+
+      await putSimilarityResults({
+        queryId: planId,
+        results: selected.map((r, i) => ({
+          id: `simr_${nanoid(12)}`,
+          rank: i + 1,
+          itemKind: 'repo',
+          itemKey: r.fullName,
+          score: r.score,
+          explanation: r.explanation,
+          data: {
+            repoId: r.repoId,
+            fullName: r.fullName,
+            htmlUrl: r.htmlUrl,
+            description: r.description,
+            language: r.language,
+            topics: r.topics,
+            licenseSpdx: r.licenseSpdx,
+            stars: r.stars,
+            forks: r.forks,
+            archived: r.archived,
+            pushedAt: r.pushedAt ? r.pushedAt.toISOString() : null,
+            updatedAt: r.updatedAt ? r.updatedAt.toISOString() : null,
+          },
+        })),
+      });
+
+      const steps = [
+        { id: 'shortlist', title: 'Shortlist', detail: 'Review the top candidates and pick 1 to study deeply.' },
+        { id: 'license', title: 'License', detail: 'Confirm license compatibility and any NOTICE/attribution requirements.' },
+        { id: 'fit', title: 'Fit', detail: 'Map your requirements to the repo: APIs, modules, and extension points.' },
+        { id: 'spike', title: 'Spike', detail: 'Prototype an integration in a throwaway branch, then harden into production code.' },
+        { id: 'provenance', title: 'Provenance', detail: 'Record exact repo URLs/commits/files you reused for auditability.' },
+      ];
+
+      await upsertProvenanceManifest({
+        id: `prov_plan_${planId}`,
+        kind: 'reuse_plan',
+        refId: planId,
+        manifest: {
+          kind: 'reuse_plan',
+          planId,
+          createdAt: new Date().toISOString(),
+          policyVersion,
+          githubBaseUrl,
+          searchQuery: searchQ,
+          steps,
+          candidates: selected.map((r) => ({
+            repoId: r.repoId,
+            fullName: r.fullName,
+            htmlUrl: r.htmlUrl,
+            licenseSpdx: r.licenseSpdx,
+            score: r.score,
+          })),
+          blockedCount: blocked.length,
+        },
+      });
+
+      return {
+        ok: true,
+        planId,
+        policyVersion,
+        candidates: selected.map((r) => ({
+          repoId: r.repoId,
+          fullName: r.fullName,
+          htmlUrl: r.htmlUrl,
+          description: r.description,
+          language: r.language,
+          topics: r.topics,
+          licenseSpdx: r.licenseSpdx,
+          stars: r.stars,
+          forks: r.forks,
+          pushedAt: r.pushedAt ? r.pushedAt.toISOString() : null,
+          updatedAt: r.updatedAt ? r.updatedAt.toISOString() : null,
+          score: r.score,
+          explanation: r.explanation,
+        })),
+        plan: { steps },
+        blocked: {
+          count: blocked.length,
+          sample: blocked.slice(0, 10),
+        },
+      };
+    }
+  );
+
+  app.get('/api/intel/provenance/:refId', { preHandler: (app as any).authenticateBuyer }, async (request: any, reply: any) => {
+    const refId = String(request.params?.refId ?? '').trim();
+    if (!refId) return reply.code(400).send({ error: { code: 'invalid', message: 'refId required' } });
+
+    // Access control: provenance is scoped to the org that created the underlying query/plan id.
+    const qRow = await db
+      .selectFrom('intel_similarity_queries')
+      .select(['id', 'org_id', 'tool', 'query_text', 'policy_version', 'context_json', 'created_at'])
+      .where('id', '=', refId)
+      .executeTakeFirst();
+    if (!qRow || String(qRow.org_id ?? '') !== String(request.orgId ?? '')) {
+      return reply.code(404).send({ error: { code: 'not_found', message: 'not found' } });
+    }
+
+    const kind = typeof (request.query as any)?.kind === 'string' ? String((request.query as any).kind).trim() : '';
+    let q = db
+      .selectFrom('intel_provenance_manifests')
+      .select(['kind', 'ref_id', 'manifest_json', 'created_at', 'updated_at'])
+      .where('ref_id', '=', refId)
+      .orderBy('created_at', 'desc')
+      .limit(50);
+    if (kind) q = q.where('kind', '=', kind);
+    const rows = await q.execute();
+
+    return {
+      ok: true,
+      refId,
+      tool: qRow.tool,
+      queryText: qRow.query_text,
+      policyVersion: qRow.policy_version,
+      createdAt: (qRow.created_at as any as Date).toISOString?.() ?? qRow.created_at,
+      context: qRow.context_json ?? {},
+      manifests: rows.map((r: any) => ({
+        kind: r.kind,
+        refId: r.ref_id,
+        createdAt: (r.created_at as any as Date).toISOString?.() ?? r.created_at,
+        updatedAt: (r.updated_at as any as Date).toISOString?.() ?? r.updated_at,
+        manifest: r.manifest_json ?? {},
+      })),
+    };
+  });
+
   app.get('/health/metrics', async (_req, reply) => {
     const txt = await renderPrometheusMetrics();
     reply.header('content-type', 'text/plain; version=0.0.4');
@@ -2763,6 +3358,101 @@ export function buildServer(opts: { taskDescriptorBrowserFlowValidationGate?: bo
     const res = await listPayoutsByWorker(worker.id, { page, limit, status });
     return { payouts: res.rows, page, limit, total: res.total };
   });
+
+  // Worker-assisted GitHub ingestion: allow pooled workers to contribute raw GitHub events and
+  // repo snapshots to the platform corpus. This is idempotent by event_id.
+  app.post(
+    '/api/worker/intel/github/events',
+    { preHandler: (app as any).authenticateWorker, schema: { body: workerGithubIngestEventsSchema } },
+    async (request: any, reply: any) => {
+      const worker: Worker = request.worker;
+      const body = request.body as any;
+      const sourceIdRaw = body.sourceId ? String(body.sourceId).trim() : '';
+      const sourceId = sourceIdRaw ? `worker:${sourceIdRaw}` : `worker:${worker.id}`;
+
+      const events: any[] = Array.isArray(body.events) ? body.events : [];
+      if (!events.length) return reply.code(400).send({ error: { code: 'invalid', message: 'events required' } });
+      if (events.length > 200) return reply.code(400).send({ error: { code: 'invalid', message: 'too many events (max 200)' } });
+
+      let inserted = 0;
+      let skipped = 0;
+      let lastEventId: string | null = null;
+      let lastEventCreatedAt: Date | null = null;
+
+      for (const e of events) {
+        if (!e || typeof e !== 'object') {
+          skipped += 1;
+          continue;
+        }
+        const eventId = String((e as any).id ?? '').trim();
+        const eventType = String((e as any).type ?? '').trim();
+        if (!eventId || !eventType) {
+          skipped += 1;
+          continue;
+        }
+
+        const createdAtRaw = String((e as any).created_at ?? '').trim();
+        const createdAt = createdAtRaw ? new Date(createdAtRaw) : null;
+        const eventCreatedAt = createdAt && !Number.isNaN(createdAt.getTime()) ? createdAt : null;
+
+        const repoIdRaw = Number((e as any).repo?.id ?? NaN);
+        const repoFullName = (e as any).repo?.name ? String((e as any).repo.name).trim() : null;
+        const actorLogin = (e as any).actor?.login ? String((e as any).actor.login).trim() : null;
+
+        try {
+          await putGithubEventRaw({
+            eventId,
+            source: sourceId,
+            eventType,
+            eventCreatedAt,
+            repoFullName: repoFullName || null,
+            actorLogin: actorLogin || null,
+            payload: e as any,
+          });
+          inserted += 1;
+        } catch {
+          skipped += 1;
+          continue;
+        }
+
+        // Best-effort repo snapshot (enrichment happens later via search/indexers).
+        if (Number.isFinite(repoIdRaw) && repoIdRaw > 0 && repoFullName) {
+          await upsertGithubRepo({
+            repoId: Math.floor(repoIdRaw),
+            fullName: repoFullName,
+            htmlUrl: `https://github.com/${repoFullName}`,
+          });
+        }
+
+        // Track a reasonable cursor (max numeric id + latest created_at).
+        if (!lastEventId) {
+          lastEventId = eventId;
+        } else {
+          const a = Number(lastEventId);
+          const b = Number(eventId);
+          if (Number.isFinite(a) && Number.isFinite(b) && b > a) lastEventId = eventId;
+        }
+        if (eventCreatedAt) {
+          if (!lastEventCreatedAt || eventCreatedAt.getTime() > lastEventCreatedAt.getTime()) lastEventCreatedAt = eventCreatedAt;
+        }
+      }
+
+      await upsertGithubSource({
+        id: sourceId,
+        cursor: {
+          lastEventId: lastEventId ?? null,
+          lastEventCreatedAt: lastEventCreatedAt ? lastEventCreatedAt.toISOString() : null,
+          lastIngestAt: new Date().toISOString(),
+        },
+        status: 'active',
+        lastSuccessAt: new Date(),
+        lastErrorAt: null,
+        lastError: null,
+      });
+
+      return { ok: true, sourceId, inserted, skipped, lastEventId: lastEventId ?? null };
+    }
+  );
 
   // jobs/next
   app.get('/api/jobs/next', { preHandler: (app as any).authenticateWorker }, async (request: any, reply) => {

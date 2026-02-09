@@ -426,7 +426,7 @@ async function main() {
     if (t) byTaskType.set(t, a);
   }
 
-  const requireSmokeOriginFor = ['marketplace_drops', 'clips_highlights'];
+  const requireSmokeOriginFor = ['marketplace_drops', 'clips_highlights', 'github_ingest_events'];
   for (const t of requireSmokeOriginFor) {
     const rec = byTaskType.get(t);
     const originsRaw = Array.isArray(rec?.publicAllowedOrigins)
@@ -495,6 +495,26 @@ async function main() {
       },
       extraWorkerEnv: {
         // Worker supports base URLs with a path prefix (see proofwork_worker.mjs).
+        GITHUB_API_BASE_URL: `${baseUrl}/__smoke/github`,
+      },
+    },
+    {
+      id: 'github_ingest',
+      taskType: 'github_ingest_events',
+      payoutCents: 900,
+      supportedCapabilityTags: ['http'],
+      taskDescriptor: {
+        schema_version: 'v1',
+        type: 'github_ingest_events',
+        capability_tags: ['http'],
+        input_spec: { max_events: 25, source_id: 'smoke_apps', url: `${baseUrl}/__smoke/github/events` },
+        output_spec: {
+          required_artifacts: [{ kind: 'other', count: 1, label_prefix: 'ingest' }],
+          ingest: true,
+        },
+        freshness_sla_sec: 300,
+      },
+      extraWorkerEnv: {
         GITHUB_API_BASE_URL: `${baseUrl}/__smoke/github`,
       },
     },

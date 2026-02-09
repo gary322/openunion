@@ -422,6 +422,81 @@ export interface RateLimitBucketsTable {
   updated_at: Timestamp;
 }
 
+export interface GithubSourcesTable {
+  id: string;
+  cursor_json: unknown;
+  status: string;
+  last_success_at: Timestamp | null;
+  last_error_at: Timestamp | null;
+  last_error: string | null;
+  created_at: Timestamp;
+  updated_at: Timestamp;
+}
+
+export interface GithubEventsRawTable {
+  event_id: string;
+  sources_json: unknown;
+  event_type: string;
+  event_created_at: Timestamp | null;
+  repo_full_name: string | null;
+  actor_login: string | null;
+  payload_json: unknown;
+  ingested_at: Timestamp;
+}
+
+export interface GithubReposTable {
+  repo_id: Bigint;
+  full_name: string;
+  html_url: string;
+  description: string | null;
+  language: string | null;
+  topics_json: unknown;
+  license_spdx: string | null;
+  license_key: string | null;
+  stargazers_count: number;
+  forks_count: number;
+  archived: boolean;
+  pushed_at: Timestamp | null;
+  updated_at: Timestamp | null;
+  fetched_at: Timestamp;
+  first_seen_at: Timestamp;
+  last_seen_at: Timestamp;
+}
+
+export interface IntelSimilarityQueriesTable {
+  id: string;
+  tool: string | null;
+  org_id: string | null;
+  actor_type: string | null;
+  actor_id: string | null;
+  query_text: string;
+  context_json: unknown;
+  policy_version: string | null;
+  latency_ms: number | null;
+  created_at: Timestamp;
+}
+
+export interface IntelSimilarityResultsTable {
+  id: string;
+  query_id: string;
+  rank: number;
+  item_kind: string;
+  item_key: string;
+  score: number;
+  explanation: string | null;
+  data_json: unknown;
+  created_at: Timestamp;
+}
+
+export interface IntelProvenanceManifestsTable {
+  id: string;
+  kind: string;
+  ref_id: string;
+  manifest_json: unknown;
+  created_at: Timestamp;
+  updated_at: Timestamp;
+}
+
 export interface SchemaMigrationsTable {
   filename: string;
   applied_at: Timestamp;
@@ -465,5 +540,11 @@ export interface DB {
   crypto_nonces: CryptoNoncesTable;
   audit_log: AuditLogTable;
   rate_limit_buckets: RateLimitBucketsTable;
+  github_sources: GithubSourcesTable;
+  github_events_raw: GithubEventsRawTable;
+  github_repos: GithubReposTable;
+  intel_similarity_queries: IntelSimilarityQueriesTable;
+  intel_similarity_results: IntelSimilarityResultsTable;
+  intel_provenance_manifests: IntelProvenanceManifestsTable;
   schema_migrations: SchemaMigrationsTable;
 }

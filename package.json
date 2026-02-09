@@ -17,6 +17,7 @@
     "worker:retention": "tsx workers/retention-runner.ts",
     "worker:scanner": "tsx workers/scanner-runner.ts",
     "worker:universal": "tsx skills/universal-worker/worker.ts",
+    "worker:github-ingest": "tsx workers/github-ingest-runner.ts",
     "verifier:gateway": "tsx services/verifier-gateway/server.ts",
     "test": "vitest run --no-file-parallelism",
     "test:serial": "vitest run --no-file-parallelism",

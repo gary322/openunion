@@ -119,6 +119,47 @@ export const workerPayoutAddressMessageSchema = z.object({
   address: z.string(),
 });
 
+export const intelSimilarRequestSchema = z
+  .object({
+    idea: z.string().min(3).max(500),
+    codeContext: z.string().max(50_000).optional().nullable(),
+    constraints: z
+      .object({
+        limit: z.number().int().min(1).max(20).optional(),
+        minStars: z.number().int().min(0).max(10_000_000).optional(),
+        languages: z.array(z.string().min(1).max(50)).max(5).optional(),
+        licenseAllow: z.array(z.string().min(1).max(40)).max(20).optional(),
+        mode: z.enum(['suggest', 'auto_apply']).optional(),
+      })
+      .optional()
+      .default({}),
+    tool: z.string().min(1).max(40).optional().nullable(),
+  })
+  .strict();
+
+export const workerGithubIngestEventsSchema = z
+  .object({
+    sourceId: z.string().min(1).max(80).optional().nullable(),
+    events: z.array(z.any()).min(1).max(200),
+  })
+  .strict();
+
+export const intelReusePlanRequestSchema = z
+  .object({
+    idea: z.string().min(3).max(500),
+    constraints: z
+      .object({
+        limit: z.number().int().min(1).max(10).optional(),
+        minStars: z.number().int().min(0).max(10_000_000).optional(),
+        languages: z.array(z.string().min(1).max(50)).max(5).optional(),
+        licenseAllow: z.array(z.string().min(1).max(40)).max(20).optional(),
+      })
+      .optional()
+      .default({}),
+    tool: z.string().min(1).max(40).optional().nullable(),
+  })
+  .strict();
+
 export const verifierClaimSchema = z.object({
   submissionId: z.string(),
   attemptNo: z.number().int().min(1),
