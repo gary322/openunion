@@ -59,6 +59,10 @@ if [[ -z "$VERIFIER_IMAGE_URI" ]]; then
   exit 1
 fi
 
+# Expose the build SHA/tag in the running containers so `/api/version` can report the deployed
+# version (instead of "dev"). We default to the app image tag, which is `sha-<sha7>` in CI.
+PROOFWORK_VERSION_TAG="${PROOFWORK_VERSION_TAG:-${APP_IMAGE_URI##*:}}"
+
 CLUSTER="${CLUSTER:-${PREFIX}-cluster}"
 API_SERVICE="${API_SERVICE:-${PREFIX}-api}"
 VERIFIER_SERVICE="${VERIFIER_SERVICE:-${PREFIX}-verifier-gateway}"
@@ -101,11 +105,19 @@ render_new_taskdef() {
     --task-definition "$task_def_arn" \
     --query taskDefinition \
     --output json \
-  | jq --arg IMAGE "$image_uri" --arg NAME "$container_name" \
+  | jq --arg IMAGE "$image_uri" --arg NAME "$container_name" --arg VERSION "$PROOFWORK_VERSION_TAG" \
       'del(.taskDefinitionArn,.revision,.status,.requiresAttributes,.compatibilities,.registeredAt,.registeredBy)
        | .containerDefinitions |= (if ($NAME | length) > 0
-           then map(if .name == $NAME then .image = $IMAGE else . end)
-           else map(.image = $IMAGE)
+           then map(
+             if .name == $NAME then
+               .image = $IMAGE
+               | .environment = ((.environment // []) | map(select(.name!="PROOFWORK_VERSION")) + [{name:"PROOFWORK_VERSION",value:$VERSION}])
+             else . end
+           )
+           else map(
+             .image = $IMAGE
+             | .environment = ((.environment // []) | map(select(.name!="PROOFWORK_VERSION")) + [{name:"PROOFWORK_VERSION",value:$VERSION}])
+           )
          end)'
 }
 
