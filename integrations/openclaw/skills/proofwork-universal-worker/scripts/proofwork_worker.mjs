@@ -1174,6 +1174,35 @@ async function getGithubReposFromApi(input) {
   return repos;
 }
 
+async function getGithubEventsFromApi(input) {
+  const inputSpec = input.inputSpec ?? {};
+  const maxEvents = Number.isFinite(Number(inputSpec?.max_events))
+    ? Math.max(1, Math.min(200, Math.floor(Number(inputSpec.max_events))))
+    : 100;
+
+  // Allow GITHUB_API_BASE_URL to include a path prefix (useful for deterministic smoke endpoints).
+  const ghBase = GITHUB_API_BASE_URL.endsWith("/") ? GITHUB_API_BASE_URL : `${GITHUB_API_BASE_URL}/`;
+  const url = new URL("events", ghBase);
+  // GitHub caps per_page at 100.
+  url.searchParams.set("per_page", String(Math.min(100, maxEvents)));
+
+  const res = await fetchJsonLimited({
+    url: url.toString(),
+    allowedOrigins: input.allowedOrigins,
+    deadlineMs: input.deadlineMs,
+    timeoutMs: 25_000,
+    headers: {
+      Accept: "application/vnd.github+json",
+      "User-Agent": "proofwork-worker",
+      "X-GitHub-Api-Version": "2022-11-28",
+    },
+  });
+  if (!res.ok) return [];
+  if (res.status === 403 || res.status === 429) return [];
+  const arr = Array.isArray(res.json) ? res.json : [];
+  return arr.slice(0, maxEvents);
+}
+
 function parseJsonFromStdout(stdout) {
   const trimmed = String(stdout ?? "").trim();
   if (!trimmed) return null;
@@ -2196,7 +2225,7 @@ async function runStructuredJsonOutputsModule(input) {
     });
   }
 
-  if (requiredOtherPrefixes.has("repos") || outputSpec?.repos === true || type.includes("github")) {
+  if (requiredOtherPrefixes.has("repos") || outputSpec?.repos === true || (type.includes("github") && !type.includes("github_ingest"))) {
     const idea = typeof inputSpec?.idea === "string" ? inputSpec.idea : "";
     let extractedRepos = Array.isArray(extracted.repos) ? extracted.repos : null;
     if ((!extractedRepos || !extractedRepos.length) && type.includes("github")) {
@@ -2212,6 +2241,32 @@ async function runStructuredJsonOutputsModule(input) {
       generated_at: new Date().toISOString(),
       query: idea,
       repos: extractedRepos && extractedRepos.length ? extractedRepos : [{ name: "example/repo", url: "https://github.com/example/repo", license: String(inputSpec?.license_constraints ?? "unknown"), stars: 0 }],
+    });
+  }
+
+  if (requiredOtherPrefixes.has("ingest") || outputSpec?.ingest === true || type.includes("github_ingest")) {
+    let events = Array.isArray(extracted.events) ? extracted.events : null;
+    if ((!events || !events.length) && type.includes("github_ingest")) {
+      try {
+        events = await getGithubEventsFromApi({ inputSpec, allowedOrigins, deadlineMs });
+      } catch (err) {
+        debugLog("github events fetch failed", String(err?.message ?? err));
+        events = null;
+      }
+    }
+
+    let ingestRes = null;
+    if (events && events.length) {
+      const sourceId = typeof inputSpec?.source_id === "string" && inputSpec.source_id.trim() ? inputSpec.source_id.trim() : "github_ingest_events";
+      const r = await apiFetch("/api/worker/intel/github/events", { method: "POST", token: input.token, body: { sourceId, events } });
+      ingestRes = r.resp.ok ? r.json : { ok: false, status: r.resp.status, error: r.json?.error ?? null };
+    }
+
+    await emit("ingest", {
+      schema: "github_ingest.v1",
+      generated_at: new Date().toISOString(),
+      fetched_events: events ? events.length : 0,
+      ingest: ingestRes ?? { ok: false, error: "no_events" },
     });
   }
 

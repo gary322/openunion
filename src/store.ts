@@ -22,6 +22,12 @@ import type {
   SubmissionsTable,
   VerificationsTable,
   WorkersTable,
+  GithubSourcesTable,
+  GithubEventsRawTable,
+  GithubReposTable,
+  IntelSimilarityQueriesTable,
+  IntelSimilarityResultsTable,
+  IntelProvenanceManifestsTable,
 } from './db/types.js';
 import { sha256 } from './utils.js';
 import { normalizeOrigin, originAllowed } from './buyer.js';
@@ -715,6 +721,45 @@ export async function seedBuiltInApps() {
         ],
       },
     },
+    {
+      id: 'app_github_ingest',
+      slug: 'github-ingest',
+      task_type: 'github_ingest_events',
+      name: 'GitHub Ingest',
+      description: 'Ingest public GitHub events into the Proofwork corpus (worker-assisted).',
+      public_allowed_origins: ['https://api.github.com'],
+      default_descriptor: {
+        schema_version: 'v1',
+        type: 'github_ingest_events',
+        capability_tags: ['http'],
+        input_spec: { max_events: 100, source_id: 'events_api', url: 'https://api.github.com/events' },
+        output_spec: {
+          required_artifacts: [
+            { kind: 'log', count: 1, label_prefix: 'report' },
+            { kind: 'other', count: 1, label_prefix: 'ingest' },
+          ],
+          ingest: true,
+        },
+        freshness_sla_sec: 300,
+      },
+      ui_schema: {
+        schema_version: 'v1',
+        category: 'Developer tools',
+        bounty_defaults: { payout_cents: 900, required_proofs: 1 },
+        sections: [
+          {
+            id: 'inputs',
+            title: 'Ingest config',
+            description: 'Configure how many events to ingest and the source identifier for cursoring.',
+            fields: [
+              { key: 'max_events', label: 'Max events', type: 'number', required: false, placeholder: '100', min: 1, max: 200, target: 'input_spec.max_events' },
+              { key: 'source_id', label: 'Source ID', type: 'text', required: false, placeholder: 'events_api', help: 'Used for dedupe/cursors across runs.', target: 'input_spec.source_id' },
+            ],
+          },
+        ],
+        templates: [{ id: 'default', name: 'Default ingest', preset: { max_events: 100, source_id: 'events_api' } }],
+      },
+    },
   ];
 
   for (const a of apps) {
@@ -818,6 +863,7 @@ export async function seedBuiltInApps() {
       addSupported('app_jobs', origin, 'proofwork_smoke_origin');
       addSupported('app_research', origin, 'proofwork_smoke_origin');
       addSupported('app_github', origin, 'proofwork_smoke_origin');
+      addSupported('app_github_ingest', origin, 'proofwork_smoke_origin');
     }
   } catch {
     // ignore
@@ -1864,6 +1910,12 @@ export async function resetStore() {
       'TRUNCATE TABLE',
       [
         'accepted_dedupe',
+        'intel_similarity_results',
+        'intel_similarity_queries',
+        'intel_provenance_manifests',
+        'github_events_raw',
+        'github_repos',
+        'github_sources',
         'apps',
         'app_supported_origins',
         'marketplace_origin_templates',
@@ -3908,4 +3960,234 @@ export async function resolveIdWorker(workerId: string, idRaw: string): Promise<
   }
 
   return { found: false };
+}
+
+// -----------------------------------------------------------------------------
+// GitHub intelligence: ingestion cursors, raw events, normalized repos, caches.
+// -----------------------------------------------------------------------------
+
+export type GithubSourceStatus = 'active' | 'paused' | 'error';
+
+export async function getGithubSource(id: string): Promise<Selectable<GithubSourcesTable> | null> {
+  const row = await db.selectFrom('github_sources').selectAll().where('id', '=', id).executeTakeFirst();
+  return row ?? null;
+}
+
+export async function upsertGithubSource(input: {
+  id: string;
+  cursor?: Record<string, unknown>;
+  status?: GithubSourceStatus;
+  lastSuccessAt?: Date | null;
+  lastErrorAt?: Date | null;
+  lastError?: string | null;
+}): Promise<void> {
+  const now = new Date();
+  const row = {
+    id: input.id,
+    cursor_json: input.cursor ?? {},
+    status: input.status ?? 'active',
+    last_success_at: input.lastSuccessAt ?? null,
+    last_error_at: input.lastErrorAt ?? null,
+    last_error: input.lastError ?? null,
+    created_at: now,
+    updated_at: now,
+  } satisfies Selectable<GithubSourcesTable>;
+
+  await db
+    .insertInto('github_sources')
+    .values(row)
+    .onConflict((oc) =>
+      oc.column('id').doUpdateSet({
+        cursor_json: input.cursor ?? sql`github_sources.cursor_json`,
+        status: input.status ?? sql`github_sources.status`,
+        last_success_at: input.lastSuccessAt === undefined ? sql`github_sources.last_success_at` : input.lastSuccessAt,
+        last_error_at: input.lastErrorAt === undefined ? sql`github_sources.last_error_at` : input.lastErrorAt,
+        last_error: input.lastError === undefined ? sql`github_sources.last_error` : input.lastError,
+        updated_at: now,
+      })
+    )
+    .execute();
+}
+
+export async function putGithubEventRaw(input: {
+  eventId: string;
+  source: string;
+  eventType: string;
+  eventCreatedAt?: Date | null;
+  repoFullName?: string | null;
+  actorLogin?: string | null;
+  payload: Record<string, unknown>;
+}): Promise<void> {
+  const sources = [input.source];
+  await db
+    .insertInto('github_events_raw')
+    .values({
+      event_id: input.eventId,
+      // Avoid node-postgres treating JS arrays as Postgres arrays (which are invalid JSON).
+      sources_json: JSON.stringify(sources),
+      event_type: input.eventType,
+      event_created_at: input.eventCreatedAt ?? null,
+      repo_full_name: input.repoFullName ?? null,
+      actor_login: input.actorLogin ?? null,
+      payload_json: input.payload ?? {},
+      ingested_at: new Date(),
+    } satisfies Selectable<GithubEventsRawTable>)
+    .onConflict((oc) =>
+      oc.column('event_id').doUpdateSet({
+        // Best-effort union of sources; if we can't merge cleanly, keep existing.
+        sources_json: sql`(
+          SELECT to_jsonb(ARRAY(
+            SELECT DISTINCT v
+            FROM jsonb_array_elements_text(COALESCE(github_events_raw.sources_json, '[]'::jsonb) || ${sql.lit(JSON.stringify(sources))}::jsonb) AS v
+          ))
+        )`,
+        repo_full_name: sql`COALESCE(github_events_raw.repo_full_name, excluded.repo_full_name)`,
+        actor_login: sql`COALESCE(github_events_raw.actor_login, excluded.actor_login)`,
+      })
+    )
+    .execute();
+}
+
+export async function upsertGithubRepo(input: {
+  repoId: number;
+  fullName: string;
+  htmlUrl: string;
+  description?: string | null;
+  language?: string | null;
+  topics?: string[];
+  licenseSpdx?: string | null;
+  licenseKey?: string | null;
+  stars?: number;
+  forks?: number;
+  archived?: boolean;
+  pushedAt?: Date | null;
+  updatedAt?: Date | null;
+  seenAt?: Date;
+}): Promise<void> {
+  const now = input.seenAt ?? new Date();
+  await db
+    .insertInto('github_repos')
+    .values({
+      repo_id: String(input.repoId),
+      full_name: input.fullName,
+      html_url: input.htmlUrl,
+      description: input.description ?? null,
+      language: input.language ?? null,
+      // Avoid node-postgres treating JS arrays as Postgres arrays (which are invalid JSON).
+      topics_json: JSON.stringify(input.topics ?? []),
+      license_spdx: input.licenseSpdx ?? null,
+      license_key: input.licenseKey ?? null,
+      stargazers_count: Number.isFinite(input.stars) ? Math.max(0, Math.floor(input.stars as number)) : 0,
+      forks_count: Number.isFinite(input.forks) ? Math.max(0, Math.floor(input.forks as number)) : 0,
+      archived: Boolean(input.archived ?? false),
+      pushed_at: input.pushedAt ?? null,
+      updated_at: input.updatedAt ?? null,
+      fetched_at: now,
+      first_seen_at: now,
+      last_seen_at: now,
+    } satisfies Selectable<GithubReposTable>)
+    .onConflict((oc) =>
+      oc.column('repo_id').doUpdateSet({
+        full_name: input.fullName,
+        html_url: input.htmlUrl,
+        description: input.description ?? null,
+        language: input.language ?? null,
+        topics_json: JSON.stringify(input.topics ?? []),
+        license_spdx: input.licenseSpdx ?? null,
+        license_key: input.licenseKey ?? null,
+        stargazers_count: Number.isFinite(input.stars) ? Math.max(0, Math.floor(input.stars as number)) : sql`github_repos.stargazers_count`,
+        forks_count: Number.isFinite(input.forks) ? Math.max(0, Math.floor(input.forks as number)) : sql`github_repos.forks_count`,
+        archived: Boolean(input.archived ?? false),
+        pushed_at: input.pushedAt ?? null,
+        updated_at: input.updatedAt ?? null,
+        fetched_at: now,
+        last_seen_at: now,
+      })
+    )
+    .execute();
+}
+
+export async function createSimilarityQuery(input: {
+  id: string;
+  queryText: string;
+  tool?: string | null;
+  orgId?: string | null;
+  actorType?: string | null;
+  actorId?: string | null;
+  context?: Record<string, unknown>;
+  policyVersion?: string | null;
+  latencyMs?: number | null;
+}): Promise<void> {
+  await db
+    .insertInto('intel_similarity_queries')
+    .values({
+      id: input.id,
+      tool: input.tool ?? null,
+      org_id: input.orgId ?? null,
+      actor_type: input.actorType ?? null,
+      actor_id: input.actorId ?? null,
+      query_text: input.queryText,
+      context_json: input.context ?? {},
+      policy_version: input.policyVersion ?? null,
+      latency_ms: input.latencyMs ?? null,
+      created_at: new Date(),
+    } satisfies Selectable<IntelSimilarityQueriesTable>)
+    .execute();
+}
+
+export async function putSimilarityResults(input: {
+  queryId: string;
+  results: Array<{
+    id: string;
+    rank: number;
+    itemKind: 'repo' | 'file' | 'other';
+    itemKey: string;
+    score: number;
+    explanation?: string | null;
+    data?: Record<string, unknown>;
+  }>;
+}): Promise<void> {
+  if (!input.results.length) return;
+  await db
+    .insertInto('intel_similarity_results')
+    .values(
+      input.results.map((r) => ({
+        id: r.id,
+        query_id: input.queryId,
+        rank: r.rank,
+        item_kind: r.itemKind,
+        item_key: r.itemKey,
+        score: r.score,
+        explanation: r.explanation ?? null,
+        data_json: r.data ?? {},
+        created_at: new Date(),
+      })) satisfies Array<Selectable<IntelSimilarityResultsTable>>
+    )
+    .execute();
+}
+
+export async function upsertProvenanceManifest(input: {
+  id: string;
+  kind: string;
+  refId: string;
+  manifest: Record<string, unknown>;
+}): Promise<void> {
+  const now = new Date();
+  await db
+    .insertInto('intel_provenance_manifests')
+    .values({
+      id: input.id,
+      kind: input.kind,
+      ref_id: input.refId,
+      manifest_json: input.manifest ?? {},
+      created_at: now,
+      updated_at: now,
+    } satisfies Selectable<IntelProvenanceManifestsTable>)
+    .onConflict((oc) =>
+      oc.columns(['kind', 'ref_id']).doUpdateSet({
+        manifest_json: input.manifest ?? {},
+        updated_at: now,
+      })
+    )
+    .execute();
 }

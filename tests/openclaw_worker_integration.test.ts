@@ -816,6 +816,127 @@ process.exit(0);
     }
   });
 
+  it('completes github_ingest_events and persists github_events_raw via worker ingest endpoint', async () => {
+    const reg = await request(app.server).post('/api/workers/register').send({ displayName: 'A', capabilities: {} });
+    expect(reg.status).toBe(200);
+    const workerToken = reg.body.token as string;
+
+    const events = [
+      {
+        id: '1',
+        type: 'PushEvent',
+        created_at: '2026-02-09T00:00:00Z',
+        actor: { login: 'alice' },
+        repo: { id: 2001, name: 'acme/repo-one' },
+        payload: { distinct_size: 1 },
+      },
+      {
+        id: '2',
+        type: 'WatchEvent',
+        created_at: '2026-02-09T00:01:00Z',
+        actor: { login: 'bob' },
+        repo: { id: 2002, name: 'acme/repo-two' },
+        payload: { action: 'started' },
+      },
+    ];
+
+    const apiServer = createServer((req, res) => {
+      const u = new URL(req.url ?? '/', 'http://127.0.0.1');
+      if (u.pathname === '/events') {
+        res.statusCode = 200;
+        res.setHeader('content-type', 'application/json; charset=utf-8');
+        res.end(JSON.stringify(events));
+        return;
+      }
+      res.statusCode = 404;
+      res.end('not found');
+    });
+    apiServer.listen(0, '127.0.0.1');
+    await once(apiServer, 'listening');
+    const addr: any = apiServer.address();
+    const origin = `http://127.0.0.1:${addr.port}`;
+
+    try {
+      const next = await request(app.server).get('/api/jobs/next').set('Authorization', `Bearer ${workerToken}`);
+      expect(next.status).toBe(200);
+      expect(next.body.state).toBe('claimable');
+      const job = next.body.data.job;
+      await pool.query('DELETE FROM jobs WHERE id <> $1', [job.jobId]);
+
+      const orgRes = await pool.query<{ org_id: string }>('SELECT org_id FROM bounties WHERE id=$1', [job.bountyId]);
+      const orgId = String(orgRes.rows[0]?.org_id ?? '');
+      expect(orgId).toBeTruthy();
+      await pool.query(
+        `INSERT INTO origins(id, org_id, origin, status, method, token, verified_at)
+         VALUES ($1, $2, $3, 'verified', 'manual', 't', now())
+         ON CONFLICT (org_id, origin) DO UPDATE SET status='verified', verified_at=now()`,
+        [`orig_${Date.now()}_${Math.random().toString(16).slice(2)}`, orgId, origin]
+      );
+      await pool.query('UPDATE bounties SET allowed_origins=$1 WHERE id=$2', [JSON.stringify([origin]), job.bountyId]);
+
+      const descriptor = {
+        schema_version: 'v1',
+        type: 'github_ingest_events',
+        capability_tags: ['http'],
+        input_spec: { max_events: 2, source_id: 'e2e_smoke', url: `${origin}/events` },
+        output_spec: {
+          required_artifacts: [{ kind: 'other', count: 1, label_prefix: 'ingest' }],
+          ingest: true,
+        },
+        freshness_sla_sec: 300,
+      };
+      await pool.query('UPDATE jobs SET task_descriptor=$1 WHERE id=$2', [JSON.stringify(descriptor), job.jobId]);
+
+      const scriptPath = 'integrations/openclaw/skills/proofwork-universal-worker/scripts/proofwork_worker.mjs';
+      const run = await runNodeScript({
+        scriptPath,
+        cwd: process.cwd(),
+        env: {
+          ONCE: 'true',
+          PROOFWORK_API_BASE_URL: baseUrl,
+          PROOFWORK_WORKER_TOKEN: workerToken,
+          PROOFWORK_SUPPORTED_CAPABILITY_TAGS: 'http',
+          PROOFWORK_CANARY_PERCENT: '100',
+          GITHUB_API_BASE_URL: origin,
+        },
+      });
+      if (run.code !== 0) {
+        // eslint-disable-next-line no-console
+        console.log('openclaw worker stdout:\n', run.stdout);
+        // eslint-disable-next-line no-console
+        console.log('openclaw worker stderr:\n', run.stderr);
+      }
+      expect(run.code).toBe(0);
+
+      const updated = await getJob(job.jobId);
+      expect(updated?.status).toBe('verifying');
+      expect(updated?.currentSubmissionId).toBeTruthy();
+
+      const sub = await getSubmission(String(updated?.currentSubmissionId ?? ''));
+      expect(sub).toBeTruthy();
+      const ingestArt = (sub?.artifactIndex ?? []).find((a: any) => String(a.label) === 'ingest_main');
+      expect(ingestArt).toBeTruthy();
+      const ingestUrl = String((ingestArt as any)?.url ?? '');
+      const m = ingestUrl.match(/\/api\/artifacts\/([^/]+)\/download/);
+      expect(m?.[1]).toBeTruthy();
+
+      const dl = await request(app.server).get(`/api/artifacts/${m?.[1]}/download`).set('Authorization', `Bearer ${workerToken}`);
+      expect(dl.status).toBe(200);
+      const parsed = JSON.parse(String(dl.text ?? dl.body ?? ''));
+      expect(String(parsed?.schema ?? '')).toBe('github_ingest.v1');
+      expect(Number(parsed?.fetched_events ?? 0)).toBe(2);
+      expect(parsed?.ingest?.ok).toBe(true);
+
+      const evCount = await pool.query<{ c: string }>('SELECT count(*)::text as c FROM github_events_raw');
+      expect(Number(evCount.rows[0]?.c ?? 0)).toBe(2);
+      const src = await pool.query<{ id: string; cursor_json: any }>("SELECT id, cursor_json FROM github_sources WHERE id='worker:e2e_smoke'");
+      expect(String(src.rows[0]?.id ?? '')).toBe('worker:e2e_smoke');
+      expect(String(src.rows[0]?.cursor_json?.lastEventId ?? '')).toBe('2');
+    } finally {
+      await new Promise<void>((resolve) => apiServer.close(() => resolve()));
+    }
+  });
+
   it('extracts marketplace_drops items via selector-based OpenClaw evaluate (stubbed openclaw)', async () => {
     const reg = await request(app.server).post('/api/workers/register').send({ displayName: 'A', capabilities: { openclaw: true } });
     expect(reg.status).toBe(200);

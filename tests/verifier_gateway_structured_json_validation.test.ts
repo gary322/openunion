@@ -79,6 +79,7 @@ describe('Verifier gateway (structured JSON outputs)', () => {
           { kind: 'other', count: 1, label_prefix: 'rows' },
           { kind: 'other', count: 1, label_prefix: 'repos' },
           { kind: 'other', count: 1, label_prefix: 'references' },
+          { kind: 'other', count: 1, label_prefix: 'ingest' },
         ],
       },
     };
@@ -103,6 +104,11 @@ describe('Verifier gateway (structured JSON outputs)', () => {
     const upRefs = await putJsonFile(token, job.jobId, 'references.json', {
       schema: 'references.v1',
       references: [{ id: 'arxiv:0000.00000', url: 'https://arxiv.org/abs/0000.00000' }],
+    });
+    const upIngest = await putJsonFile(token, job.jobId, 'ingest.json', {
+      schema: 'github_ingest.v1',
+      fetched_events: 2,
+      ingest: { ok: true, inserted: 2, skipped: 0, lastEventId: '2', sourceId: 'worker:test' },
     });
 
     const artifactIndex = [
@@ -146,6 +152,14 @@ describe('Verifier gateway (structured JSON outputs)', () => {
         sizeBytes: upRefs.bytes.byteLength,
         contentType: 'application/json',
       },
+      {
+        kind: 'other',
+        label: 'ingest_main',
+        sha256: sha256Hex(upIngest.bytes),
+        url: upIngest.u.finalUrl,
+        sizeBytes: upIngest.bytes.byteLength,
+        contentType: 'application/json',
+      },
     ];
 
     const manifest = {
@@ -187,6 +201,85 @@ describe('Verifier gateway (structured JSON outputs)', () => {
     expect(run.statusCode).toBe(200);
     const body = run.json() as any;
     expect(body.verdict).toBe('pass');
+  });
+
+  it('fails deterministically when required ingest.json indicates ingest failed', async () => {
+    const { buildVerifierGateway } = await import('../services/verifier-gateway/server.js');
+    const gw = buildVerifierGateway();
+
+    const reg = await request(app.server).post('/api/workers/register').send({ displayName: 'A', capabilities: { browser: true } });
+    const token = reg.body.token as string;
+
+    const next = await request(app.server).get('/api/jobs/next').set('Authorization', `Bearer ${token}`);
+    const job = next.body.data.job;
+    await request(app.server).post(`/api/jobs/${job.jobId}/claim`).set('Authorization', `Bearer ${token}`).send();
+
+    const descriptor = {
+      schema_version: 'v1',
+      type: 'github_ingest_events',
+      capability_tags: ['http'],
+      input_spec: {},
+      output_spec: { required_artifacts: [{ kind: 'other', count: 1, label_prefix: 'ingest' }] },
+    };
+    await pool.query('UPDATE jobs SET task_descriptor=$1 WHERE id=$2', [JSON.stringify(descriptor), job.jobId]);
+
+    const upIngest = await putJsonFile(token, job.jobId, 'ingest.json', {
+      schema: 'github_ingest.v1',
+      fetched_events: 2,
+      ingest: { ok: false, error: 'upstream_failed' },
+    });
+
+    const artifactIndex = [
+      {
+        kind: 'other',
+        label: 'ingest_main',
+        sha256: sha256Hex(upIngest.bytes),
+        url: upIngest.u.finalUrl,
+        sizeBytes: upIngest.bytes.byteLength,
+        contentType: 'application/json',
+      },
+    ];
+
+    const manifest = {
+      manifestVersion: '1.0',
+      jobId: job.jobId,
+      bountyId: job.bountyId,
+      finalUrl: job.journey.startUrl,
+      worker: { workerId: reg.body.workerId, skillVersion: 'test', fingerprint: { fingerprintClass: job.environment.fingerprintClass } },
+      result: { outcome: 'failure', failureType: 'other', severity: 'low', expected: 'expected output ok', observed: 'observed output ok', reproConfidence: 'high' },
+      reproSteps: ['upload artifacts', 'submit'],
+      artifacts: artifactIndex,
+    };
+
+    const submit = await request(app.server)
+      .post(`/api/jobs/${job.jobId}/submit`)
+      .set('Authorization', `Bearer ${token}`)
+      .set('Idempotency-Key', `idem_${Date.now()}`)
+      .send({ manifest, artifactIndex });
+    expect(submit.status).toBe(200);
+    const submissionId = submit.body.data.submission.id as string;
+
+    const claimVer = await request(app.server)
+      .post('/api/verifier/claim')
+      .set('Authorization', `Bearer ${verifierToken}`)
+      .send({ submissionId, attemptNo: 1, messageId: 'm', idempotencyKey: 'idem', verifierInstanceId: 'v', claimTtlSec: 600 });
+    expect(claimVer.status).toBe(200);
+
+    const run = await gw.inject({
+      method: 'POST',
+      url: '/run',
+      payload: {
+        verificationId: claimVer.body.verificationId,
+        submissionId,
+        attemptNo: 1,
+        jobSpec: claimVer.body.jobSpec,
+        submission: claimVer.body.submission,
+      },
+    });
+    expect(run.statusCode).toBe(200);
+    const body = run.json() as any;
+    expect(body.verdict).toBe('fail');
+    expect(body.reason).toBe('ingest_artifact_ingest_not_ok');
   });
 
   it('fails deterministically when a required repos.json entry is missing license', async () => {

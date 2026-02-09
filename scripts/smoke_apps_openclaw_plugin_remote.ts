@@ -398,7 +398,15 @@ async function main() {
   const gwToken = String(process.env.SMOKE_GATEWAY_TOKEN ?? `gw_${randomBytes(16).toString('hex')}`);
   const gwUrl = `ws://127.0.0.1:${port}`;
 
-  const ocEnv = { ...process.env, OPENCLAW_STATE_DIR: stateDir } as Record<string, string>;
+  // Make plugin workers deterministic by routing third-party API calls through the Proofwork smoke endpoints.
+  const ocEnv = {
+    ...process.env,
+    REMOTIVE_API_URL: `${baseUrl}/__smoke/remotive/api/remote-jobs`,
+    ARXIV_API_BASE_URL: `${baseUrl}/__smoke/arxiv/api/query`,
+    // Worker supports base URLs with a path prefix (see proofwork_worker.mjs).
+    GITHUB_API_BASE_URL: `${baseUrl}/__smoke/github`,
+    OPENCLAW_STATE_DIR: stateDir,
+  } as Record<string, string>;
 
   // Preflight: Proofwork health + local prerequisites.
   const health = await fetchJson({ baseUrl, path: '/health' });
@@ -438,6 +446,7 @@ async function main() {
       { name: 'jobs', enabled: true, allowTaskTypes: ['jobs_scrape'], supportedCapabilityTags: ['browser', 'screenshot', 'http', 'llm_summarize'] },
       { name: 'research', enabled: true, allowTaskTypes: ['arxiv_research_plan'], supportedCapabilityTags: ['http', 'llm_summarize'] },
       { name: 'github', enabled: true, allowTaskTypes: ['github_scan'], supportedCapabilityTags: ['http', 'llm_summarize'] },
+      { name: 'github_ingest', enabled: true, allowTaskTypes: ['github_ingest_events'], supportedCapabilityTags: ['http'] },
       { name: 'marketplace', enabled: true, allowTaskTypes: ['marketplace_drops'], supportedCapabilityTags: ['browser', 'screenshot'] },
       { name: 'clips', enabled: true, allowTaskTypes: ['clips_highlights'], supportedCapabilityTags: ['ffmpeg', 'llm_summarize'] },
     ],
@@ -519,7 +528,7 @@ async function main() {
       const t = String(a?.taskType ?? a?.task_type ?? '');
       if (t) byTaskType.set(t, a);
     }
-    for (const t of ['marketplace_drops', 'clips_highlights']) {
+    for (const t of ['marketplace_drops', 'clips_highlights', 'github_ingest_events']) {
       const rec = byTaskType.get(t);
       const originsRaw = Array.isArray(rec?.publicAllowedOrigins)
         ? rec.publicAllowedOrigins
@@ -533,7 +542,7 @@ async function main() {
     }
 
     // Wait for plugin workers to start and report status.
-    await waitForPluginWorkers({ stateDir, timeoutMs: 60_000, maxAgeMs: 30_000, expectNames: ['jobs', 'research', 'github', 'marketplace', 'clips'] });
+    await waitForPluginWorkers({ stateDir, timeoutMs: 60_000, maxAgeMs: 30_000, expectNames: ['jobs', 'research', 'github', 'github_ingest', 'marketplace', 'clips'] });
 
     // Buyer auth + ensure funds.
     const email = mustEnv('SMOKE_BUYER_EMAIL', 'buyer@example.com');
@@ -581,6 +590,22 @@ async function main() {
           input_spec: { idea: 'smoke: github scan', min_stars: 1 },
           output_spec: { repos: true, summary_md: true },
           freshness_sla_sec: 3600,
+        },
+      },
+      {
+        id: 'github_ingest',
+        taskType: 'github_ingest_events',
+        payoutCents: 900,
+        td: {
+          schema_version: 'v1',
+          type: 'github_ingest_events',
+          capability_tags: ['http'],
+          input_spec: { max_events: 25, source_id: 'smoke_apps_plugin', url: `${baseUrl}/__smoke/github/events` },
+          output_spec: {
+            required_artifacts: [{ kind: 'other', count: 1, label_prefix: 'ingest' }],
+            ingest: true,
+          },
+          freshness_sla_sec: 300,
         },
       },
       {
