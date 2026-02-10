@@ -4107,6 +4107,30 @@ export async function upsertGithubRepo(input: {
     .execute();
 }
 
+export async function pruneGithubEventsRaw(input: { maxAgeDays: number; limit?: number }): Promise<number> {
+  const maxAgeDaysRaw = Number(input.maxAgeDays);
+  const maxAgeDays = Number.isFinite(maxAgeDaysRaw) ? Math.max(1, Math.min(365, Math.floor(maxAgeDaysRaw))) : 30;
+  const limitRaw = Number(input.limit ?? 10_000);
+  const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(100_000, Math.floor(limitRaw))) : 10_000;
+  const cutoff = new Date(Date.now() - maxAgeDays * 24 * 60 * 60 * 1000);
+
+  const res = await sql<{ n: number }>`
+    WITH del AS (
+      SELECT event_id
+      FROM github_events_raw
+      WHERE ingested_at < ${cutoff}
+      ORDER BY ingested_at ASC
+      LIMIT ${limit}
+    )
+    DELETE FROM github_events_raw
+    USING del
+    WHERE github_events_raw.event_id = del.event_id
+    RETURNING 1 as n
+  `.execute(db);
+
+  return res.rows.length;
+}
+
 export async function createSimilarityQuery(input: {
   id: string;
   queryText: string;
