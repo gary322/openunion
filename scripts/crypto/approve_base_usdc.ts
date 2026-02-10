@@ -3,10 +3,10 @@
 // This is required for on-chain payouts because the splitter uses transferFrom(msg.sender,...).
 //
 // Usage (Base mainnet):
-//   BASE_PAYOUT_SPLITTER_ADDRESS=0x... KMS_PAYOUT_KEY_ID=... node --loader tsx scripts/crypto/approve_base_usdc.ts
+//   BASE_PAYOUT_SPLITTER_ADDRESS=0x... KMS_PAYOUT_KEY_ID=... node --import tsx scripts/crypto/approve_base_usdc.ts
 //
 // Or with a local private key signer:
-//   BASE_PAYOUT_SPLITTER_ADDRESS=0x... PAYER_PRIVATE_KEY=0x... node --loader tsx scripts/crypto/approve_base_usdc.ts
+//   BASE_PAYOUT_SPLITTER_ADDRESS=0x... PAYER_PRIVATE_KEY=0x... node --import tsx scripts/crypto/approve_base_usdc.ts
 //
 // Notes:
 // - This script prints only non-sensitive values (addresses + tx hash).
@@ -79,4 +79,3 @@ main().catch((err) => {
   console.error(err);
   process.exitCode = 1;
 });
-

@@ -46,9 +46,30 @@ export function centsToUsdcBaseUnits(cents: number): bigint {
 }
 
 export function rpcUrl() {
-  const url = process.env.BASE_RPC_URL;
-  if (!url) throw new Error('BASE_RPC_URL not configured');
-  return url;
+  return rpcUrls()[0];
+}
+
+export function rpcUrls(): string[] {
+  const raw = String(process.env.BASE_RPC_URLS ?? '').trim();
+  const primary = String(process.env.BASE_RPC_URL ?? '').trim();
+  const parts = raw
+    ? raw
+        .split(/[,\s]+/)
+        .map((s) => s.trim())
+        .filter(Boolean)
+    : [];
+  const urls = [...parts, primary].map((s) => s.trim()).filter(Boolean);
+
+  const uniq: string[] = [];
+  const seen = new Set<string>();
+  for (const u of urls) {
+    if (seen.has(u)) continue;
+    seen.add(u);
+    uniq.push(u);
+  }
+
+  if (!uniq.length) throw new Error('BASE_RPC_URL not configured');
+  return uniq;
 }
 
 export function baseUsdcAddress() {
@@ -88,14 +109,95 @@ export function platformFeeBps() {
 }
 
 export async function rpcCall<T = any>(method: string, params: any[]): Promise<T> {
-  const resp = await fetch(rpcUrl(), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
-  });
-  const json = (await resp.json()) as any;
-  if (json?.error) throw new Error(`rpc_error:${json.error.code}:${json.error.message}`);
-  return json.result as T;
+  const timeoutMsRaw = Number(process.env.BASE_RPC_TIMEOUT_MS ?? 10_000);
+  const timeoutMs = Number.isFinite(timeoutMsRaw) ? Math.max(1000, Math.min(60_000, Math.floor(timeoutMsRaw))) : 10_000;
+
+  const maxRetriesRaw = Number(process.env.BASE_RPC_MAX_RETRIES ?? 2);
+  const maxRetries = Number.isFinite(maxRetriesRaw) ? Math.max(0, Math.min(10, Math.floor(maxRetriesRaw))) : 2;
+
+  const baseDelayMsRaw = Number(process.env.BASE_RPC_RETRY_BASE_MS ?? 250);
+  const baseDelayMs = Number.isFinite(baseDelayMsRaw) ? Math.max(0, Math.min(60_000, Math.floor(baseDelayMsRaw))) : 250;
+  const maxDelayMsRaw = Number(process.env.BASE_RPC_RETRY_MAX_MS ?? 8000);
+  const maxDelayMs = Number.isFinite(maxDelayMsRaw) ? Math.max(0, Math.min(120_000, Math.floor(maxDelayMsRaw))) : 8000;
+  const jitterMaxRaw = Number(process.env.BASE_RPC_RETRY_JITTER_MS ?? 100);
+  const jitterMax = Number.isFinite(jitterMaxRaw) ? Math.max(0, Math.min(1000, Math.floor(jitterMaxRaw))) : 100;
+
+  const urls = rpcUrls();
+  let lastErr: unknown = null;
+
+  for (const url of urls) {
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), timeoutMs);
+      timeout.unref?.();
+
+      try {
+        const resp = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+          signal: controller.signal,
+        });
+        const text = await resp.text();
+
+        if (!resp.ok) {
+          throw new Error(`rpc_http_error:${resp.status}:${text.slice(0, 200)}`);
+        }
+
+        let json: any = null;
+        try {
+          json = text ? JSON.parse(text) : null;
+        } catch {
+          json = null;
+        }
+
+        if (json?.error) {
+          const code = String(json.error.code ?? '');
+          const msg = String(json.error.message ?? '');
+          const err = new Error(`rpc_error:${code}:${msg}`) as any;
+          err.rpc = { url, method, code, message: msg };
+          throw err;
+        }
+
+        return json?.result as T;
+      } catch (err: any) {
+        lastErr = err;
+        if (attempt >= maxRetries || !isRetryableRpcError(err)) break;
+
+        const exp = Math.min(maxDelayMs, baseDelayMs * Math.pow(2, attempt));
+        const jitter = jitterMax ? Math.floor(Math.random() * jitterMax) : 0;
+        const delayMs = exp + jitter;
+        await new Promise((r) => setTimeout(r, delayMs));
+        continue;
+      } finally {
+        clearTimeout(timeout);
+      }
+    }
+  }
+
+  throw lastErr ?? new Error('rpc_call_failed');
+}
+
+function isRetryableRpcError(err: any): boolean {
+  const msg = String(err?.message ?? '').toLowerCase();
+  if (String(err?.name ?? '') === 'AbortError') return true;
+
+  // HTTP errors: retry on 429/5xx.
+  if (msg.includes('rpc_http_error:429')) return true;
+  if (msg.includes('rpc_http_error:5')) return true;
+
+  // Base public RPC sometimes returns JSON-RPC errors like: code=-32016 message="over rate limit".
+  if (msg.includes('rate limit') || msg.includes('over rate limit')) return true;
+  if (msg.includes('rpc_error:-32016')) return true;
+
+  // Transient network failures.
+  if (msg.includes('fetch failed')) return true;
+  if (msg.includes('econnreset')) return true;
+  if (msg.includes('etimedout')) return true;
+  if (msg.includes('enotfound')) return true;
+  if (msg.includes('eai_again')) return true;
+
+  return false;
 }
 
 export async function getPendingNonce(address: string): Promise<bigint> {
