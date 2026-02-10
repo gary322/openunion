@@ -11,6 +11,12 @@ function argValue(name: string): string | undefined {
   return process.argv[idx + 1];
 }
 
+function normalizeOptionalInteger(input: string | undefined, fallback: number, opts: { min: number; max: number }): number {
+  const raw = Number(input);
+  if (!Number.isFinite(raw)) return fallback;
+  return Math.max(opts.min, Math.min(opts.max, Math.floor(raw)));
+}
+
 function normalizeEnv(envRaw: string): 'staging' | 'production' {
   const env = String(envRaw ?? '').trim().toLowerCase();
   if (env === 'staging') return 'staging';
@@ -58,6 +64,25 @@ async function awsJson(region: string, args: string[]): Promise<any> {
   const out = await execFile('aws', [...args, '--region', region, '--output', 'json'], { redactCmd: true });
   const s = out.stdout.trim();
   return s ? JSON.parse(s) : null;
+}
+
+async function ensureCloudWatchLogGroup(input: { region: string; logGroupName: string; retentionDays: number }) {
+  const res = await awsJson(input.region, ['logs', 'describe-log-groups', '--log-group-name-prefix', input.logGroupName]);
+  const groups: any[] = Array.isArray(res?.logGroups) ? res.logGroups : [];
+  const exists = groups.some((g) => String(g?.logGroupName ?? '') === input.logGroupName);
+
+  if (!exists) {
+    await execFile('aws', ['logs', 'create-log-group', '--region', input.region, '--log-group-name', input.logGroupName], {
+      allowFailure: true,
+      redactCmd: true,
+    });
+  }
+
+  await execFile(
+    'aws',
+    ['logs', 'put-retention-policy', '--region', input.region, '--log-group-name', input.logGroupName, '--retention-in-days', String(input.retentionDays)],
+    { redactCmd: true }
+  );
 }
 
 async function writeTempJsonFile(obj: any, prefix: string): Promise<{ dir: string; file: string }> {
@@ -178,6 +203,7 @@ async function main() {
   const env = normalizeEnv(argValue('--env') ?? argValue('--environment') ?? 'staging');
   const region = String(argValue('--region') ?? process.env.AWS_REGION ?? 'us-east-1').trim();
   const prefix = prefixForEnv(env);
+  const retentionDays = normalizeOptionalInteger(argValue('--log-retention-days'), 14, { min: 1, max: 365 });
 
   const cluster = String(argValue('--cluster') ?? `${prefix}-cluster`).trim();
   const service = String(argValue('--service') ?? `${prefix}-github-ingest`).trim();
@@ -208,6 +234,8 @@ async function main() {
       { name: 'GITHUB_GH_ARCHIVE_BASE_URL', value: 'https://data.gharchive.org' },
     ],
   });
+
+  await ensureCloudWatchLogGroup({ region, logGroupName: `/ecs/${prefix}/github-ingest`, retentionDays });
 
   const existing = await getServiceJson({ region, cluster, service });
   const status = String(existing?.status ?? '').trim();
@@ -270,4 +298,3 @@ main().catch((err) => {
   console.error('[github-ingest-enable] failed', err);
   process.exitCode = 1;
 });
-
