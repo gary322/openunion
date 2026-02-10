@@ -8,7 +8,9 @@ await _loadEnv;
 import { runMigrations } from '../src/db/migrate.js';
 import { startWorkerHealthServer } from './health.js';
 import { getGithubSource, pruneGithubEventsRaw, putGithubEventRaw, upsertGithubRepo, upsertGithubSource } from '../src/store.js';
-import { gunzipSync } from 'node:zlib';
+import { createInterface } from 'node:readline';
+import { Readable } from 'node:stream';
+import { createGunzip } from 'node:zlib';
 
 function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
@@ -67,33 +69,34 @@ export async function runGithubIngestOnce(input: {
   let upsertedRepos = 0;
   let fetched = 0;
 
-  async function ingestEvents(events: any[]) {
-    fetched += events.length;
-    for (const e of events) {
+  async function ingestEvent(e: any) {
+    if (!e || typeof e !== 'object') return;
     const eventId = String((e as any)?.id ?? '').trim();
     const eventType = String((e as any)?.type ?? '').trim();
-    if (!eventId || !eventType) continue;
+    if (!eventId || !eventType) return;
 
     const createdAtRaw = String((e as any)?.created_at ?? '').trim();
     const actorLogin = String((e as any)?.actor?.login ?? '').trim() || null;
     const repoId = Number((e as any)?.repo?.id ?? NaN);
     const repoFullName = String((e as any)?.repo?.name ?? '').trim() || null;
 
-    const createdAt = createdAtRaw ? new Date(createdAtRaw) : null;
-    if (createdAt && Number.isNaN(createdAt.getTime())) {
-      // keep it null rather than store an invalid timestamp
+    let eventCreatedAt: Date | null = null;
+    if (createdAtRaw) {
+      const d = new Date(createdAtRaw);
+      if (!Number.isNaN(d.getTime())) eventCreatedAt = d;
     }
 
     await putGithubEventRaw({
       eventId,
       source: input.sourceId,
       eventType,
-      eventCreatedAt: createdAt && !Number.isNaN(createdAt.getTime()) ? createdAt : null,
+      eventCreatedAt,
       repoFullName,
       actorLogin,
       payload: (e as any) ?? {},
     });
 
+    fetched += 1;
     lastEventId = maxNumericString(lastEventId, eventId);
     if (createdAtRaw) lastEventCreatedAt = createdAtRaw;
 
@@ -112,11 +115,14 @@ export async function runGithubIngestOnce(input: {
         archived: false,
         pushedAt: null,
         updatedAt: null,
-        seenAt: createdAt && !Number.isNaN(createdAt.getTime()) ? createdAt : now,
+        seenAt: eventCreatedAt ?? now,
       });
       upsertedRepos += 1;
     }
-    }
+  }
+
+  async function ingestEvents(events: any[]) {
+    for (const e of events) await ingestEvent(e);
   }
 
   if (input.sourceKind === 'events_api') {
@@ -173,7 +179,6 @@ export async function runGithubIngestOnce(input: {
       });
       return { fetched: 0, upsertedRepos: 0, cursor: { kind: 'gh_archive', nextHour: hour } };
     }
-    const buf = Buffer.from(await resp.arrayBuffer());
     if (!resp.ok) {
       await upsertGithubSource({
         id: input.sourceId,
@@ -184,10 +189,20 @@ export async function runGithubIngestOnce(input: {
       throw new Error(`gh_archive_fetch_failed:${resp.status}`);
     }
 
-    const raw = gunzipSync(buf).toString('utf8');
-    const lines = raw.split(/\r?\n/).filter(Boolean);
-    const events = lines.map(parseJsonSafe).filter(Boolean);
-    await ingestEvents(events);
+    // Stream-decompress and ingest line-by-line to avoid OOM on large archive hours.
+    const body = resp.body;
+    if (!body) throw new Error('gh_archive_missing_body');
+    const gunzip = createGunzip();
+    const nodeStream = Readable.fromWeb(body as any);
+    const rl = createInterface({ input: nodeStream.pipe(gunzip), crlfDelay: Infinity });
+
+    for await (const line of rl) {
+      const s = String(line ?? '').trim();
+      if (!s) continue;
+      const evt = parseJsonSafe(s);
+      if (!evt) continue;
+      await ingestEvent(evt);
+    }
 
     // Advance cursor by one hour (UTC).
     const [yyyy, mm, dd, hh] = hour.split('-').map((x) => Number(x));
