@@ -113,7 +113,7 @@ async function inferPublicBaseUrl(input: { region: string; taskDefinitionArn: st
     '--task-definition',
     input.taskDefinitionArn,
     '--query',
-    'taskDefinition.containerDefinitions[?name==`api`].environment',
+    "taskDefinition.containerDefinitions[?name=='api'].environment",
   ]);
   const entries = Array.isArray(env?.[0]) ? env[0] : Array.isArray(env) ? env : [];
   const found = entries.find((e: any) => String(e?.name ?? '') === 'PUBLIC_BASE_URL');
@@ -276,4 +276,3 @@ main().catch((err) => {
   console.error('[stripe-webhook-rotate] failed', err);
   process.exitCode = 1;
 });
-
