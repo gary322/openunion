@@ -54,4 +54,5 @@
   - ALB 5xx, latency alarms
   - ECS CPU alarms
   - RDS CPU + FreeStorageSpace alarms
+  - SLO alarms (verifier/outbox/scan/payout/workers), if enabled (see `docs/runbooks/Monitoring.md`)
 - Validate WAF (if enabled) and rate limits.

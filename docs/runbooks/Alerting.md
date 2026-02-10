@@ -43,6 +43,10 @@ After apply, Terraform outputs `alarm_sns_topic_arn` (effective).
 Email subscriptions require manual confirmation. For an automated proof that the pipeline works end-to-end, you can run:
 
 ```bash
+# One-step enable + canary (no Terraform apply; creates SNS topic if missing, wires alarms, enables alarm inbox ECS worker).
+tsx scripts/ops/alerting_enable_env.ts --env staging
+tsx scripts/ops/alerting_enable_env.ts --env production
+
 # Staging
 bash scripts/ops/test_alarm_notifications.sh staging arn:aws:sns:us-east-1:542672133063:proofwork-staging-alarms us-east-1
 
