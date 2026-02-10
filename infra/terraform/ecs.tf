@@ -393,6 +393,8 @@ resource "aws_ecs_task_definition" "workers" {
           name      = "clamd"
           image     = var.clamav_image
           essential = true
+          entryPoint = ["sh", "-lc"]
+          command    = ["chmod 1777 /tmp && exec /init"]
           mountPoints = [
             { sourceVolume = "clamd-tmp", containerPath = "/tmp", readOnly = false }
           ]

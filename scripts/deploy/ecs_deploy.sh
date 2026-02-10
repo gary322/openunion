@@ -180,6 +180,8 @@ deploy_service() {
               then $m + [{sourceVolume:"clamd-tmp",containerPath:"/tmp",readOnly:false}]
               else $m
             end)
+      | (.containerDefinitions[] | select(.name=="clamd") | .entryPoint) = ["sh","-lc"]
+      | (.containerDefinitions[] | select(.name=="clamd") | .command) = ["chmod 1777 /tmp && exec /init"]
       | (.containerDefinitions[] | select(.name=="scanner") | .environment) =
           ((.containerDefinitions[] | select(.name=="scanner") | .environment // [])
             | map(select(.name!="CLAMD_SOCKET")) + [{name:"CLAMD_SOCKET",value:"/tmp/clamd.sock"}])

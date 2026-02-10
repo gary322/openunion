@@ -5,13 +5,15 @@ const _loadEnv = (process.env.NODE_ENV !== 'test' && !process.env.VITEST)
 await _loadEnv;
 import { runMigrations } from '../src/db/migrate.js';
 import { runOutboxLoop } from './outbox-lib.js';
-import { handleArtifactDeleteRequested, handleArtifactScanRequested } from './handlers.js';
+import { handleArtifactDeleteRequested } from './handlers.js';
 import { startWorkerHealthServer } from './health.js';
 
 const workerId = process.env.WORKER_ID ?? `outbox-dispatcher-${process.pid}`;
 // NOTE: verification.requested is handled by the dedicated verification-runner so it can be
 // configured with VERIFIER_GATEWAY_URL and scaled independently.
-const topics = ['artifact.scan.requested', 'artifact.delete.requested'];
+// Artifact scanning is handled by the dedicated scanner-runner (with a clamd sidecar).
+// Keeping scan traffic out of the general outbox worker avoids accidental "basic-only" scans.
+const topics = ['artifact.delete.requested'];
 
 (async () => {
   await runMigrations();
@@ -23,7 +25,6 @@ const topics = ['artifact.scan.requested', 'artifact.delete.requested'];
     workerId,
     pollIntervalMs: 500,
     handler: async (evt) => {
-      if (evt.topic === 'artifact.scan.requested') return await handleArtifactScanRequested(evt.payload);
       if (evt.topic === 'artifact.delete.requested') return await handleArtifactDeleteRequested(evt.payload);
       throw new Error(`unknown_topic:${evt.topic}`);
     },
