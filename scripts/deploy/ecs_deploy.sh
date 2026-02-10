@@ -67,10 +67,10 @@ CLUSTER="${CLUSTER:-${PREFIX}-cluster}"
 API_SERVICE="${API_SERVICE:-${PREFIX}-api}"
 VERIFIER_SERVICE="${VERIFIER_SERVICE:-${PREFIX}-verifier-gateway}"
 MIGRATE_TASK_FAMILY="${MIGRATE_TASK_FAMILY:-${PREFIX}-migrate}"
-WORKER_SERVICES="${WORKER_SERVICES:-${PREFIX}-outbox,${PREFIX}-verification,${PREFIX}-payout,${PREFIX}-scanner,${PREFIX}-retention,${PREFIX}-alarm_inbox}"
+WORKER_SERVICES="${WORKER_SERVICES:-${PREFIX}-outbox,${PREFIX}-verification,${PREFIX}-payout,${PREFIX}-scanner,${PREFIX}-retention,${PREFIX}-github-ingest,${PREFIX}-alarm_inbox}"
 # Some services are optional and may be disabled by Terraform in certain environments
 # (for example, alarm_inbox is only enabled when real alerting is configured).
-OPTIONAL_SERVICES="${OPTIONAL_SERVICES:-${PREFIX}-alarm_inbox}"
+OPTIONAL_SERVICES="${OPTIONAL_SERVICES:-${PREFIX}-github-ingest,${PREFIX}-alarm_inbox}"
 
 SKIP_MIGRATIONS="${SKIP_MIGRATIONS:-false}"
 CLAMAV_IMAGE="${CLAMAV_IMAGE:-clamav/clamav-debian:latest}"

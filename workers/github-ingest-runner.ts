@@ -7,7 +7,7 @@ await _loadEnv;
 
 import { runMigrations } from '../src/db/migrate.js';
 import { startWorkerHealthServer } from './health.js';
-import { getGithubSource, putGithubEventRaw, upsertGithubRepo, upsertGithubSource } from '../src/store.js';
+import { getGithubSource, pruneGithubEventsRaw, putGithubEventRaw, upsertGithubRepo, upsertGithubSource } from '../src/store.js';
 import { gunzipSync } from 'node:zlib';
 
 function sleep(ms: number) {
@@ -37,7 +37,7 @@ function maxNumericString(a: string | null, b: string | null): string | null {
   return aa >= bb ? aa : bb;
 }
 
-export type GithubIngestSourceKind = 'events_api' | 'gh_archive';
+export type GithubIngestSourceKind = 'events_api' | 'gh_archive' | 'hybrid';
 
 export async function runGithubIngestOnce(input: {
   sourceId: string;
@@ -222,15 +222,37 @@ export async function runGithubIngestOnce(input: {
 }
 
 if (process.env.NODE_ENV !== 'test' && import.meta.url === `file://${process.argv[1]}`) {
-  const sourceId = String(process.env.GITHUB_INGEST_SOURCE_ID ?? 'events_api').trim() || 'events_api';
-  const baseUrl = String(process.env.GITHUB_API_BASE_URL ?? 'https://api.github.com').trim() || 'https://api.github.com';
+  const rootSourceId = String(process.env.GITHUB_INGEST_SOURCE_ID ?? 'hybrid').trim() || 'hybrid';
+  const eventsBaseUrl = String(process.env.GITHUB_EVENTS_API_BASE_URL ?? process.env.GITHUB_API_BASE_URL ?? 'https://api.github.com')
+    .trim()
+    .replace(/\/$/, '') || 'https://api.github.com';
+  const archiveBaseUrl = String(process.env.GITHUB_GH_ARCHIVE_BASE_URL ?? 'https://data.gharchive.org')
+    .trim()
+    .replace(/\/$/, '') || 'https://data.gharchive.org';
   const token = String(process.env.GITHUB_TOKEN ?? '').trim() || null;
-  const sourceKind = (String(process.env.GITHUB_INGEST_SOURCE_KIND ?? 'events_api').trim() as GithubIngestSourceKind) || 'events_api';
+  const sourceKindRaw = String(process.env.GITHUB_INGEST_SOURCE_KIND ?? 'hybrid').trim() || 'hybrid';
+  const sourceKind = sourceKindRaw as GithubIngestSourceKind;
   const pollMsRaw = Number(process.env.GITHUB_INGEST_POLL_MS ?? 60_000);
   const pollMs = Number.isFinite(pollMsRaw) ? Math.max(250, Math.min(10 * 60_000, Math.floor(pollMsRaw))) : 60_000;
 
+  const archivePollMsRaw = Number(process.env.GITHUB_INGEST_ARCHIVE_POLL_MS ?? 300_000);
+  const archivePollMs = Number.isFinite(archivePollMsRaw)
+    ? Math.max(5_000, Math.min(60 * 60_000, Math.floor(archivePollMsRaw)))
+    : 300_000;
+
+  const ttlDaysRaw = Number(process.env.GITHUB_EVENTS_RAW_TTL_DAYS ?? 14);
+  const ttlDays = Number.isFinite(ttlDaysRaw) ? Math.max(1, Math.min(365, Math.floor(ttlDaysRaw))) : 14;
+  const pruneLimitRaw = Number(process.env.GITHUB_EVENTS_RAW_PRUNE_LIMIT ?? 10_000);
+  const pruneLimit = Number.isFinite(pruneLimitRaw) ? Math.max(1, Math.min(100_000, Math.floor(pruneLimitRaw))) : 10_000;
+  const pruneIntervalMsRaw = Number(process.env.GITHUB_EVENTS_RAW_PRUNE_INTERVAL_MS ?? 60 * 60_000);
+  const pruneIntervalMs = Number.isFinite(pruneIntervalMsRaw)
+    ? Math.max(60_000, Math.min(24 * 60 * 60_000, Math.floor(pruneIntervalMsRaw)))
+    : 60 * 60_000;
+
   let lastOkAt: number | null = null;
   let lastErr: string | null = null;
+  let lastArchivePollAt = 0;
+  let lastPruneAt = 0;
 
   (async () => {
     await runMigrations();
@@ -238,19 +260,70 @@ if (process.env.NODE_ENV !== 'test' && import.meta.url === `file://${process.arg
       name: 'github-ingest',
       portEnv: 'GITHUB_INGEST_HEALTH_PORT',
       defaultPort: 9106,
-      getStatus: () => ({ lastOkAt, lastErr, sourceId, baseUrl }),
+      getStatus: () => ({
+        lastOkAt,
+        lastErr,
+        sourceKind,
+        rootSourceId,
+        eventsBaseUrl,
+        archiveBaseUrl,
+        ttlDays,
+      }),
     });
 
     // eslint-disable-next-line no-constant-condition
     while (true) {
-      try {
-        await runGithubIngestOnce({ sourceId, sourceKind, baseUrl, token });
-        lastOkAt = Date.now();
-        lastErr = null;
-      } catch (err: any) {
-        lastErr = String(err?.message ?? err);
-        console.error('[github-ingest] error', lastErr);
+      const now = Date.now();
+      let okThisLoop = false;
+
+      if (sourceKind === 'hybrid') {
+        const eventsSourceId = String(process.env.GITHUB_INGEST_EVENTS_SOURCE_ID ?? `${rootSourceId}:events`).trim() || `${rootSourceId}:events`;
+        const archiveSourceId = String(process.env.GITHUB_INGEST_ARCHIVE_SOURCE_ID ?? `${rootSourceId}:archive`).trim() || `${rootSourceId}:archive`;
+
+        try {
+          await runGithubIngestOnce({ sourceId: eventsSourceId, sourceKind: 'events_api', baseUrl: eventsBaseUrl, token });
+          okThisLoop = true;
+          lastErr = null;
+        } catch (err: any) {
+          lastErr = String(err?.message ?? err);
+          console.error('[github-ingest] events_api error', lastErr);
+        }
+
+        if (now - lastArchivePollAt >= archivePollMs) {
+          lastArchivePollAt = now;
+          try {
+            await runGithubIngestOnce({ sourceId: archiveSourceId, sourceKind: 'gh_archive', baseUrl: archiveBaseUrl });
+            okThisLoop = true;
+            lastErr = null;
+          } catch (err: any) {
+            lastErr = String(err?.message ?? err);
+            console.error('[github-ingest] gh_archive error', lastErr);
+          }
+        }
+      } else {
+        const baseUrl = sourceKind === 'gh_archive' ? archiveBaseUrl : eventsBaseUrl;
+        try {
+          await runGithubIngestOnce({ sourceId: rootSourceId, sourceKind, baseUrl, token });
+          okThisLoop = true;
+          lastErr = null;
+        } catch (err: any) {
+          lastErr = String(err?.message ?? err);
+          console.error('[github-ingest] error', lastErr);
+        }
       }
+
+      if (ttlDays > 0 && now - lastPruneAt >= pruneIntervalMs) {
+        lastPruneAt = now;
+        try {
+          const deleted = await pruneGithubEventsRaw({ maxAgeDays: ttlDays, limit: pruneLimit });
+          if (deleted > 0) console.log(`[github-ingest] pruned_github_events_raw deleted=${deleted} ttlDays=${ttlDays}`);
+        } catch (err: any) {
+          const msg = String(err?.message ?? err);
+          console.error('[github-ingest] prune error', msg);
+        }
+      }
+
+      if (okThisLoop) lastOkAt = Date.now();
       await sleep(pollMs);
     }
   })().catch((err) => {

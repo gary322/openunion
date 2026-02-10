@@ -35,6 +35,7 @@
     "smoke:stripe:real:remote": "tsx scripts/smoke_stripe_real_checkout_remote.ts",
     "smoke:remote:ui": "tsx scripts/smoke_ui_remote.ts",
     "ops:payout:preflight": "tsx scripts/ops/payout_base_preflight.ts",
+    "ops:github:ingest:enable": "tsx scripts/ops/github_ingest_enable_env.ts",
     "ops:stripe:enable": "tsx scripts/ops/stripe_enable_env.ts",
     "test:watch": "vitest",
     "lint": "echo 'add linter later'"

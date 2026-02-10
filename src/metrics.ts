@@ -147,5 +147,18 @@ export async function renderPrometheusMetrics(): Promise<string> {
   out += '# TYPE proofwork_artifact_scan_backlog_age_seconds gauge\n';
   out += promLine('proofwork_artifact_scan_backlog_age_seconds', Number(scanAge.rows[0]?.age ?? 0));
 
+  // GitHub ingestion health (DB)
+  const ghSourcesByStatus = await pool.query<{ status: string; c: string }>('SELECT status, count(*)::text as c FROM github_sources GROUP BY status');
+  out += '# TYPE proofwork_github_sources gauge\n';
+  for (const r of ghSourcesByStatus.rows) {
+    out += promLine('proofwork_github_sources', Number(r.c), { status: r.status });
+  }
+
+  const ghLastSuccessAge = await pool.query<{ age: string | null }>(
+    "SELECT extract(epoch from (now() - max(last_success_at)))::text as age FROM github_sources WHERE last_success_at IS NOT NULL"
+  );
+  out += '# TYPE proofwork_github_last_success_age_seconds gauge\n';
+  out += promLine('proofwork_github_last_success_age_seconds', Number(ghLastSuccessAge.rows[0]?.age ?? 0));
+
   return out;
 }
