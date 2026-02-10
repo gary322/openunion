@@ -74,6 +74,9 @@ OPTIONAL_SERVICES="${OPTIONAL_SERVICES:-${PREFIX}-github-ingest,${PREFIX}-alarm_
 
 SKIP_MIGRATIONS="${SKIP_MIGRATIONS:-false}"
 CLAMAV_IMAGE="${CLAMAV_IMAGE:-clamav/clamav-debian:latest}"
+# ClamAV (clamd) needs > 1GB RAM to load definitions reliably; keep a safe default.
+SCANNER_CPU="${SCANNER_CPU:-1024}"
+SCANNER_MEMORY="${SCANNER_MEMORY:-4096}"
 
 log() {
   echo "[deploy] $*"
@@ -186,6 +189,10 @@ deploy_service() {
           ((.containerDefinitions[] | select(.name=="scanner") | .environment // [])
             | map(select(.name!="CLAMD_SOCKET")) + [{name:"CLAMD_SOCKET",value:"/tmp/clamd.sock"}])
     ' <<<"$new_td_json")"
+
+    # clamd requires more memory than our other workers. Bump task-level resources so the
+    # definitions update and clamd startup don't get OOM-killed.
+    new_td_json="$(jq --arg CPU "$SCANNER_CPU" --arg MEMORY "$SCANNER_MEMORY" '.cpu=$CPU | .memory=$MEMORY' <<<"$new_td_json")"
   fi
   local new_td_arn
   new_td_arn="$(aws ecs register-task-definition --cli-input-json "$new_td_json" --query 'taskDefinition.taskDefinitionArn' --output text)"

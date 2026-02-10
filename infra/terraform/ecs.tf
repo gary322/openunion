@@ -312,8 +312,9 @@ locals {
         ]
         extra_secrets   = []
         health_port_env = "SCANNER_HEALTH_PORT"
-        cpu             = 512
-        memory          = 1024
+        # ClamAV (clamd) needs > 1GB RAM to load definitions reliably; 1GB tasks get OOM-killed.
+        cpu             = 1024
+        memory          = 4096
       }
       retention = {
         command         = ["node", "dist/workers/retention-runner.js"]
