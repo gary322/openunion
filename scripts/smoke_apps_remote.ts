@@ -14,6 +14,10 @@
 // Usage:
 //   BASE_URL=https://... SMOKE_ADMIN_TOKEN=... npm run smoke:apps:remote
 //
+// Optional:
+// - SMOKE_APP_PAYOUT_CENTS=100   (default: 100 on non-local BASE_URL)
+// - SMOKE_APP_TOPUP_CENTS=2000   (default: max(2000, sum(payouts)+500))
+//
 // Notes:
 // - This does not print secrets. It prints only non-sensitive IDs/URLs.
 // - This smoke expects the remote environment to have verifiers running so jobs transition to done/pass.
@@ -48,6 +52,15 @@ function normalizeBaseUrl(raw: string): string {
 
 function tsSuffix() {
   return new Date().toISOString().replace(/[:.]/g, '');
+}
+
+function isLocalBaseUrl(baseUrl: string): boolean {
+  try {
+    const u = new URL(baseUrl);
+    return u.hostname === 'localhost' || u.hostname === '127.0.0.1';
+  } catch {
+    return false;
+  }
 }
 
 function parseBoolEnv(name: string, fallback: boolean): boolean {
@@ -407,6 +420,11 @@ async function main() {
   const openclawBin = String(process.env.OPENCLAW_BIN ?? 'openclaw').trim() || 'openclaw';
   const browserProfile = String(process.env.OPENCLAW_BROWSER_PROFILE ?? 'proofwork-worker-smoke').trim() || 'proofwork-worker-smoke';
 
+  // Safety: remote smoke runs must not create large payouts by default.
+  const payoutOverrideRaw = String(process.env.SMOKE_APP_PAYOUT_CENTS ?? '').trim();
+  let payoutOverride = payoutOverrideRaw ? Number(payoutOverrideRaw) : null;
+  if (payoutOverride === null && !isLocalBaseUrl(baseUrl)) payoutOverride = 100;
+
   // Health
   const health = await fetchJson({ baseUrl, path: '/health' });
   if (!health.ok) throw new Error(`health_failed:${health.status}`);
@@ -563,6 +581,14 @@ async function main() {
     console.log(`[smoke_apps] base_url=${baseUrl}`);
     console.log(`[smoke_apps] smoke_origin=${smokeOrigin}`);
     console.log(`[smoke_apps] tmp_dir=${tmp}`);
+    if (payoutOverride !== null && Number.isFinite(payoutOverride) && payoutOverride > 0) {
+      console.log(`[smoke_apps] payout_override_cents=${Math.max(1, Math.min(50_000, Math.floor(payoutOverride)))} (applies to all app smokes)`);
+    }
+
+    if (payoutOverride !== null && Number.isFinite(payoutOverride) && payoutOverride > 0) {
+      const cents = Math.max(1, Math.min(50_000, Math.floor(payoutOverride)));
+      for (const s of smokes) s.payoutCents = cents;
+    }
 
     // Preflight local prerequisites so failures are actionable.
     await runBinaryChecked(openclawBin, ['--version'], { timeoutMs: 15_000, env: ocEnv });
@@ -634,8 +660,17 @@ async function main() {
       await runBinaryChecked(openclawBin, ['browser', '--browser-profile', browserProfile, 'start', '--json'], { timeoutMs: 30_000, env: ocEnv });
     }
 
-    // Best-effort: ensure buyer has funds for publish. If insufficient, the publish call will fail loudly.
-    if (adminToken && auth.orgId) await adminTopupBestEffort({ baseUrl, orgId: auth.orgId, adminToken, amountCents: 50_000 });
+    // Keep admin top-ups minimal and proportional to the planned smoke budget.
+    if (adminToken && auth.orgId) {
+      const sumPayoutCents = smokes.reduce((acc, s) => acc + s.payoutCents, 0);
+      const topupOverrideRaw = String(process.env.SMOKE_APP_TOPUP_CENTS ?? '').trim();
+      const topupOverride = topupOverrideRaw ? Number(topupOverrideRaw) : null;
+      const amountCents =
+        topupOverride !== null && Number.isFinite(topupOverride) && topupOverride > 0
+          ? Math.max(1, Math.min(50_000, Math.floor(topupOverride)))
+          : Math.max(2_000, Math.min(50_000, sumPayoutCents + 500));
+      await adminTopupBestEffort({ baseUrl, orgId: auth.orgId, adminToken, amountCents });
+    }
 
     for (const s of smokes) {
       console.log(`[smoke_apps] create+publish ${s.id} (${s.taskType})`);

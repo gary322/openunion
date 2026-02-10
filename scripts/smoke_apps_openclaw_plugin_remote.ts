@@ -21,6 +21,8 @@
 // - SMOKE_GATEWAY_PORT=18789                        (default: ephemeral free port)
 // - SMOKE_GATEWAY_TOKEN=...                         (default: random)
 // - SMOKE_BROWSER_PROFILE=proofwork-worker-smoke    (default: proofwork-worker-smoke)
+// - SMOKE_APP_PAYOUT_CENTS=100                      (default: 100 on non-local BASE_URL)
+// - SMOKE_APP_TOPUP_CENTS=2000                      (default: max(2000, sum(payouts)+500))
 //
 // Notes:
 // - This smoke expects the remote environment to have verifiers running so jobs transition to done/pass.
@@ -62,6 +64,15 @@ function tsSuffix() {
 
 function sha256Hex(input: string): string {
   return createHash('sha256').update(input).digest('hex');
+}
+
+function isLocalBaseUrl(baseUrl: string): boolean {
+  try {
+    const u = new URL(baseUrl);
+    return u.hostname === 'localhost' || u.hostname === '127.0.0.1';
+  } catch {
+    return false;
+  }
 }
 
 async function pickFreePort(): Promise<number> {
@@ -399,7 +410,9 @@ async function main() {
   const browserProfile = String(process.env.SMOKE_BROWSER_PROFILE ?? 'proofwork-worker-smoke').trim() || 'proofwork-worker-smoke';
   const pluginSpec = String(process.env.SMOKE_PLUGIN_SPEC ?? path.resolve(process.cwd(), 'integrations/openclaw/extensions/proofwork-worker')).trim();
   const payoutOverrideRaw = String(process.env.SMOKE_APP_PAYOUT_CENTS ?? '').trim();
-  const payoutOverride = payoutOverrideRaw ? Number(payoutOverrideRaw) : null;
+  let payoutOverride = payoutOverrideRaw ? Number(payoutOverrideRaw) : null;
+  // Safety: remote smoke runs must not create large payouts by default.
+  if (payoutOverride === null && !isLocalBaseUrl(baseUrl)) payoutOverride = 100;
 
   const stateDir = String(process.env.SMOKE_OPENCLAW_STATE_DIR ?? '').trim()
     ? String(process.env.SMOKE_OPENCLAW_STATE_DIR).trim()
@@ -417,6 +430,9 @@ async function main() {
   console.log(`[smoke_apps_plugin] openclaw_state_dir=${stateDir}`);
   console.log(`[smoke_apps_plugin] gateway_url=${gwUrl}`);
   console.log(`[smoke_apps_plugin] browser_profile=${browserProfile}`);
+  if (payoutOverride !== null && Number.isFinite(payoutOverride) && payoutOverride > 0) {
+    console.log(`[smoke_apps_plugin] payout_override_cents=${Math.max(1, Math.min(50_000, Math.floor(payoutOverride)))} (applies to all app smokes)`);
+  }
 
   // Make plugin workers deterministic by routing third-party API calls through the Proofwork smoke endpoints.
   const ocEnv = {
@@ -579,7 +595,6 @@ async function main() {
     const email = mustEnv('SMOKE_BUYER_EMAIL', 'buyer@example.com');
     const password = mustEnv('SMOKE_BUYER_PASSWORD', 'password');
     const auth = await ensureBuyerAuth({ baseUrl, email, password });
-    if (adminToken && auth.orgId) await adminTopupBestEffort({ baseUrl, orgId: auth.orgId, adminToken, amountCents: 50_000 });
 
     const buyerToken = auth.buyerToken;
 
@@ -669,8 +684,19 @@ async function main() {
 
     if (payoutOverride !== null && Number.isFinite(payoutOverride) && payoutOverride > 0) {
       const cents = Math.max(1, Math.min(50_000, Math.floor(payoutOverride)));
-      console.log(`[smoke_apps_plugin] payout_override_cents=${cents} (applies to all app smokes)`);
       for (const s of smokes) s.payoutCents = cents;
+    }
+
+    // Keep admin top-ups minimal and proportional to the planned smoke budget.
+    if (adminToken && auth.orgId) {
+      const sumPayoutCents = smokes.reduce((acc, s) => acc + s.payoutCents, 0);
+      const topupOverrideRaw = String(process.env.SMOKE_APP_TOPUP_CENTS ?? '').trim();
+      const topupOverride = topupOverrideRaw ? Number(topupOverrideRaw) : null;
+      const amountCents =
+        topupOverride !== null && Number.isFinite(topupOverride) && topupOverride > 0
+          ? Math.max(1, Math.min(50_000, Math.floor(topupOverride)))
+          : Math.max(2_000, Math.min(50_000, sumPayoutCents + 500));
+      await adminTopupBestEffort({ baseUrl, orgId: auth.orgId, adminToken, amountCents });
     }
 
     // Create all bounties first, then wait for completion. This better exercises "multi workers in parallel".
