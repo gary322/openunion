@@ -17,15 +17,18 @@
 //   - PUBLIC_BASE_URL is HTTPS (CloudFront default TLS is fine)
 // - Do not print secrets.
 
-import { chromium, type Frame, type Page } from 'playwright';
-import type { Locator } from 'playwright';
 import { spawn } from 'node:child_process';
-import { writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
+import type { Frame, Locator, Page } from 'playwright';
 
 function argValue(name: string): string | undefined {
   const idx = process.argv.indexOf(name);
   if (idx === -1) return undefined;
   return process.argv[idx + 1];
+}
+
+function hasFlag(name: string): boolean {
+  return process.argv.includes(name);
 }
 
 function mustEnv(name: string, fallback?: string): string {
@@ -51,6 +54,55 @@ function parseBool(input: string): boolean {
   return false;
 }
 
+type StripeRealReceipt = {
+  baseUrl: string;
+  buyerEmail: string;
+  buyerPassword: string;
+  buyerToken: string;
+  stripeSessionId: string;
+  paymentIntentId: string;
+  checkoutUrl: string;
+  expectedAmountCents: number;
+  beforeBalanceCents: number;
+  createdAt: string;
+};
+
+function safeJsonParse(s: string): any | null {
+  try {
+    return JSON.parse(s);
+  } catch {
+    return null;
+  }
+}
+
+async function writeReceiptFile(receipt: StripeRealReceipt): Promise<string> {
+  const file = `/tmp/proofwork_stripe_real_receipt_${tsSuffix()}.json`;
+  await writeFile(file, `${JSON.stringify(receipt, null, 2)}\n`, { mode: 0o600 });
+  return file;
+}
+
+async function readReceiptFile(file: string): Promise<StripeRealReceipt> {
+  const raw = await readFile(file, 'utf8');
+  const parsed = safeJsonParse(raw);
+  if (!parsed || typeof parsed !== 'object') throw new Error('receipt_invalid_json');
+  const required: Array<keyof StripeRealReceipt> = [
+    'baseUrl',
+    'buyerEmail',
+    'buyerPassword',
+    'buyerToken',
+    'stripeSessionId',
+    'paymentIntentId',
+    'checkoutUrl',
+    'expectedAmountCents',
+    'beforeBalanceCents',
+    'createdAt',
+  ];
+  for (const k of required) {
+    if (!(k in parsed)) throw new Error(`receipt_missing_field:${String(k)}`);
+  }
+  return parsed as StripeRealReceipt;
+}
+
 function tryOpenUrlInBrowser(url: string): boolean {
   try {
     if (process.platform === 'darwin') {
@@ -69,6 +121,23 @@ function tryOpenUrlInBrowser(url: string): boolean {
   } catch {
     return false;
   }
+}
+
+async function stripeGetEvent(input: { secretKey: string; eventId: string }): Promise<any> {
+  const resp = await fetch(`https://api.stripe.com/v1/events/${encodeURIComponent(input.eventId)}`, {
+    method: 'GET',
+    headers: {
+      Authorization: `Bearer ${input.secretKey}`,
+      Accept: 'application/json',
+    },
+  });
+  const text = await resp.text();
+  const json = safeJsonParse(text);
+  if (!resp.ok) {
+    const msg = String(json?.error?.message ?? text ?? '').slice(0, 300);
+    throw new Error(`stripe_get_event_failed:${resp.status}:${msg}`);
+  }
+  return json;
 }
 
 async function fetchJson(input: {
@@ -237,6 +306,8 @@ async function clickFirstVisible(locator: Locator, timeoutMs: number): Promise<b
 }
 
 async function completeStripeCheckout(input: { checkoutUrl: string; email: string }) {
+  const { chromium } = await import('playwright');
+
   const headlessRaw = String(process.env.SMOKE_HEADLESS ?? 'true').trim().toLowerCase();
   const headless = !(headlessRaw === '0' || headlessRaw === 'false' || headlessRaw === 'no');
 
@@ -536,6 +607,52 @@ async function pollStripeTopupEvent(input: {
 }
 
 async function main() {
+  const createOnly = hasFlag('--create-only') || parseBool(String(process.env.SMOKE_CREATE_ONLY ?? ''));
+  const verifyOnly = hasFlag('--verify-only') || parseBool(String(process.env.SMOKE_VERIFY_ONLY ?? ''));
+  const receiptFileArg = String(argValue('--receipt') ?? process.env.SMOKE_RECEIPT_FILE ?? '').trim();
+  const verifyStripeEvent = hasFlag('--verify-stripe-event') || parseBool(String(process.env.SMOKE_VERIFY_STRIPE_EVENT ?? ''));
+  const stripeSecretKey = String(process.env.SMOKE_STRIPE_SECRET_KEY ?? process.env.STRIPE_SECRET_KEY ?? '').trim() || null;
+
+  if (verifyOnly) {
+    if (!receiptFileArg) throw new Error('missing_receipt_file (--receipt or SMOKE_RECEIPT_FILE)');
+    const receipt = await readReceiptFile(receiptFileArg);
+    const authHeader = { authorization: `Bearer ${receipt.buyerToken}` };
+
+    await pollStripeTopupEvent({
+      baseUrl: receipt.baseUrl,
+      authHeader,
+      stripeSessionId: receipt.stripeSessionId,
+      expectedAmountCents: receipt.expectedAmountCents,
+      timeoutMs: 15 * 60_000,
+    });
+
+    const eventsRes = await fetchJson({ baseUrl: receipt.baseUrl, path: '/api/billing/events', headers: authHeader });
+    if (!eventsRes.ok) throw new Error(`billing_events_failed:${eventsRes.status}`);
+    const events = Array.isArray(eventsRes.json?.events) ? eventsRes.json.events : [];
+    const hit = events.find((e: any) => String(e?.metadata?.stripeSessionId ?? '').trim() === receipt.stripeSessionId) ?? null;
+    const stripeEventId = String(hit?.metadata?.stripeEventId ?? '').trim() || null;
+
+    if (verifyStripeEvent) {
+      if (!stripeSecretKey) throw new Error('missing_SMOKE_STRIPE_SECRET_KEY (required for --verify-stripe-event)');
+      if (!stripeEventId) throw new Error('missing_stripe_event_id_in_ledger');
+      const evt = await stripeGetEvent({ secretKey: stripeSecretKey, eventId: stripeEventId });
+      if (String(evt?.id ?? '') !== stripeEventId) throw new Error('stripe_event_id_mismatch');
+      if (String(evt?.type ?? '') !== 'checkout.session.completed') {
+        throw new Error(`stripe_event_type_mismatch:${String(evt?.type ?? '')}`);
+      }
+      console.log('[smoke_stripe_real] stripe_event_verified=true');
+    }
+
+    const acct1 = await fetchJson({ baseUrl: receipt.baseUrl, path: '/api/billing/account', headers: authHeader });
+    const after = Number(acct1.json?.account?.balance_cents ?? 0);
+    console.log(`[smoke_stripe_real] base_url=${receipt.baseUrl}`);
+    console.log(`[smoke_stripe_real] stripe_session_id=${receipt.stripeSessionId}`);
+    console.log(`[smoke_stripe_real] stripe_event_id=${stripeEventId ?? ''}`);
+    console.log(`[smoke_stripe_real] after=${after} delta=${after - receipt.beforeBalanceCents}`);
+    console.log('[smoke_stripe_real] ok');
+    return;
+  }
+
   const baseUrl = normalizeBaseUrl(argValue('--base-url') ?? process.env.BASE_URL ?? 'http://localhost:3000');
 
   // Default to a fresh org for real-Stripe smoke runs so parallel smoke traffic doesn't make
@@ -592,7 +709,7 @@ async function main() {
   else console.log(`[smoke_stripe_real] open_cmd=xdg-open \"$(cat ${checkoutUrlFile})\"`);
 
   const openRaw = String(process.env.SMOKE_OPEN_CHECKOUT_URL ?? '').trim();
-  const openDefault = !parseBool(String(process.env.CI ?? '').trim());
+  const openDefault = false;
   const open = openRaw ? parseBool(openRaw) : openDefault;
   if (open) {
     const opened = tryOpenUrlInBrowser(checkoutUrl);
@@ -615,6 +732,25 @@ async function main() {
     console.log('[smoke_stripe_real] automate_checkout=false (manual step required)');
   }
 
+  const receiptFile = await writeReceiptFile({
+    baseUrl,
+    buyerEmail: auth.email,
+    buyerPassword: auth.password,
+    buyerToken,
+    stripeSessionId,
+    paymentIntentId,
+    checkoutUrl,
+    expectedAmountCents: topupCents,
+    beforeBalanceCents: before,
+    createdAt: new Date().toISOString(),
+  });
+  console.log(`[smoke_stripe_real] receipt_file=${receiptFile}`);
+
+  if (createOnly) {
+    console.log('[smoke_stripe_real] create_only=true (skipping wait)');
+    return;
+  }
+
   console.log('[smoke_stripe_real] complete the Stripe Checkout in a real browser, then this smoke will pass.');
 
   const waitSecRaw = Number(process.env.SMOKE_WAIT_SEC ?? 600);
@@ -629,6 +765,23 @@ async function main() {
   const acct1 = await fetchJson({ baseUrl, path: '/api/billing/account', headers: authHeader });
   const after = Number(acct1.json?.account?.balance_cents ?? 0);
   console.log(`[smoke_stripe_real] after=${after} delta=${after - before}`);
+
+  if (verifyStripeEvent) {
+    if (!stripeSecretKey) throw new Error('missing_SMOKE_STRIPE_SECRET_KEY (required for --verify-stripe-event)');
+    const eventsRes = await fetchJson({ baseUrl, path: '/api/billing/events', headers: authHeader });
+    if (!eventsRes.ok) throw new Error(`billing_events_failed:${eventsRes.status}`);
+    const events = Array.isArray(eventsRes.json?.events) ? eventsRes.json.events : [];
+    const hit = events.find((e: any) => String(e?.metadata?.stripeSessionId ?? '').trim() === stripeSessionId) ?? null;
+    const stripeEventId = String(hit?.metadata?.stripeEventId ?? '').trim() || null;
+    if (!stripeEventId) throw new Error('missing_stripe_event_id_in_ledger');
+    const evt = await stripeGetEvent({ secretKey: stripeSecretKey, eventId: stripeEventId });
+    if (String(evt?.id ?? '') !== stripeEventId) throw new Error('stripe_event_id_mismatch');
+    if (String(evt?.type ?? '') !== 'checkout.session.completed') {
+      throw new Error(`stripe_event_type_mismatch:${String(evt?.type ?? '')}`);
+    }
+    console.log(`[smoke_stripe_real] stripe_event_id=${stripeEventId}`);
+    console.log('[smoke_stripe_real] stripe_event_verified=true');
+  }
 
   console.log('[smoke_stripe_real] ok');
 }
