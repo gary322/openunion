@@ -451,8 +451,12 @@ async function main() {
     console.log(`[smoke_payout] usdc_worker_delta=${ethers.formatUnits(workerDelta, decimals)}`);
     console.log(`[smoke_payout] usdc_fee_delta=${ethers.formatUnits(feeDelta, decimals)}`);
 
+    const expectedProofworkFeeCents = Number(payout.proofworkFeeCents ?? 0);
     if (workerDelta <= 0n) throw new Error('worker_usdc_not_increased');
-    if (feeDelta <= 0n) throw new Error('fee_usdc_not_increased');
+    if (expectedProofworkFeeCents > 0 && feeDelta <= 0n) throw new Error('fee_usdc_not_increased');
+    if (expectedProofworkFeeCents <= 0) {
+      console.log('[smoke_payout] fee_check_skipped (expected_proofwork_fee_cents=0)');
+    }
 
     console.log('[smoke_payout] OK');
   } finally {
