@@ -299,9 +299,12 @@ async function waitJobDonePass(input: {
   bountyId: string;
   jobId: string;
   timeoutMs: number;
+  label?: string;
 }) {
   const authHeader = { authorization: `Bearer ${input.buyerToken}` };
   const deadline = Date.now() + input.timeoutMs;
+  let last = '';
+  let lastLogAt = 0;
   for (;;) {
     const jobs = await fetchJson({
       baseUrl: input.baseUrl,
@@ -312,6 +315,14 @@ async function waitJobDonePass(input: {
     const job = (jobs.json?.jobs ?? []).find((j: any) => String(j?.id ?? '') === input.jobId) ?? null;
     const status = String(job?.status ?? '');
     const verdict = String(job?.finalVerdict ?? job?.final_verdict ?? '');
+    const key = `${status}:${verdict}`;
+    const now = Date.now();
+    if (key !== last || now - lastLogAt > 10_000) {
+      const label = input.label ? ` ${input.label}` : '';
+      console.log(`[smoke_apps_plugin] job${label} status=${status} verdict=${verdict}`);
+      last = key;
+      lastLogAt = now;
+    }
     if (status === 'done' && verdict === 'pass') return;
     if (Date.now() > deadline) throw new Error(`timeout_waiting_done_pass:${status}:${verdict}`);
     await sleep(1000);
@@ -387,6 +398,8 @@ async function main() {
   const openclawBin = String(process.env.OPENCLAW_BIN ?? 'openclaw').trim() || 'openclaw';
   const browserProfile = String(process.env.SMOKE_BROWSER_PROFILE ?? 'proofwork-worker-smoke').trim() || 'proofwork-worker-smoke';
   const pluginSpec = String(process.env.SMOKE_PLUGIN_SPEC ?? path.resolve(process.cwd(), 'integrations/openclaw/extensions/proofwork-worker')).trim();
+  const payoutOverrideRaw = String(process.env.SMOKE_APP_PAYOUT_CENTS ?? '').trim();
+  const payoutOverride = payoutOverrideRaw ? Number(payoutOverrideRaw) : null;
 
   const stateDir = String(process.env.SMOKE_OPENCLAW_STATE_DIR ?? '').trim()
     ? String(process.env.SMOKE_OPENCLAW_STATE_DIR).trim()
@@ -397,6 +410,13 @@ async function main() {
 
   const gwToken = String(process.env.SMOKE_GATEWAY_TOKEN ?? `gw_${randomBytes(16).toString('hex')}`);
   const gwUrl = `ws://127.0.0.1:${port}`;
+
+  console.log(`[smoke_apps_plugin] base_url=${baseUrl}`);
+  console.log(`[smoke_apps_plugin] smoke_origin=${smokeOrigin}`);
+  console.log(`[smoke_apps_plugin] plugin_spec=${pluginSpec}`);
+  console.log(`[smoke_apps_plugin] openclaw_state_dir=${stateDir}`);
+  console.log(`[smoke_apps_plugin] gateway_url=${gwUrl}`);
+  console.log(`[smoke_apps_plugin] browser_profile=${browserProfile}`);
 
   // Make plugin workers deterministic by routing third-party API calls through the Proofwork smoke endpoints.
   const ocEnv = {
@@ -415,6 +435,7 @@ async function main() {
   await runCommandChecked('ffmpeg', ['-version'], { timeoutMs: 10_000 });
 
   // Install plugin into the isolated OpenClaw state.
+  console.log('[smoke_apps_plugin] installing plugin into isolated OpenClaw state...');
   await runCommandChecked(openclawBin, ['plugins', 'install', pluginSpec], { timeoutMs: 5 * 60_000, env: ocEnv });
 
   // Configure OpenClaw browser execution to avoid requiring a system-installed browser and to avoid opening windows.
@@ -456,6 +477,7 @@ async function main() {
   await runCommandChecked(openclawBin, ['config', 'set', '--json', 'plugins.entries.proofwork-worker.config', JSON.stringify(pluginCfg)], { timeoutMs: 15_000, env: ocEnv });
 
   // Start gateway in the background (foreground mode). Plugin auto-starts workers.
+  console.log('[smoke_apps_plugin] starting gateway (foreground)...');
   const gw = spawn(openclawBin, ['gateway', 'run', '--port', String(port), '--token', gwToken, '--bind', 'loopback', '--allow-unconfigured', '--force', '--compact'], {
     env: ocEnv,
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -517,6 +539,9 @@ async function main() {
       }
     }
 
+    // Ensure browser profile exists (best-effort) then start it for smoke determinism.
+    await runCommandChecked(openclawBin, ['browser', 'create-profile', '--name', browserProfile, '--json'], { timeoutMs: 60_000, env: ocEnv }).catch(() => undefined);
+
     // Ensure browser can start for the configured profile (fails fast rather than timing out later).
     await runCommandChecked(openclawBin, ['browser', '--browser-profile', browserProfile, 'start', '--json'], { timeoutMs: 60_000, env: ocEnv });
 
@@ -542,7 +567,13 @@ async function main() {
     }
 
     // Wait for plugin workers to start and report status.
-    await waitForPluginWorkers({ stateDir, timeoutMs: 60_000, maxAgeMs: 30_000, expectNames: ['jobs', 'research', 'github', 'github_ingest', 'marketplace', 'clips'] });
+    console.log('[smoke_apps_plugin] waiting for plugin workers to report status...');
+    const workers = await waitForPluginWorkers({ stateDir, timeoutMs: 60_000, maxAgeMs: 30_000, expectNames: ['jobs', 'research', 'github', 'github_ingest', 'marketplace', 'clips'] });
+    const workerSummary = Object.entries(workers).map(([name, w]) => ({ name, workerId: String(w.status?.workerId ?? ''), lastPollAt: Number(w.status?.lastPollAt ?? 0) }));
+    console.log(`[smoke_apps_plugin] workers_ready=${workerSummary.length}`);
+    for (const w of workerSummary) {
+      console.log(`[smoke_apps_plugin] worker name=${w.name} workerId=${w.workerId} lastPollAt=${w.lastPollAt}`);
+    }
 
     // Buyer auth + ensure funds.
     const email = mustEnv('SMOKE_BUYER_EMAIL', 'buyer@example.com');
@@ -636,9 +667,16 @@ async function main() {
       },
     ];
 
+    if (payoutOverride !== null && Number.isFinite(payoutOverride) && payoutOverride > 0) {
+      const cents = Math.max(1, Math.min(50_000, Math.floor(payoutOverride)));
+      console.log(`[smoke_apps_plugin] payout_override_cents=${cents} (applies to all app smokes)`);
+      for (const s of smokes) s.payoutCents = cents;
+    }
+
     // Create all bounties first, then wait for completion. This better exercises "multi workers in parallel".
     const jobs: Array<{ id: string; taskType: string; bountyId: string; jobId: string }> = [];
     for (const s of smokes) {
+      console.log(`[smoke_apps_plugin] create+publish ${s.id} (${s.taskType}) payout_cents=${s.payoutCents}`);
       const { bountyId } = await createAndPublishBounty({
         baseUrl,
         buyerToken,
@@ -647,13 +685,42 @@ async function main() {
         taskDescriptor: s.td,
       });
       const jobId = await firstJobIdForBounty({ baseUrl, buyerToken, bountyId });
+      console.log(`[smoke_apps_plugin] bounty_id=${bountyId} job_id=${jobId} task_type=${s.taskType}`);
       jobs.push({ id: s.id, taskType: s.taskType, bountyId, jobId });
     }
 
     // Wait for all jobs to finish.
     const timeoutMs = Number(process.env.SMOKE_JOB_TIMEOUT_MS ?? 12 * 60_000);
     for (const j of jobs) {
-      await waitJobDonePass({ baseUrl, buyerToken, bountyId: j.bountyId, jobId: j.jobId, timeoutMs });
+      console.log(`[smoke_apps_plugin] wait done/pass ${j.id}`);
+      await waitJobDonePass({ baseUrl, buyerToken, bountyId: j.bountyId, jobId: j.jobId, timeoutMs, label: j.id });
+      console.log(`[smoke_apps_plugin] OK ${j.id}`);
+    }
+
+    const reportFile = `/tmp/proofwork_smoke_apps_plugin_report_${tsSuffix()}.json`;
+    try {
+      fs.writeFileSync(
+        reportFile,
+        JSON.stringify(
+          {
+            baseUrl,
+            smokeOrigin,
+            pluginSpec,
+            openclawBin,
+            browserProfile,
+            gatewayUrl: gwUrl,
+            jobs,
+            workers: workerSummary,
+            createdAt: new Date().toISOString(),
+          },
+          null,
+          2
+        ) + '\n',
+        { mode: 0o600 }
+      );
+      console.log(`[smoke_apps_plugin] report_file=${reportFile}`);
+    } catch {
+      // ignore
     }
   } catch (err: any) {
     const msg = String(err?.message ?? err);

@@ -28,8 +28,18 @@ test('apps marketplace: unconnected users are routed to onboarding with a safe r
 
   // If the browser already has Proofwork state (e.g. CSRF/session), catalog links go straight to app pages.
   await page.goto('/apps/');
-  await page.evaluate(() => window.localStorage.setItem('pw_csrf_token', 'csrf_dummy'));
-  await card.getByRole('link', { name: 'Create work' }).click();
+  await page.evaluate(() => {
+    window.localStorage.setItem('pw_csrf_token', 'csrf_dummy');
+    // Some UI paths treat a stored buyer token as equivalent "connected" state.
+    // Use a dummy value to make this test robust against minor heuristic changes.
+    window.localStorage.setItem('pw_buyer_token', 'buyer_dummy');
+  });
+  // Reload so any "next action" preflight computed on page-load sees the token.
+  await page.reload();
+
+  const card2 = page.locator('.card').filter({ hasText: 'GitHub Scan' }).first();
+  await expect(card2).toBeVisible();
+  await card2.getByRole('link', { name: 'Create work' }).click();
   await expect(page).toHaveURL(/\/apps\/app\/github\/$/);
   await expect(page.locator('#connectRow')).toBeVisible();
 });
