@@ -226,8 +226,10 @@ async function main() {
   const email = mustEnv('SMOKE_BUYER_EMAIL', 'buyer@example.com');
   const password = mustEnv('SMOKE_BUYER_PASSWORD', 'password');
 
+  // Default to $1.00, but allow smaller amounts in constrained environments (e.g. staging signers
+  // funded with < 1 USDC) so the payout pipeline can still be validated end-to-end.
   const payoutCentsRaw = Number(process.env.SMOKE_PAYOUT_CENTS ?? 100);
-  const payoutCents = Number.isFinite(payoutCentsRaw) ? Math.max(100, Math.min(5_000, Math.floor(payoutCentsRaw))) : 100;
+  const payoutCents = Number.isFinite(payoutCentsRaw) ? Math.max(1, Math.min(5_000, Math.floor(payoutCentsRaw))) : 100;
 
   // Use a built-in system app task type by default so staging/prod can run this smoke without
   // requiring buyer-controlled origin verification. System apps have operator-curated public
