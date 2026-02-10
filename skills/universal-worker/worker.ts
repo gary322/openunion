@@ -992,6 +992,8 @@ async function loop() {
   const supported = supportedCapabilityTags();
   const prefer = String(process.env.PREFER_CAPABILITY_TAG ?? '').trim() || undefined;
   const requireTaskType = String(process.env.REQUIRE_TASK_TYPE ?? '').trim() || undefined;
+  const requireJobId = String(process.env.REQUIRE_JOB_ID ?? '').trim() || undefined;
+  const requireBountyId = String(process.env.REQUIRE_BOUNTY_ID ?? '').trim() || undefined;
   const minPayoutCents = process.env.MIN_PAYOUT_CENTS ? Number(process.env.MIN_PAYOUT_CENTS) : undefined;
 
   for (;;) {
@@ -1001,6 +1003,8 @@ async function loop() {
         capability_tags: supported.join(','),
         ...(prefer ? { capability_tag: prefer } : {}),
         ...(requireTaskType ? { task_type: requireTaskType } : {}),
+        ...(requireJobId ? { require_job_id: requireJobId } : {}),
+        ...(requireBountyId ? { require_bounty_id: requireBountyId } : {}),
         ...(minPayoutCents ? { min_payout_cents: minPayoutCents } : {}),
       },
     });

@@ -87,6 +87,7 @@ async function explainEvmRevert(input: { provider: ethers.JsonRpcProvider; txHas
 async function runUniversalWorkerOnce(input: {
   baseUrl: string;
   workerToken: string;
+  requireJobId?: string;
   requireTaskType: string;
 }) {
   const env = {
@@ -95,6 +96,7 @@ async function runUniversalWorkerOnce(input: {
     WORKER_TOKEN: input.workerToken,
     ONCE: 'true',
     WAIT_FOR_DONE: 'true',
+    ...(input.requireJobId ? { REQUIRE_JOB_ID: input.requireJobId } : {}),
     // Keep this minimal to avoid long Playwright runs; the smoke job is http+llm only.
     // Include `ffmpeg` as an isolation tag so other workers (that don't opt into ffmpeg) won't
     // claim the smoke job. We intentionally do NOT provide input_spec.vod_url so no ffmpeg binary
@@ -391,7 +393,7 @@ async function main() {
     console.log(`[smoke_payout] payout_address=${payoutAddress}`);
 
     // Run a real Universal Worker against this environment (claims job + submits).
-    await runUniversalWorkerOnce({ baseUrl, workerToken, requireTaskType: smokeTaskType });
+    await runUniversalWorkerOnce({ baseUrl, workerToken, requireJobId: jobId, requireTaskType: smokeTaskType });
 
     // Poll until job is done/pass (buyer view).
     const deadline = Date.now() + 8 * 60_000;
